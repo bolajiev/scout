@@ -1,0 +1,37 @@
+{
+  "disclosure": "Peek uses the following optional non-AI external services. All AI inference is fully on-device using the QVAC SDK. No user data, conversations, photos, or audio are sent to any server.",
+  "services": [
+    {
+      "name": "Overpass API",
+      "url": "https://overpass-api.de/api/interpreter",
+      "purpose": "Query OpenStreetMap data for nearby health facilities (hospitals, pharmacies, clinics) in the Nearby Health screen",
+      "dataShared": "User's GPS coordinates and a radius. No personal data.",
+      "optional": true,
+      "screen": "NearbyScreen"
+    },
+    {
+      "name": "OpenStreetMap tile servers",
+      "url": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      "purpose": "Render the interactive map in the Nearby Health screen",
+      "dataShared": "Tile x/y/z coordinates (standard map tile requests). No personal data.",
+      "optional": true,
+      "screen": "NearbyScreen"
+    },
+    {
+      "name": "Leaflet.js (CDN)",
+      "url": "https://unpkg.com/leaflet@1.9.4/",
+      "purpose": "JavaScript library for the interactive map UI loaded in the WebView",
+      "dataShared": "None — static asset only",
+      "optional": true,
+      "screen": "NearbyScreen"
+    },
+    {
+      "name": "QVAC Model Registry (Hugging Face)",
+      "url": "https://huggingface.co",
+      "purpose": "Download AI model files (GGUF format) from the Models screen. Used only when the user explicitly initiates a download.",
+      "dataShared": "Model file requests only. No user content.",
+      "optional": true,
+      "screen": "DownloadScreen"
+    }
+  ]
+}
