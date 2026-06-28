@@ -55,14 +55,40 @@ export default function HomeScreen() {
   const themeMode = useTheme();
   const theme = getTheme(themeMode);
   const insets = useSafeAreaInsets();
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Hero entrance
+  const heroOpacity = useRef(new Animated.Value(0)).current;
+  const heroY = useRef(new Animated.Value(12)).current;
+
+  // Per-card animated values — translateY + opacity
+  const cardAnims = useRef(
+    MODULES.map(() => ({
+      ty: new Animated.Value(44),
+      op: new Animated.Value(0),
+    }))
+  ).current;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+    // Hero fades in first
+    Animated.parallel([
+      Animated.timing(heroOpacity, { toValue: 1, duration: 380, useNativeDriver: true }),
+      Animated.spring(heroY, { toValue: 0, friction: 10, tension: 100, useNativeDriver: true }),
+    ]).start();
+
+    // Cards stagger in after a 160ms head-start
+    const cardAnimations = cardAnims.map(anim =>
+      Animated.parallel([
+        Animated.spring(anim.ty, { toValue: 0, friction: 9, tension: 90, useNativeDriver: true }),
+        Animated.timing(anim.op, { toValue: 1, duration: 300, useNativeDriver: true }),
+      ])
+    );
+    setTimeout(() => {
+      Animated.stagger(70, cardAnimations).start();
+    }, 160);
   }, []);
 
   return (
-    <Animated.View style={[styles.root, { backgroundColor: theme.background, opacity: fadeAnim }]}>
+    <View style={[styles.root, { backgroundColor: theme.background }]}>
       <StatusBar barStyle={themeMode === 'dark' ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
@@ -94,8 +120,8 @@ export default function HomeScreen() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Hero */}
-        <View style={styles.hero}>
+        {/* Hero — slides in */}
+        <Animated.View style={[styles.hero, { opacity: heroOpacity, transform: [{ translateY: heroY }] }]}>
           <Text style={[styles.heroTitle, { color: theme.text }]}>Your on-device{'\n'}football AI.</Text>
           <Text style={[styles.heroSub, { color: theme.textSecondary }]}>
             AI runs on your phone. No cloud. No API key. Works in the stadium.
@@ -106,34 +132,36 @@ export default function HomeScreen() {
               Tether Developers Cup 2026
             </Text>
           </View>
-        </View>
+        </Animated.View>
 
-        {/* Module cards */}
+        {/* Module cards — stagger in */}
         <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Modules</Text>
-        {MODULES.map((mod) => (
-          <TouchableOpacity
+        {MODULES.map((mod, i) => (
+          <Animated.View
             key={mod.id}
-            activeOpacity={0.75}
-            onPress={() => navigation.navigate(mod.screen)}
+            style={{ opacity: cardAnims[i].op, transform: [{ translateY: cardAnims[i].ty }] }}
           >
-            <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-              {/* Left accent bar */}
-              <View style={[styles.accentBar, { backgroundColor: mod.trackColor }]} />
-
-              <View style={styles.cardInner}>
-                <View style={styles.cardLeft}>
-                  <Text style={[styles.cardTitle, { color: theme.text }]}>{mod.title}</Text>
-                  <Text style={[styles.cardDesc, { color: theme.textSecondary }]}>{mod.desc}</Text>
-                  <View style={[styles.trackBadge, { backgroundColor: mod.trackColor + '18', borderColor: mod.trackColor + '44' }]}>
-                    <Text style={[styles.trackText, { color: mod.trackColor }]}>{mod.track}</Text>
+            <TouchableOpacity
+              activeOpacity={0.72}
+              onPress={() => navigation.navigate(mod.screen)}
+            >
+              <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                <View style={[styles.accentBar, { backgroundColor: mod.trackColor }]} />
+                <View style={styles.cardInner}>
+                  <View style={styles.cardLeft}>
+                    <Text style={[styles.cardTitle, { color: theme.text }]}>{mod.title}</Text>
+                    <Text style={[styles.cardDesc, { color: theme.textSecondary }]}>{mod.desc}</Text>
+                    <View style={[styles.trackBadge, { backgroundColor: mod.trackColor + '18', borderColor: mod.trackColor + '44' }]}>
+                      <Text style={[styles.trackText, { color: mod.trackColor }]}>{mod.track}</Text>
+                    </View>
+                  </View>
+                  <View style={[styles.iconBox, { backgroundColor: mod.trackColor + '14' }]}>
+                    {mod.icon(mod.trackColor)}
                   </View>
                 </View>
-                <View style={[styles.iconBox, { backgroundColor: mod.trackColor + '14' }]}>
-                  {mod.icon(mod.trackColor)}
-                </View>
               </View>
-            </View>
-          </TouchableOpacity>
+            </TouchableOpacity>
+          </Animated.View>
         ))}
 
         {/* Footer */}
@@ -143,7 +171,7 @@ export default function HomeScreen() {
           </Text>
         </TouchableOpacity>
       </ScrollView>
-    </Animated.View>
+    </View>
   );
 }
 

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
-  ScrollView, Keyboard,
+  ScrollView, Keyboard, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -14,7 +14,7 @@ import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 
-const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. Answer concisely and with authority. Always respond in English. Do not use <think> tags. The user may ask about any football topic: Premier League, Champions League, World Cup, player stats, match tactics, team formations, and more.`;
+const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. Answer concisely and with authority. Always respond in English. Do not use <think> tags.`;
 
 const SUGGESTIONS = [
   'How does a high press work?',
@@ -41,11 +41,19 @@ export default function MatchAIScreen() {
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [modelId, setModelId] = useState<string | null>(null);
+  const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
   const currentRunRef = useRef<any>(null);
   const mountedRef = useRef(true);
+
+  // Per-entry spring animations stored outside React state
+  const entryAnimsRef = useRef<Record<string, { ty: Animated.Value; op: Animated.Value }>>({});
+
+  // Loading pulse for model warm-up
+  const loadPulse = useRef(new Animated.Value(0.4)).current;
+  const loadLoop = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -53,19 +61,37 @@ export default function MatchAIScreen() {
     return () => {
       mountedRef.current = false;
       clearNotification();
+      loadLoop.current?.stop();
       if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
     };
   }, []);
+
+  useEffect(() => {
+    if (modelLoading && !noModel) {
+      const loop = Animated.loop(Animated.sequence([
+        Animated.timing(loadPulse, { toValue: 1, duration: 750, useNativeDriver: true }),
+        Animated.timing(loadPulse, { toValue: 0.3, duration: 750, useNativeDriver: true }),
+      ]));
+      loadLoop.current = loop;
+      loop.start();
+    } else {
+      loadLoop.current?.stop();
+      Animated.timing(loadPulse, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    }
+  }, [modelLoading, noModel]);
 
   const loadModel = async () => {
     try {
       const synced = await syncModelsFromDisk();
       const model = synced.find((m: any) => m.modelType === 'text');
-      if (!model) { setNoModel(true); return; }
+      if (!model) {
+        if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
+        return;
+      }
       const mid = await llmManager.ensure(model, { ctx_size: 4096, device: 'auto' });
-      if (mountedRef.current) setModelId(mid);
+      if (mountedRef.current) { setModelId(mid); setModelLoading(false); }
     } catch {
-      if (mountedRef.current) setNoModel(true);
+      if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
     }
   };
 
@@ -77,10 +103,23 @@ export default function MatchAIScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     const entryId = `e-${Date.now()}`;
+    // Create animation values before state update so they exist on first render
+    const ty = new Animated.Value(36);
+    const op = new Animated.Value(0);
+    entryAnimsRef.current[entryId] = { ty, op };
+
     const newEntry: Entry = { id: entryId, question: q, answer: '', streaming: true };
     setEntries(prev => [...prev, newEntry]);
     setIsGenerating(true);
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+
+    // Spring the card in after React paints it
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.spring(ty, { toValue: 0, friction: 9, tension: 90, useNativeDriver: true }),
+        Animated.timing(op, { toValue: 1, duration: 220, useNativeDriver: true }),
+      ]).start();
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 30);
 
     const history = entries.map(e => [
       { role: 'user' as const, content: e.question },
@@ -140,7 +179,13 @@ export default function MatchAIScreen() {
       if (mountedRef.current) {
         setEntries(prev => prev.map(e =>
           e.id === entryId
-            ? { ...e, answer: err instanceof InferenceCancelledError ? (e.answer || '...') : 'Could not get a response. Try again.', streaming: false }
+            ? {
+                ...e,
+                answer: err instanceof InferenceCancelledError
+                  ? (e.answer || '...')
+                  : 'Could not get a response. Try again.',
+                streaming: false,
+              }
             : e
         ));
         setIsGenerating(false);
@@ -178,13 +223,20 @@ export default function MatchAIScreen() {
         {/* Empty state */}
         {entries.length === 0 && (
           <View style={styles.emptyState}>
-            <View style={[styles.emptyLogoBox, { backgroundColor: accent + '14' }]}>
+            {/* Pulsing ball while model loads */}
+            <Animated.View style={[styles.emptyLogoBox, { backgroundColor: accent + '14', opacity: loadPulse }]}>
               <IconBall size={40} color={accent} />
-            </View>
-            <Text style={[styles.emptyTitle, { color: theme.text }]}>Ask the AI Coach</Text>
+            </Animated.View>
+
+            {modelLoading && !noModel ? (
+              <Text style={[styles.emptyTitle, { color: theme.textSecondary }]}>Loading model...</Text>
+            ) : (
+              <Text style={[styles.emptyTitle, { color: theme.text }]}>Ask the AI Coach</Text>
+            )}
             <Text style={[styles.emptySub, { color: theme.textSecondary }]}>
               Tactics · Players · Clubs · Tournaments · History
             </Text>
+
             {noModel && (
               <View style={[styles.noModelCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
                 <Text style={[styles.noModelText, { color: theme.textSecondary }]}>
@@ -192,54 +244,69 @@ export default function MatchAIScreen() {
                 </Text>
               </View>
             )}
-            <View style={styles.suggestions}>
-              {SUGGESTIONS.map(q => (
-                <TouchableOpacity
-                  key={q}
-                  style={[styles.chip, { backgroundColor: theme.card, borderColor: theme.border }]}
-                  onPress={() => send(q)}
-                  disabled={isGenerating || !modelId}
-                >
-                  <Text style={[styles.chipText, { color: theme.text }]}>{q}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+
+            {!modelLoading && !noModel && (
+              <View style={styles.suggestions}>
+                {SUGGESTIONS.map(q => (
+                  <TouchableOpacity
+                    key={q}
+                    style={[styles.chip, { backgroundColor: theme.card, borderColor: theme.border }]}
+                    onPress={() => send(q)}
+                    disabled={isGenerating}
+                  >
+                    <Text style={[styles.chipText, { color: theme.text }]}>{q}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
           </View>
         )}
 
-        {/* Q&A entries — match report style */}
-        {entries.map(entry => (
-          <View key={entry.id} style={styles.entryBlock}>
-            {/* Question label */}
-            <View style={styles.questionRow}>
-              <Text style={[styles.questionLabel, { color: theme.textSecondary }]}>YOU</Text>
-              <Text style={[styles.questionText, { color: theme.text }]}>{entry.question}</Text>
-            </View>
+        {/* Q&A entries — each springs in */}
+        {entries.map(entry => {
+          const anim = entryAnimsRef.current[entry.id];
+          return (
+            <Animated.View
+              key={entry.id}
+              style={[
+                styles.entryBlock,
+                anim ? { opacity: anim.op, transform: [{ translateY: anim.ty }] } : undefined,
+              ]}
+            >
+              {/* Question */}
+              <View style={styles.questionRow}>
+                <Text style={[styles.questionLabel, { color: theme.textSecondary }]}>YOU</Text>
+                <Text style={[styles.questionText, { color: theme.text }]}>{entry.question}</Text>
+              </View>
 
-            {/* Answer card — full-width report style */}
-            <View style={[styles.answerCard, { backgroundColor: theme.card, borderColor: entry.streaming ? accent + '60' : theme.border }]}>
-              <View style={[styles.answerBar, { backgroundColor: accent }]} />
-              <View style={styles.answerContent}>
-                <View style={styles.answerHeader}>
-                  <Text style={[styles.answerLabel, { color: accent }]}>ANALYSIS</Text>
-                  {entry.streaming && (
-                    <View style={[styles.streamingDot, { backgroundColor: accent }]} />
+              {/* Answer card */}
+              <View style={[
+                styles.answerCard,
+                { backgroundColor: theme.card, borderColor: entry.streaming ? accent + '60' : theme.border },
+              ]}>
+                <View style={[styles.answerBar, { backgroundColor: accent }]} />
+                <View style={styles.answerContent}>
+                  <View style={styles.answerHeader}>
+                    <Text style={[styles.answerLabel, { color: accent }]}>ANALYSIS</Text>
+                    {entry.streaming && (
+                      <View style={[styles.streamingDot, { backgroundColor: accent }]} />
+                    )}
+                  </View>
+                  <Text style={[styles.answerText, { color: theme.text }]}>
+                    {entry.answer || (entry.streaming ? 'Reading the game...' : '')}
+                  </Text>
+                  {!entry.streaming && entry.elapsed && (
+                    <Text style={[styles.stat, { color: theme.textSecondary }]}>
+                      {entry.elapsed}s
+                      {entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''}
+                      {' · on-device'}
+                    </Text>
                   )}
                 </View>
-                <Text style={[styles.answerText, { color: theme.text }]}>
-                  {entry.answer || (entry.streaming ? 'Reading the game...' : '')}
-                </Text>
-                {!entry.streaming && entry.elapsed && (
-                  <Text style={[styles.stat, { color: theme.textSecondary }]}>
-                    {entry.elapsed}s
-                    {entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''}
-                    {' · on-device'}
-                  </Text>
-                )}
               </View>
-            </View>
-          </View>
-        ))}
+            </Animated.View>
+          );
+        })}
       </ScrollView>
 
       {/* Input bar */}
@@ -250,12 +317,12 @@ export default function MatchAIScreen() {
       }]}>
         <TextInput
           style={[styles.input, { backgroundColor: theme.card, borderColor: theme.border, color: theme.text }]}
-          placeholder="Ask about football..."
+          placeholder={modelLoading ? 'Loading model...' : 'Ask about football...'}
           placeholderTextColor={theme.textSecondary}
           value={input}
           onChangeText={setInput}
           multiline
-          editable={!isGenerating}
+          editable={!isGenerating && !modelLoading}
           onSubmitEditing={() => send()}
         />
         {isGenerating ? (
@@ -289,10 +356,8 @@ const styles = StyleSheet.create({
   headerBall: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 16, fontWeight: '700' },
   liveDot: { width: 6, height: 6, borderRadius: 3 },
-
   scroll: { flex: 1 },
   scrollContent: { padding: 16, gap: 0 },
-
   emptyState: { paddingTop: 60, gap: 12, alignItems: 'center' },
   emptyLogoBox: { width: 80, height: 80, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   emptyTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.3 },
@@ -302,16 +367,11 @@ const styles = StyleSheet.create({
   suggestions: { width: '100%', gap: 8, marginTop: 8 },
   chip: { borderRadius: 10, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 12 },
   chipText: { fontSize: 14 },
-
   entryBlock: { marginBottom: 20, gap: 8 },
   questionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   questionLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.2, marginTop: 3, width: 32 },
   questionText: { flex: 1, fontSize: 15, fontWeight: '600', lineHeight: 22 },
-
-  answerCard: {
-    borderRadius: 14, borderWidth: 1,
-    flexDirection: 'row', overflow: 'hidden',
-  },
+  answerCard: { borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden' },
   answerBar: { width: 3 },
   answerContent: { flex: 1, padding: 14, gap: 8 },
   answerHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -319,7 +379,6 @@ const styles = StyleSheet.create({
   streamingDot: { width: 6, height: 6, borderRadius: 3 },
   answerText: { fontSize: 15, lineHeight: 24 },
   stat: { fontSize: 10 },
-
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 8,
     paddingHorizontal: 12, paddingTop: 8, borderTopWidth: 1,
