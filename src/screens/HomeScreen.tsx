@@ -1,220 +1,147 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated,
-  Dimensions,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, StatusBar,
 } from 'react-native';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTheme } from '../theme';
-import { useTheme, useSidebar } from '../navigation/AppNavigator';
+import { useTheme } from '../navigation/AppNavigator';
 import {
-  IconLens, IconVoice, IconScribe, IconDeep, IconChat, IconMenu, IconNearby, IconGame,
+  IconBall, IconTarget, IconCamera, IconFanRoom,
+  IconSettings, IconModels,
 } from '../components/Icons';
-import { syncModelsFromDisk } from '../utils/storage';
-import { MODEL_KEYS } from '../utils/models';
-import { DownloadedModel } from '../types';
 
-const { width: SW } = Dimensions.get('window');
-const H_PAD = 12;
-const CARD_GAP = 10;
-const CARD_W = (SW - H_PAD * 2 - CARD_GAP) / 2;
-
-type ModuleKey = 'Lens' | 'Voice' | 'Scribe' | 'Deep' | 'Chat' | 'Nearby' | 'PeelFun';
-
-interface Module {
-  id: ModuleKey;
-  screen: string;
-  label: string;
-  title: string;
-  desc: string;
-  icon: (color: string) => React.ReactNode;
-  fullWidth?: boolean;
-  beta?: boolean;         // true = dim + show Beta badge (coming soon)
-  modelKey?: string;      // which model key this module needs
-  requiresBoth?: boolean; // vision: requires main + mmproj
-}
-
-// 'any-text' means: any downloaded text model satisfies this module.
-const TEXT_MODEL_KEY = 'any-text';
-
-const MODULES: Module[] = [
+const MODULES = [
   {
-    id: 'Lens', screen: 'Lens', label: 'Vision AI', title: 'Peek Lens',
-    desc: 'Scan food, labels & images — instant insights',
-    icon: (c) => <IconLens size={20} color={c} />,
-    modelKey: MODEL_KEYS.VISION,
-    requiresBoth: true,
+    id: 'MatchAI',
+    screen: 'MatchAI',
+    title: 'AI Coach',
+    desc: 'Ask anything about football — tactics, players, teams. On-device. No internet needed.',
+    track: 'QVAC',
+    trackColor: '#22c55e',
+    icon: (c: string) => <IconBall size={32} color={c} />,
   },
   {
-    id: 'Voice', screen: 'Voice', label: 'Whisper · Built-in', title: 'Peek Voice',
-    desc: 'Record or upload audio — transcribe & summarize',
-    icon: (c) => <IconVoice size={20} color={c} />,
+    id: 'Predictor',
+    screen: 'Predictor',
+    title: 'Predictor',
+    desc: 'Pick two teams. Get an on-device AI match prediction with reasoning.',
+    track: 'QVAC + RAG',
+    trackColor: '#22c55e',
+    icon: (c: string) => <IconTarget size={32} color={c} />,
   },
   {
-    id: 'Scribe', screen: 'Scribe', label: 'AI Model', title: 'Peek Scribe',
-    desc: 'Draft documents, meal plans, and notes',
-    icon: (c) => <IconScribe size={20} color={c} />,
-    modelKey: TEXT_MODEL_KEY,
+    id: 'ScoutLens',
+    screen: 'ScoutLens',
+    title: 'Scout Lens',
+    desc: 'Point your camera at a jersey, player card, or match screen. AI tells you who it is.',
+    track: 'QVAC Vision',
+    trackColor: '#22c55e',
+    icon: (c: string) => <IconCamera size={32} color={c} />,
   },
   {
-    id: 'Deep', screen: 'Deep', label: 'AI Model', title: 'Peek Deep',
-    desc: 'Research documents privately on-device',
-    icon: (c) => <IconDeep size={20} color={c} />,
-    modelKey: TEXT_MODEL_KEY,
-  },
-  {
-    id: 'Chat', screen: 'AIChatHub', label: 'AI Model', title: 'AI Chat',
-    desc: 'Ask anything — questions, explanations, code, ideas',
-    icon: (c) => <IconChat size={20} color={c} />,
-    modelKey: TEXT_MODEL_KEY,
-  },
-  {
-    id: 'Nearby', screen: 'Nearby', label: 'OpenStreetMap', title: 'Map Search',
-    desc: 'Find any place in the world — no location permission needed',
-    icon: (c) => <IconNearby size={20} color={c} />,
-    fullWidth: true,
-  },
-  {
-    id: 'PeelFun', screen: 'PeelFun', label: 'Game', title: 'Peel Fun',
-    desc: 'Tic-Tac-Toe vs AI — ask the model to play',
-    icon: (c) => <IconGame size={20} color={c} />,
+    id: 'FanRoom',
+    screen: 'FanRoom',
+    title: 'Fan Room',
+    desc: 'Device-to-device fan chat. No server, no account. Works offline in the stadium.',
+    track: 'Pears P2P',
+    trackColor: '#60a5fa',
+    icon: (c: string) => <IconFanRoom size={32} color={c} />,
   },
 ];
-
-type ModelStatus = 'ready' | 'needs-download' | 'unknown';
 
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const themeMode = useTheme();
   const theme = getTheme(themeMode);
-  const { open: openSidebar } = useSidebar();
+  const insets = useSafeAreaInsets();
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  const [downloadedModels, setDownloadedModels] = useState<DownloadedModel[]>([]);
-
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 380, useNativeDriver: true }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
   }, []);
-
-  // Refresh model status every time screen focuses
-  useFocusEffect(useCallback(() => {
-    syncModelsFromDisk().then(models => {
-      setDownloadedModels(models);
-    }).catch(() => {});
-  }, []));
-
-  const hasAnyTextModel = (): boolean =>
-    downloadedModels.some(m => m.modelType === 'text');
-
-  const getStatus = (mod: Module): ModelStatus => {
-    if (!mod.modelKey) return 'ready';
-    if (mod.modelKey === TEXT_MODEL_KEY) {
-      return hasAnyTextModel() ? 'ready' : 'needs-download';
-    }
-    const dm = downloadedModels.find(m => m.id === mod.modelKey);
-    if (!dm) return 'needs-download';
-    if (mod.requiresBoth && !dm.projectionModelSrc) return 'needs-download';
-    return 'ready';
-  };
-
-  const enterModule = async (mod: Module) => {
-    const status = getStatus(mod);
-    if (status === 'needs-download') {
-      const downloadId = mod.modelKey === TEXT_MODEL_KEY
-        ? MODEL_KEYS.TEXT_HEALTH
-        : mod.modelKey!;
-      navigation.navigate('Download', {
-        modelId: downloadId,
-        returnTo: mod.screen,
-        returnParams: {},
-      });
-      return;
-    }
-    navigation.navigate(mod.screen);
-  };
-
-  const grid = MODULES.filter(m => !m.fullWidth);
-  const full = MODULES.filter(m => m.fullWidth);
-
-  const statusBadge = (mod: Module) => {
-    const s = getStatus(mod);
-    if (s === 'needs-download') {
-      return (
-        <View style={[styles.statusPill, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
-          <Text style={[styles.statusPillText, { color: theme.textSecondary }]}>Download</Text>
-        </View>
-      );
-    }
-    return (
-      <View style={[styles.statusPill, { backgroundColor: theme.accent + '22', borderColor: theme.accent + '55' }]}>
-        <View style={[styles.statusDot, { backgroundColor: theme.accent }]} />
-        <Text style={[styles.statusPillText, { color: theme.accent }]}>Ready</Text>
-      </View>
-    );
-  };
 
   return (
     <Animated.View style={[styles.root, { backgroundColor: theme.background, opacity: fadeAnim }]}>
+      <StatusBar barStyle={themeMode === 'dark' ? 'light-content' : 'dark-content'} />
+
       {/* Header */}
-      <View style={[styles.header, { borderBottomColor: theme.border }]}>
-        <TouchableOpacity onPress={openSidebar} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={styles.menuBtn}>
-          <IconMenu size={20} color={theme.text} />
-        </TouchableOpacity>
+      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
         <View style={styles.brand}>
           <View style={[styles.brandDot, { backgroundColor: theme.accent }]} />
-          <Text style={[styles.brandName, { color: theme.text }]}>Peek</Text>
+          <Text style={[styles.brandName, { color: theme.text }]}>Scout</Text>
         </View>
-        <View style={{ width: 36 }} />
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.headerBtn}
+            onPress={() => navigation.navigate('Models')}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <IconModels size={20} color={theme.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerBtn}
+            onPress={() => navigation.navigate('Settings')}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <IconSettings size={20} color={theme.textSecondary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Cards */}
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>All Modules</Text>
-
-        {/* 2-col grid */}
-        <View style={styles.grid}>
-          {grid.map((mod) => (
-            <TouchableOpacity
-              key={mod.id}
-              style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border, width: CARD_W }]}
-              onPress={() => enterModule(mod)}
-              activeOpacity={0.72}
-            >
-              <View style={[styles.cardIcon, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
-                {mod.icon(theme.text)}
-              </View>
-              <Text style={[styles.cardMeta, { color: theme.textSecondary }]}>{mod.label}</Text>
-              <Text style={[styles.cardTitle, { color: theme.text }]}>{mod.title}</Text>
-              <Text style={[styles.cardDesc, { color: theme.textSecondary }]} numberOfLines={2}>{mod.desc}</Text>
-              {mod.modelKey ? statusBadge(mod) : null}
-            </TouchableOpacity>
-          ))}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Hero */}
+        <View style={styles.hero}>
+          <Text style={[styles.heroTitle, { color: theme.text }]}>Your on-device{'\n'}football AI.</Text>
+          <Text style={[styles.heroSub, { color: theme.textSecondary }]}>
+            AI runs on your phone. No cloud. No API key. Works in the stadium.
+          </Text>
+          <View style={[styles.heroBadge, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
+            <View style={[styles.heroBadgeDot, { backgroundColor: theme.accent }]} />
+            <Text style={[styles.heroBadgeText, { color: theme.textSecondary }]}>
+              Tether Developers Cup 2026
+            </Text>
+          </View>
         </View>
 
-        {/* Full-width cards */}
-        {full.map((mod) => (
+        {/* Module cards */}
+        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Modules</Text>
+        {MODULES.map((mod) => (
           <TouchableOpacity
             key={mod.id}
-            style={[styles.cardFull, { backgroundColor: theme.card, borderColor: theme.border, opacity: mod.beta ? 0.45 : 1 }]}
-            onPress={() => enterModule(mod)}
             activeOpacity={0.75}
+            onPress={() => navigation.navigate(mod.screen)}
           >
-            <View style={[styles.cardIcon, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
-              {mod.icon(theme.text)}
-            </View>
-            <View style={styles.cardFullBody}>
-              <Text style={[styles.cardMeta, { color: theme.textSecondary }]}>{mod.label}</Text>
-              <Text style={[styles.cardTitle, { color: theme.text }]}>{mod.title}</Text>
-              <Text style={[styles.cardDesc, { color: theme.textSecondary }]} numberOfLines={1}>{mod.desc}</Text>
-            </View>
-            {mod.beta && (
-              <View style={[styles.betaBadge, { borderColor: theme.accent + '44', backgroundColor: theme.accent + '18' }]}>
-                <Text style={[styles.betaText, { color: theme.accent }]}>Beta</Text>
+            <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              {/* Left accent bar */}
+              <View style={[styles.accentBar, { backgroundColor: mod.trackColor }]} />
+
+              <View style={styles.cardInner}>
+                <View style={styles.cardLeft}>
+                  <Text style={[styles.cardTitle, { color: theme.text }]}>{mod.title}</Text>
+                  <Text style={[styles.cardDesc, { color: theme.textSecondary }]}>{mod.desc}</Text>
+                  <View style={[styles.trackBadge, { backgroundColor: mod.trackColor + '18', borderColor: mod.trackColor + '44' }]}>
+                    <Text style={[styles.trackText, { color: mod.trackColor }]}>{mod.track}</Text>
+                  </View>
+                </View>
+                <View style={[styles.iconBox, { backgroundColor: mod.trackColor + '14' }]}>
+                  {mod.icon(mod.trackColor)}
+                </View>
               </View>
-            )}
+            </View>
           </TouchableOpacity>
         ))}
 
-        <View style={{ height: 32 }} />
+        {/* Footer */}
+        <TouchableOpacity onPress={() => navigation.navigate('About')} style={styles.footer}>
+          <Text style={[styles.footerText, { color: theme.textSecondary }]}>
+            Scout v1.0 · QVAC SDK · Pears · On-Device AI
+          </Text>
+        </TouchableOpacity>
       </ScrollView>
     </Animated.View>
   );
@@ -224,43 +151,49 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingTop: 56, paddingHorizontal: 20, paddingBottom: 13, borderBottomWidth: 1,
+    paddingHorizontal: 20, paddingBottom: 14, borderBottomWidth: 1,
   },
-  menuBtn: { width: 36, height: 36, justifyContent: 'center' },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  brandDot: { width: 7, height: 7, borderRadius: 3.5 },
-  brandName: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  brandDot: { width: 8, height: 8, borderRadius: 4 },
+  brandName: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 },
+  headerActions: { flexDirection: 'row', gap: 16 },
+  headerBtn: { padding: 4 },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: H_PAD, paddingTop: 0 },
+  scrollContent: { paddingHorizontal: 16, paddingTop: 24 },
+  hero: { marginBottom: 32, gap: 10 },
+  heroTitle: { fontSize: 32, fontWeight: '800', letterSpacing: -1, lineHeight: 38 },
+  heroSub: { fontSize: 14, lineHeight: 20 },
+  heroBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 7, alignSelf: 'flex-start',
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, marginTop: 4,
+  },
+  heroBadgeDot: { width: 6, height: 6, borderRadius: 3 },
+  heroBadgeText: { fontSize: 11, fontWeight: '600' },
   sectionLabel: {
-    fontSize: 11, fontWeight: '600', letterSpacing: 1, textTransform: 'uppercase',
-    paddingVertical: 14, paddingHorizontal: 8,
+    fontSize: 10, fontWeight: '700', letterSpacing: 1.4,
+    textTransform: 'uppercase', marginBottom: 12,
   },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: CARD_GAP },
   card: {
-    borderRadius: 16, borderWidth: 1, padding: 14,
-    gap: 6, minHeight: 145,
+    borderRadius: 14, borderWidth: 1, marginBottom: 12,
+    flexDirection: 'row', overflow: 'hidden',
   },
-  cardFull: {
-    borderRadius: 16, borderWidth: 1, padding: 16,
-    flexDirection: 'row', alignItems: 'center', gap: 14,
-    marginTop: CARD_GAP,
+  accentBar: { width: 4 },
+  cardInner: {
+    flex: 1, flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', padding: 18, gap: 16,
   },
-  cardFullBody: { flex: 1, gap: 4 },
-  cardIcon: {
-    width: 40, height: 40, borderRadius: 12, borderWidth: 1,
-    justifyContent: 'center', alignItems: 'center',
+  cardLeft: { flex: 1, gap: 6 },
+  cardTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
+  cardDesc: { fontSize: 13, lineHeight: 19 },
+  trackBadge: {
+    alignSelf: 'flex-start', borderWidth: 1, borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 3, marginTop: 2,
   },
-  cardMeta: { fontSize: 10, fontWeight: '500' },
-  cardTitle: { fontSize: 15, fontWeight: '700', letterSpacing: -0.2, lineHeight: 18 },
-  cardDesc: { fontSize: 12, lineHeight: 16 },
-  statusPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    alignSelf: 'flex-start', borderRadius: 20, borderWidth: 1,
-    paddingHorizontal: 7, paddingVertical: 3, marginTop: 2,
+  trackText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  iconBox: {
+    width: 60, height: 60, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
   },
-  statusDot: { width: 5, height: 5, borderRadius: 2.5 },
-  statusPillText: { fontSize: 9, fontWeight: '600', letterSpacing: 0.3 },
-  betaBadge: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 },
-  betaText: { fontSize: 9, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase' },
+  footer: { alignItems: 'center', marginTop: 16 },
+  footerText: { fontSize: 11 },
 });

@@ -1,165 +1,132 @@
 import React from 'react';
-import Svg, { Path, Circle, Rect, Line, Polyline, G } from 'react-native-svg';
+import Svg, { Path, Circle, Rect, Line, G, Polygon } from 'react-native-svg';
 
 interface IconProps { size?: number; color?: string; strokeWidth?: number; }
 
-export function IconLens({ size = 20, color = 'white', strokeWidth = 1.8 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Rect x="3" y="3" width="18" height="18" rx="3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Circle cx="8.5" cy="8.5" r="1.5" stroke={color} strokeWidth={strokeWidth} />
-      <Polyline points="21,15 16,10 5,21" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
+const sw = (p: IconProps) => p.strokeWidth ?? 1.8;
 
-export function IconVoice({ size = 20, color = 'white', strokeWidth = 1.8 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Line x1="12" y1="19" x2="12" y2="23" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-    </Svg>
-  );
-}
+// Football / soccer ball
+export const IconBall = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth={sw({ strokeWidth: 1.8 })} />
+    <Polygon points="12,7 14.5,9 13.5,12 10.5,12 9.5,9" stroke={color} strokeWidth="1.5" fill="none" />
+    <Line x1="12" y1="7" x2="12" y2="2" stroke={color} strokeWidth="1.5" />
+    <Line x1="14.5" y1="9" x2="19" y2="7" stroke={color} strokeWidth="1.5" />
+    <Line x1="13.5" y1="12" x2="17" y2="15.5" stroke={color} strokeWidth="1.5" />
+    <Line x1="10.5" y1="12" x2="7" y2="15.5" stroke={color} strokeWidth="1.5" />
+    <Line x1="9.5" y1="9" x2="5" y2="7" stroke={color} strokeWidth="1.5" />
+  </Svg>
+);
 
-export function IconScribe({ size = 20, color = 'white', strokeWidth = 1.8 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M12 20h9" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
+// Target / crosshair — for Predictor
+export const IconTarget = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth="1.8" />
+    <Circle cx="12" cy="12" r="6" stroke={color} strokeWidth="1.8" />
+    <Circle cx="12" cy="12" r="2" fill={color} />
+    <Line x1="12" y1="2" x2="12" y2="6" stroke={color} strokeWidth="1.8" />
+    <Line x1="12" y1="18" x2="12" y2="22" stroke={color} strokeWidth="1.8" />
+    <Line x1="2" y1="12" x2="6" y2="12" stroke={color} strokeWidth="1.8" />
+    <Line x1="18" y1="12" x2="22" y2="12" stroke={color} strokeWidth="1.8" />
+  </Svg>
+);
 
-export function IconDeep({ size = 20, color = 'white', strokeWidth = 1.8 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Circle cx="11" cy="11" r="8" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Line x1="21" y1="21" x2="16.65" y2="16.65" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Line x1="11" y1="8" x2="11" y2="14" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Line x1="8" y1="11" x2="14" y2="11" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-    </Svg>
-  );
-}
+// Camera — for Scout Lens
+export const IconCamera = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+    <Circle cx="12" cy="13" r="4" stroke={color} strokeWidth="1.8" />
+  </Svg>
+);
 
-export function IconRelay({ size = 20, color = 'white', strokeWidth = 1.8 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M5 12h14" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Path d="M12 5l7 7-7 7" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
+// Chat bubbles — for Fan Room
+export const IconFanRoom = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+    <Line x1="8" y1="9" x2="16" y2="9" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    <Line x1="8" y1="13" x2="13" y2="13" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+  </Svg>
+);
 
-export function IconCamera({ size = 18, color = 'white', strokeWidth = 2 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <Circle cx="12" cy="13" r="4" stroke={color} strokeWidth={strokeWidth} />
-    </Svg>
-  );
-}
+// Settings / gear
+export const IconSettings = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Circle cx="12" cy="12" r="3" stroke={color} strokeWidth="1.8" />
+    <Path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke={color} strokeWidth="1.8" />
+  </Svg>
+);
 
-export function IconUpload({ size = 18, color = 'white', strokeWidth = 2 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <Polyline points="17,8 12,3 7,8" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <Line x1="12" y1="3" x2="12" y2="15" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-    </Svg>
-  );
-}
+// Download
+export const IconDownload = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <Polygon points="7 10 12 15 17 10" stroke={color} strokeWidth="1.8" strokeLinejoin="round" fill="none" />
+    <Line x1="12" y1="15" x2="12" y2="3" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+  </Svg>
+);
 
-export function IconMic({ size = 18, color = 'white', strokeWidth = 2 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-    </Svg>
-  );
-}
+// Back arrow
+export const IconBack = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path d="M19 12H5" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <Path d="M12 19l-7-7 7-7" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </Svg>
+);
 
-export function IconLink({ size = 18, color = 'white', strokeWidth = 2 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <Path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
+// Send
+export const IconSend = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path d="M22 2L11 13" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <Path d="M22 2L15 22l-4-9-9-4 20-7z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+  </Svg>
+);
 
-export function IconChat({ size = 18, color = 'white', strokeWidth = 2 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
+// Models / cube
+export const IconModels = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+    <Path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+  </Svg>
+);
 
-export function IconSend({ size = 16, color = 'black', strokeWidth = 2.5 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Line x1="12" y1="19" x2="12" y2="5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Polyline points="5,12 12,5 19,12" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
+// Info / about
+export const IconInfo = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth="1.8" />
+    <Line x1="12" y1="16" x2="12" y2="12" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <Line x1="12" y1="8" x2="12.01" y2="8" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
+  </Svg>
+);
 
-export function IconBack({ size = 18, color = 'white', strokeWidth = 2.5 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M19 12H5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Path d="M12 5l-7 7 7 7" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
+// Stop square — for cancel inference
+export const IconStop = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Rect x="4" y="4" width="16" height="16" rx="2" stroke={color} strokeWidth="1.8" fill={color} />
+  </Svg>
+);
 
-export function IconSearch({ size = 16, color = 'white', strokeWidth = 2 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Circle cx="11" cy="11" r="6" stroke={color} strokeWidth={strokeWidth} />
-      <Path d="M20 20l-3-3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-    </Svg>
-  );
-}
+// Trash
+export const IconTrash = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Polygon points="3 6 5 6 21 6" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    <Path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+    <Path d="M10 11v6M14 11v6" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <Path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+  </Svg>
+);
 
-export function IconDevice({ size = 18, color = 'white', strokeWidth = 2 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Rect x="2" y="3" width="20" height="14" rx="2" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Path d="M8 21h8" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-      <Path d="M12 17v4" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
-    </Svg>
-  );
-}
+// Copy
+export const IconCopy = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Rect x="9" y="9" width="13" height="13" rx="2" stroke={color} strokeWidth="1.8" />
+    <Path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+  </Svg>
+);
 
-export function IconNearby({ size = 20, color = 'white', strokeWidth = 1.8 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Circle cx="12" cy="10" r="3" stroke={color} strokeWidth={strokeWidth} />
-      <Path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
-
-export function IconGame({ size = 20, color = 'white', strokeWidth = 1.8 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Rect x="3" y="3" width="7" height="7" rx="1.5" stroke={color} strokeWidth={strokeWidth} />
-      <Rect x="14" y="3" width="7" height="7" rx="1.5" stroke={color} strokeWidth={strokeWidth} />
-      <Rect x="3" y="14" width="7" height="7" rx="1.5" stroke={color} strokeWidth={strokeWidth} />
-      <Rect x="14" y="14" width="7" height="7" rx="1.5" stroke={color} strokeWidth={strokeWidth} />
-    </Svg>
-  );
-}
-
-export function IconMenu({ size = 20, color = 'white' }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Line x1="3" y1="6" x2="21" y2="6" stroke={color} strokeWidth="2" strokeLinecap="round" />
-      <Line x1="3" y1="12" x2="16" y2="12" stroke={color} strokeWidth="2" strokeLinecap="round" />
-      <Line x1="3" y1="18" x2="21" y2="18" stroke={color} strokeWidth="2" strokeLinecap="round" />
-    </Svg>
-  );
-}
+// Wifi off — for offline/Pears indicator
+export const IconOffline = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Line x1="1" y1="1" x2="23" y2="23" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <Path d="M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+  </Svg>
+);

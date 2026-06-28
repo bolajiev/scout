@@ -24,32 +24,31 @@ export interface Theme {
 }
 
 export const darkTheme: Theme = {
-  background:    '#000000',
-  card:          '#141414',
-  cardAlt:       '#1E1E1E',
-  accent:        '#FDC803',
+  background:    '#080808',
+  card:          '#111111',
+  cardAlt:       '#171717',
+  accent:        '#22c55e',
   accentFg:      '#000000',
-  text:          '#FFFFFF',
-  textSecondary: '#9A9A9A',
-  border:        '#2A2A2A',
-  error:         '#FF5247',
-  success:       '#2BD4A0',
-  visionChip:    '#3B82F6',
+  text:          '#f9fafb',
+  textSecondary: '#6b7280',
+  border:        '#1f1f1f',
+  error:         '#ef4444',
+  success:       '#22c55e',
+  visionChip:    '#3b82f6',
 };
 
-// Light theme — dark is the only official theme for now; this is a stub
 export const lightTheme: Theme = {
-  background:    '#FAFAF5',
-  card:          '#FFFFFF',
-  cardAlt:       '#F0EFE8',
-  accent:        '#D4A800',   // slightly deeper yellow for white bg
-  accentFg:      '#000000',
-  text:          '#0A0A0A',
-  textSecondary: '#6B6B6B',
-  border:        '#E0E0E0',
-  error:         '#E53935',
-  success:       '#2BD4A0',
-  visionChip:    '#3B82F6',
+  background:    '#f9fafb',
+  card:          '#ffffff',
+  cardAlt:       '#f3f4f6',
+  accent:        '#16a34a',
+  accentFg:      '#ffffff',
+  text:          '#0a0a0a',
+  textSecondary: '#6b7280',
+  border:        '#e5e7eb',
+  error:         '#ef4444',
+  success:       '#16a34a',
+  visionChip:    '#3b82f6',
 };
 
 export function getTheme(mode: ThemeMode): Theme {
