@@ -343,7 +343,7 @@ export default function ModelsScreen() {
         {downloadedTextModels.length >= 2 && (
           <View style={[styles.defaultSection, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.defaultTitle, { color: theme.text }]}>Default Text Model</Text>
-            <Text style={[styles.defaultSub, { color: theme.textSecondary }]}>Used for Quick Chat, Scribe, Deep, and Voice</Text>
+            <Text style={[styles.defaultSub, { color: theme.textSecondary }]}>Used for AI Coach and Predictor</Text>
             <View style={styles.defaultRow}>
               {downloadedTextModels.map(m => (
                 <TouchableOpacity

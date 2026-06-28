@@ -1,136 +1,155 @@
-# Peek — Private On-Device AI
+# Scout — On-Device Football AI
 
-**Seven AI modules. One phone. No cloud.**
+**Tether Developers Cup 2026** · QVAC primary track + Pears secondary track
 
-Peek is an Android app powered by the [QVAC SDK](https://www.npmjs.com/package/@qvac/sdk) that runs AI models fully on your device. Your photos, audio, documents, and conversations never leave your phone.
-
-Built for the **[QVAC Unleash Edge AI Hackathon](https://dorahacks.io/hackathon/qvac-unleach-edge-ai-i/tracks)**.
+Scout is a fully private football AI app that runs entirely on your Android device. No cloud, no API keys, no account required. AI inference runs via the QVAC SDK; fan-to-fan messaging runs via Pears (Holepunch).
 
 ---
 
 ## Modules
 
-| Module | What it does |
-|--------|-------------|
-| **Peek Lens** | Point your camera or pick an image — ask anything about what it sees |
-| **Peek Voice** | Record or upload audio → live transcript → AI explanation (MedPsy 1.7B default) |
-| **Peek Scribe** | Draft documents, notes, or HTML pages with an on-device writing assistant |
-| **Peek Deep** | Load a local file → ask questions about it → fully private on-device RAG |
-| **AI Chat** | Conversations with a local LLM — supports inline interactive maps via tool calling |
-| **Map Search** | Find any place in the world using Google Maps embed — no GPS required |
-| **Peel Fun** | Tic-Tac-Toe against the on-device AI — Easy uses the LLM, Hard uses minimax |
+| Module | Track | What it does |
+|---|---|---|
+| **AI Coach** | QVAC SDK | Stream football Q&A on-device — tactics, players, clubs, tournaments |
+| **Predictor** | QVAC SDK | Pick two teams, get a structured match prediction with score, winner, confidence |
+| **Scout Lens** | QVAC Vision | Identify player jerseys, club badges, match scoreboards from a photo — on-device |
+| **Fan Room** | Pears P2P | Device-to-device fan chat in the stadium — no server, no internet, no account |
 
 ---
 
-## Highlights
+## QVAC SDK Integration
 
-- **100% on-device inference** — QVAC SDK handles model loading, streaming, and cancellation natively
-- **Private by design** — no telemetry, no accounts, no data ever sent to a server
-- **Real tool calling** — AI Chat uses the QVAC SDK `tools` API; asking about a location triggers `show_map` and renders an interactive map inline in the chat bubble
-- **MedPsy 1.7B default** — Voice explanation defaults to the MedPsy 1.7B model; other screens are user-choice
-- **Map privacy notice** — a caution card appears every time the map screen opens, explaining that search queries go to Google Maps but no GPS data is collected
-- **Model management** — download models once, stored in per-model folders; swap models per session
-- **Inference audit log** — every inference call logs use case, model name, TTFT, total ms, tokens/sec; exportable as CSV from Settings
-- **Voice pipeline** — 8-second chunk transcription with Whisper, cross-chunk context chaining, hallucination filtering, MedPsy explanation
-- **Scribe artifacts** — generates Markdown and interactive HTML files viewable in-app
-- **Deep RAG** — embeds local files on-device using QVAC's embedding model
-- **Token stats** — TTFT and tokens/sec shown after every AI response
-- **Android notifications** — stop inference from the notification shade while backgrounded
-- **Dark and light theme**, conversation history, configurable generation parameters
-- **Welcome screen on update** — version tracking shows onboarding once whenever the app updates
+Scout uses `@qvac/sdk` v0.13.5 for all on-device inference.
+
+### AI Coach — streaming completion
+
+```ts
+import { completion, cancel } from '@qvac/sdk';
+
+const run = completion({
+  modelId,
+  history: [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: 'How does a high press work?' },
+  ],
+  stream: true,
+  captureThinking: false,
+  generationParams: {
+    predict: 1024,
+    temp: 0.7,
+    reasoning_budget: 0 as 0,  // disables chain-of-thought
+  },
+});
+
+for await (const event of run.events) {
+  if (event.type === 'contentDelta') {
+    streamed += event.text;
+    setAnswer(streamed);
+  }
+}
+
+const stats = await run.stats;
+// stats.generatedTokens, stats.tokensPerSecond
+```
+
+### Predictor — structured output
+
+The system prompt forces `WINNER / SCORE / CONFIDENCE / ---` output so the result can be parsed into a visual scoreboard:
+
+```
+WINNER: Manchester City
+SCORE: 2-1
+CONFIDENCE: High
+---
+City's high press and De Bruyne's creativity give them the edge...
+```
+
+### Scout Lens — vision model
+
+```ts
+const run = completion({
+  modelId,   // SmolVLM2 500M or Qwen3-VL 2B
+  history: [
+    { role: 'system', content: VISION_PROMPT },
+    {
+      role: 'user',
+      content: 'What football content do you see in this image?',
+      attachments: [{ path: imageUri }],
+    },
+  ],
+  stream: true,
+  generationParams: { predict: 200, reasoning_budget: 0 as 0 },
+});
+```
+
+### Model management
+
+```ts
+import { llmManager } from './utils/modelManager';
+import { syncModelsFromDisk } from './utils/storage';
+
+// Scan device for downloaded models
+const models = await syncModelsFromDisk();
+
+// Load model and keep it hot — returns modelId for completion()
+const modelId = await llmManager.ensure(model, { ctx_size: 4096, device: 'auto' });
+```
+
+---
+
+## Pears P2P — Fan Room
+
+Fan Room uses [Holepunch](https://holepunch.to) (Pears runtime) for device-to-device messaging. No server, no relay, no account. Works on LAN and in the stadium where internet may be unreliable.
+
+Architecture:
+- Each Fan Room generates a unique **room key** (6-char base36 code)
+- Room members share the key manually (shown on screen)
+- Hyperswarm discovers peers using the key as a topic hash
+- Messages are sent directly device-to-device over Pears encrypted channel
+
+Current status: UI is fully built. Pears runtime wiring in progress.
 
 ---
 
 ## Tech Stack
 
-| Layer | Library |
-|-------|---------|
-| Framework | React Native, Expo SDK 54 (bare workflow) |
-| AI runtime | `@qvac/sdk` v0.13.5 — completion, transcribeStream, tool calling, RAG |
-| Camera | expo-camera |
-| Audio | expo-av |
-| Maps | Google Maps embed via react-native-webview (no API key, no GPS) |
-| File system | expo-file-system |
-| Document picker | expo-document-picker |
-| Persistence | @react-native-async-storage/async-storage |
-| Navigation | React Navigation (native stack) |
-
----
+| Layer | Technology |
+|---|---|
+| Framework | Expo SDK 54, React Native (bare workflow) |
+| AI inference | QVAC SDK (`@qvac/sdk` v0.13.5) |
+| P2P networking | Pears / Holepunch |
+| Language | TypeScript |
+| Target | Android (arm64) |
 
 ## Models
 
-Models are downloaded on first use and stored on-device. Nothing is bundled in the APK.
+| Model | Type | Size | Used for |
+|---|---|---|---|
+| Qwen3 1.7B | Text | 1.1 GB | AI Coach, Predictor (recommended) |
+| MedPsy 1.7B | Text | 1.1 GB | AI Coach, Predictor (low-RAM) |
+| MedPsy 4B | Text | 2.7 GB | AI Coach, Predictor (richer) |
+| SmolVLM2 500M | Vision | 521 MB | Scout Lens |
+| Qwen3-VL 2B | Vision | 1.7 GB | Scout Lens (sharper) |
 
-| Model | Size | Use |
-|-------|------|-----|
-| MedPsy 1.7B | ~1 GB | Default for Voice explanation — medical & general AI |
-| MedPsy 4B | 2.7 GB | Stronger medical specialist — Scribe, Chat, Deep |
-| Qwen3 1.7B | 1.1 GB | Fast general text |
-| Gemma 4 2B | 2.7 GB | Strong at code and HTML |
-| SmolVLM2 500M | 521 MB | On-device image understanding — Peek Lens |
-
----
-
-## Remote APIs
-
-Peek is offline-first. The only external calls are:
-
-| Service | When | What is sent |
-|---------|------|-------------|
-| Google Maps embed | Map Search screen / AI Chat inline map | Search query string only. No GPS, no device ID. |
-| EAS / Expo | Build time only | Not used at runtime |
-
-All AI inference runs locally. See `api-calls.json` for the full disclosure.
+All models are downloaded once, stored locally, and run fully offline.
 
 ---
 
-## Getting Started
+## Building
 
 ```bash
 npm install
-npx expo start          # development
-eas build --platform android --profile preview   # APK
+npx tsc --noEmit --skipLibCheck
+eas build --platform android --profile preview
 ```
-
----
-
-## Project Structure
-
-```
-src/
-├── components/
-│   ├── Icons.tsx
-│   ├── MarkdownText.tsx
-│   ├── ModelGalleryPicker.tsx  # Bottom sheet model switcher
-│   └── ...
-├── navigation/
-│   └── AppNavigator.tsx        # Root stack, theme context
-├── screens/
-│   ├── AIChatScreen.tsx        # AI Chat — streaming + show_map tool calling
-│   ├── NearbyScreen.tsx        # Map Search — Google Maps embed, privacy notice
-│   ├── PeelFunScreen.tsx       # Peel Fun — Tic-Tac-Toe vs on-device AI
-│   ├── VoiceScreen.tsx         # Voice — Whisper transcription + MedPsy explanation
-│   ├── DeepScreen.tsx          # Deep — file RAG
-│   ├── ChatScreen.tsx          # Scribe — writing assistant
-│   ├── LensResultScreen.tsx    # Lens — vision inference
-│   ├── SettingsScreen.tsx      # Theme, params, CSV export
-│   ├── OnboardingScreen.tsx    # 3-slide welcome, shown on first launch + updates
-│   └── ...
-├── utils/
-│   ├── auditLogger.ts          # Inference log — TTFT, tokens/sec, CSV export
-│   ├── modelManager.ts         # LLMManager + WhisperManager singletons
-│   ├── models.ts               # Model catalogue, system prompts, tool definitions
-│   └── storage.ts              # AsyncStorage helpers, version tracking
-└── types/
-    └── index.ts
-```
-
----
 
 ## Privacy
 
-- All AI inference runs on-device via the QVAC native runtime
-- No images, audio, text, or results are sent to any server
-- Map Search uses Google Maps embed — only the search query text is sent to Google; no GPS or device location is collected
-- A privacy notice appears every time the map is opened
-- Models are downloaded once and cached on-device
+- No data leaves the device
+- No account, no signup, no telemetry
+- AI inference: fully local via QVAC SDK
+- Fan Room: peer-to-peer via Pears, no server
+
+---
+
+Built for the **Tether Developers Cup 2026** — QVAC track + Pears track.

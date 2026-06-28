@@ -13,7 +13,15 @@ import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 
-const SYSTEM_PROMPT = `You are Scout's Predictor — an on-device football match prediction AI. When given two teams, provide a structured prediction: likely score, which team wins and why, key factors (form, head-to-head, tactical matchup), and a confidence level (low/medium/high). Keep it tight — 150 words max. No fluff, no disclaimers. Be decisive. Always respond in English.`;
+const SYSTEM_PROMPT = `You are Scout's Predictor — an on-device football match prediction AI. Always respond in EXACTLY this format, no deviation:
+
+WINNER: [team name]
+SCORE: [e.g. 2-1]
+CONFIDENCE: [Low/Medium/High]
+---
+[2-3 sentences: key factors, head-to-head, tactical notes. No fluff. Be decisive.]
+
+Do not add anything before WINNER or after the analysis. Always respond in English.`;
 
 const TEAM_GROUPS = [
   {
@@ -36,6 +44,7 @@ export default function PredictorScreen() {
   const [teamB, setTeamB] = useState<string | null>(null);
   const [selecting, setSelecting] = useState<'A' | 'B' | null>(null);
   const [prediction, setPrediction] = useState('');
+  const [parsed, setParsed] = useState<{ winner: string; score: string; confidence: string; analysis: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [modelId, setModelId] = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
@@ -118,9 +127,20 @@ export default function PredictorScreen() {
     }
   };
 
+  const parsePrediction = (text: string) => {
+    const lines = text.split('\n').map(l => l.trim());
+    const winner = lines.find(l => l.startsWith('WINNER:'))?.replace('WINNER:', '').trim() ?? '';
+    const score = lines.find(l => l.startsWith('SCORE:'))?.replace('SCORE:', '').trim() ?? '';
+    const confidence = lines.find(l => l.startsWith('CONFIDENCE:'))?.replace('CONFIDENCE:', '').trim() ?? '';
+    const sepIdx = lines.indexOf('---');
+    const analysis = sepIdx >= 0 ? lines.slice(sepIdx + 1).join('\n').trim() : text;
+    return { winner, score, confidence, analysis };
+  };
+
   const predict = async () => {
     if (!teamA || !teamB || isGenerating || !modelId) return;
     setPrediction('');
+    setParsed(null);
     setElapsed(null);
     setIsGenerating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -165,6 +185,7 @@ export default function PredictorScreen() {
       clearNotification();
       if (mountedRef.current) {
         setElapsed(Math.round((Date.now() - genStart) / 100) / 10);
+        setParsed(parsePrediction(streamed));
         setIsGenerating(false);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -327,24 +348,64 @@ export default function PredictorScreen() {
           </View>
         )}
 
-        {/* Final result — spring reveal */}
-        {!isGenerating && prediction.length > 0 && (
+        {/* Final result — spring reveal with scoreboard */}
+        {!isGenerating && parsed && (
           <Animated.View style={{ opacity: resultOpacity, transform: [{ scale: resultScale }] }}>
-            <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: accent + '40' }]}>
-              <View style={[styles.resultBar, { backgroundColor: accent }]} />
-              <View style={styles.resultContent}>
-                <Text style={[styles.resultLabel, { color: accent }]}>PREDICTION</Text>
-                <Text style={[styles.resultMatchup, { color: theme.textSecondary }]}>
-                  {teamA} vs {teamB}
-                </Text>
-                <Text style={[styles.resultText, { color: theme.text }]}>{prediction}</Text>
-                {elapsed && (
-                  <Text style={[styles.stat, { color: theme.textSecondary }]}>
-                    {elapsed}s · on-device
-                  </Text>
-                )}
+            {/* Scoreboard */}
+            <View style={[styles.scoreboard, { backgroundColor: theme.card, borderColor: accent + '40' }]}>
+              <View style={[styles.scoreboardTop, { borderBottomColor: theme.border }]}>
+                <Text style={[styles.scoreboardLabel, { color: accent }]}>PREDICTION</Text>
+                {parsed.confidence ? (
+                  <View style={[styles.confBadge, {
+                    backgroundColor: parsed.confidence === 'High' ? accent + '22' : theme.cardAlt,
+                    borderColor: parsed.confidence === 'High' ? accent + '55' : theme.border,
+                  }]}>
+                    <Text style={[styles.confText, { color: parsed.confidence === 'High' ? accent : theme.textSecondary }]}>
+                      {parsed.confidence} confidence
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              <View style={styles.scoreRow}>
+                <View style={styles.scoreTeam}>
+                  <Text style={[styles.scoreTeamName, { color: theme.text }]} numberOfLines={2}>{teamA}</Text>
+                  {parsed.winner === teamA && (
+                    <View style={[styles.winnerTag, { backgroundColor: accent }]}>
+                      <Text style={styles.winnerTagText}>WIN</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.scoreCenter}>
+                  {parsed.score ? (
+                    <Text style={[styles.scoreText, { color: theme.text }]}>{parsed.score}</Text>
+                  ) : (
+                    <Text style={[styles.scoreVs, { color: theme.textSecondary }]}>vs</Text>
+                  )}
+                </View>
+                <View style={[styles.scoreTeam, styles.scoreTeamRight]}>
+                  <Text style={[styles.scoreTeamName, { color: theme.text }]} numberOfLines={2}>{teamB}</Text>
+                  {parsed.winner === teamB && (
+                    <View style={[styles.winnerTag, { backgroundColor: accent }]}>
+                      <Text style={styles.winnerTagText}>WIN</Text>
+                    </View>
+                  )}
+                </View>
               </View>
             </View>
+
+            {/* Analysis */}
+            {parsed.analysis ? (
+              <View style={[styles.analysisCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                <View style={[styles.resultBar, { backgroundColor: accent }]} />
+                <View style={styles.resultContent}>
+                  <Text style={[styles.resultLabel, { color: accent }]}>ANALYSIS</Text>
+                  <Text style={[styles.resultText, { color: theme.text }]}>{parsed.analysis}</Text>
+                  {elapsed && (
+                    <Text style={[styles.stat, { color: theme.textSecondary }]}>{elapsed}s · on-device</Text>
+                  )}
+                </View>
+              </View>
+            ) : null}
           </Animated.View>
         )}
       </ScrollView>
@@ -390,9 +451,27 @@ const styles = StyleSheet.create({
   resultBar: { width: 4 },
   resultContent: { flex: 1, padding: 16, gap: 8 },
   resultLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
-  resultMatchup: { fontSize: 12, fontWeight: '600' },
   resultText: { fontSize: 15, lineHeight: 24 },
   stat: { fontSize: 10 },
+  // Scoreboard
+  scoreboard: { borderRadius: 16, borderWidth: 1, marginBottom: 10, overflow: 'hidden' },
+  scoreboardTop: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12, borderBottomWidth: 1,
+  },
+  scoreboardLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
+  confBadge: { borderRadius: 6, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
+  confText: { fontSize: 10, fontWeight: '700' },
+  scoreRow: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 8 },
+  scoreTeam: { flex: 1, alignItems: 'flex-start', gap: 6 },
+  scoreTeamRight: { alignItems: 'flex-end' },
+  scoreTeamName: { fontSize: 14, fontWeight: '700', lineHeight: 19 },
+  winnerTag: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  winnerTagText: { fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 },
+  scoreCenter: { alignItems: 'center', minWidth: 60 },
+  scoreText: { fontSize: 32, fontWeight: '900', letterSpacing: -1 },
+  scoreVs: { fontSize: 14, fontWeight: '700' },
+  analysisCard: { borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden' },
   groupLabel: {
     fontSize: 10, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase',
     marginTop: 16, marginBottom: 6,

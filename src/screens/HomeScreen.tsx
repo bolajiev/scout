@@ -134,6 +134,24 @@ export default function HomeScreen() {
           </View>
         </Animated.View>
 
+        {/* Stats strip */}
+        <View style={[styles.statsStrip, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          {[
+            { value: '4', label: 'Modules' },
+            { value: 'QVAC', label: 'SDK' },
+            { value: 'P2P', label: 'Pears' },
+            { value: '100%', label: 'On-Device' },
+          ].map((s, i) => (
+            <React.Fragment key={s.label}>
+              {i > 0 && <View style={[styles.statsDivider, { backgroundColor: theme.border }]} />}
+              <View style={styles.statItem}>
+                <Text style={[styles.statValue, { color: theme.accent }]}>{s.value}</Text>
+                <Text style={[styles.statLabel, { color: theme.textSecondary }]}>{s.label}</Text>
+              </View>
+            </React.Fragment>
+          ))}
+        </View>
+
         {/* Module cards — stagger in */}
         <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Modules</Text>
         {MODULES.map((mod, i) => (
@@ -222,6 +240,14 @@ const styles = StyleSheet.create({
     width: 60, height: 60, borderRadius: 14,
     alignItems: 'center', justifyContent: 'center',
   },
+  statsStrip: {
+    flexDirection: 'row', borderRadius: 14, borderWidth: 1,
+    marginBottom: 28, overflow: 'hidden',
+  },
+  statItem: { flex: 1, alignItems: 'center', paddingVertical: 14, gap: 3 },
+  statValue: { fontSize: 15, fontWeight: '800', letterSpacing: -0.3 },
+  statLabel: { fontSize: 10, fontWeight: '600', letterSpacing: 0.5 },
+  statsDivider: { width: 1 },
   footer: { alignItems: 'center', marginTop: 16 },
   footerText: { fontSize: 11 },
 });

@@ -11,13 +11,13 @@ export function toPath(uri: string): string {
 }
 
 const KEYS = {
-  SETTINGS: '@peek_settings',
-  HISTORY: '@peek_history',
-  INFERENCE_LOGS: '@peek_inference_logs',
-  DOWNLOADED_MODELS: '@peek_downloaded_models',
-  SCAN_STREAK: '@peek_scan_streak',
-  HF_TOKEN: 'peek_hf_token',
-  CUSTOM_PROMPTS: '@peek_custom_prompts',
+  SETTINGS: '@scout_settings',
+  HISTORY: '@scout_history',
+  INFERENCE_LOGS: '@scout_inference_logs',
+  DOWNLOADED_MODELS: '@scout_downloaded_models',
+  SCAN_STREAK: '@scout_scan_streak',
+  HF_TOKEN: 'scout_hf_token',
+  CUSTOM_PROMPTS: '@scout_custom_prompts',
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -34,7 +34,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 // App-private document storage — no runtime permission required on any platform.
 export function getModelsDir(): Directory {
-  return new Directory(Paths.document, 'peek', 'models');
+  return new Directory(Paths.document, 'scout', 'models');
 }
 
 export async function initModelsDirectory(): Promise<void> {
@@ -75,7 +75,7 @@ async function migrateOldModelFolders(): Promise<void> {
   let oldExternal: Directory | null = null;
   if (Platform.OS === 'android') {
     try {
-      const d = new Directory('file:///storage/emulated/0/Android/data/com.peek.app/files/peek/models');
+      const d = new Directory('file:///storage/emulated/0/Android/data/com.scout.app/files/peek/models');
       oldExternal = d;
     } catch { /* path doesn't exist or no permission — skip external migration */ }
   }
@@ -319,7 +319,7 @@ export async function isModelDownloaded(): Promise<boolean> {
 
 export async function hasOnboarded(): Promise<boolean> {
   try {
-    const val = await AsyncStorage.getItem('@peek_onboarded');
+    const val = await AsyncStorage.getItem('@scout_onboarded');
     return val === 'true';
   } catch {
     return false;
@@ -328,46 +328,46 @@ export async function hasOnboarded(): Promise<boolean> {
 
 export async function markOnboarded(): Promise<void> {
   const version = Constants.expoConfig?.version ?? '1.0.0';
-  await AsyncStorage.setItem('@peek_onboarded', 'true');
-  await AsyncStorage.setItem('@peek_seen_version', version);
+  await AsyncStorage.setItem('@scout_onboarded', 'true');
+  await AsyncStorage.setItem('@scout_seen_version', version);
 }
 
 export async function shouldShowWelcome(): Promise<boolean> {
   try {
-    const onboarded = await AsyncStorage.getItem('@peek_onboarded');
+    const onboarded = await AsyncStorage.getItem('@scout_onboarded');
     if (onboarded !== 'true') return true;
-    const seenVersion = await AsyncStorage.getItem('@peek_seen_version');
+    const seenVersion = await AsyncStorage.getItem('@scout_seen_version');
     const current = Constants.expoConfig?.version ?? '1.0.0';
     return seenVersion !== current;
   } catch { return false; }
 }
 
 export async function getDefaultModelId(): Promise<string | null> {
-  const stored = await AsyncStorage.getItem('@peek_default_model');
+  const stored = await AsyncStorage.getItem('@scout_default_model');
   // Default to MedPsy 4B if user has never chosen
   return stored;
 }
 
 export async function setDefaultModelId(modelId: string): Promise<void> {
-  await AsyncStorage.setItem('@peek_default_model', modelId);
+  await AsyncStorage.setItem('@scout_default_model', modelId);
 }
 
 export async function getQuickChatDefaultId(): Promise<string | null> {
-  return AsyncStorage.getItem('@peek_quickchat_default');
+  return AsyncStorage.getItem('@scout_quickchat_default');
 }
 
 export async function setQuickChatDefaultId(modelId: string): Promise<void> {
-  await AsyncStorage.setItem('@peek_quickchat_default', modelId);
+  await AsyncStorage.setItem('@scout_quickchat_default', modelId);
 }
 
 export async function getThemeOverride(): Promise<'dark' | 'light' | null> {
-  const val = await AsyncStorage.getItem('@peek_theme_override');
+  const val = await AsyncStorage.getItem('@scout_theme_override');
   if (val === 'dark' || val === 'light') return val;
   return null;
 }
 
 export async function setThemeOverride(mode: 'dark' | 'light'): Promise<void> {
-  await AsyncStorage.setItem('@peek_theme_override', mode);
+  await AsyncStorage.setItem('@scout_theme_override', mode);
 }
 
 export async function getCustomSystemPrompt(useCase: string): Promise<string | null> {
@@ -401,7 +401,7 @@ export async function clearCustomSystemPrompt(useCase: string): Promise<void> {
 }
 
 export async function clearAllData(): Promise<void> {
-  const keys = [...Object.values(KEYS), '@peek_onboarded'];
+  const keys = [...Object.values(KEYS), '@scout_onboarded'];
   for (const key of keys) {
     await AsyncStorage.removeItem(key);
   }
@@ -409,8 +409,8 @@ export async function clearAllData(): Promise<void> {
 
 // ── Conversation history (per-module, persisted) ─────────────────────────────
 
-function convListKey(moduleId: string) { return `@peek_convs_${moduleId}`; }
-function msgListKey(convId: string) { return `@peek_msgs_${convId}`; }
+function convListKey(moduleId: string) { return `@scout_convs_${moduleId}`; }
+function msgListKey(convId: string) { return `@scout_msgs_${convId}`; }
 
 export async function getConversations(moduleId: ModuleId): Promise<Conversation[]> {
   try {
@@ -459,7 +459,7 @@ export function createConversationId(): string {
 
 // ── Lens scan history ─────────────────────────────────────────────────────────
 
-const LENS_HISTORY_KEY = '@peek_lens_history';
+const LENS_HISTORY_KEY = '@scout_lens_history';
 
 export interface LensScanRecord {
   id: string;
@@ -489,7 +489,7 @@ export async function getLensHistory(): Promise<LensScanRecord[]> {
 
 // ── Deep session history ──────────────────────────────────────────────────────
 
-const DEEP_HISTORY_KEY = '@peek_deep_history';
+const DEEP_HISTORY_KEY = '@scout_deep_history';
 
 export interface DeepSessionRecord {
   id: string;
@@ -514,7 +514,7 @@ export async function getDeepHistory(): Promise<DeepSessionRecord[]> {
   } catch { return []; }
 }
 
-const VOICE_HISTORY_KEY = '@peek_voice_history';
+const VOICE_HISTORY_KEY = '@scout_voice_history';
 
 export interface VoiceSessionRecord {
   id: string;
