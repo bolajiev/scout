@@ -227,7 +227,7 @@ export default function SettingsScreen() {
             </View>
           </View>
           <Text style={[styles.qvacDesc, { color: theme.textSecondary }]}>
-            All AI inference in Peek runs locally using the qvac SDK — no cloud, no servers, no data leaving your phone.
+            All AI inference in Scout runs locally using the QVAC SDK — no cloud, no servers, no data leaving your phone.
           </Text>
         </View>
 
@@ -238,7 +238,7 @@ export default function SettingsScreen() {
           <Text style={[styles.dangerText, { color: theme.error }]}>Clear All Data</Text>
         </TouchableOpacity>
 
-        <Text style={[styles.footer, { color: theme.textSecondary }]}>{`Peek v${appVersion} · Built with qvac · On-Device AI`}</Text>
+        <Text style={[styles.footer, { color: theme.textSecondary }]}>{`Scout v${appVersion} · QVAC SDK · On-Device Football AI`}</Text>
       </ScrollView>
     </View>
   );

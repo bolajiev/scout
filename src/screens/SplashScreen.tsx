@@ -10,7 +10,7 @@ export default function SplashScreen() {
   const navigation = useNavigation<any>();
   const theme = getTheme(useTheme());
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(16)).current;
+  const slideAnim = useRef(new Animated.Value(20)).current;
   const [bootError, setBootError] = useState<string | null>(null);
 
   const boot = async () => {
@@ -21,18 +21,16 @@ export default function SplashScreen() {
       const showWelcome = await shouldShowWelcome();
       navigation.replace(showWelcome ? 'Onboarding' : 'Main');
     } catch (e: any) {
-      console.error('[boot] init failed:', e);
       setBootError(e?.message || 'Startup error. Tap Retry to try again.');
     }
   };
 
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 700, useNativeDriver: true }),
     ]).start();
-
-    const timer = setTimeout(boot, 1800);
+    const timer = setTimeout(boot, 1600);
     return () => clearTimeout(timer);
   }, []);
 
@@ -53,46 +51,30 @@ export default function SplashScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <Animated.Image
-        source={require('../../peeklogo.png')}
-        style={[styles.logo, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
-        resizeMode="contain"
-      />
+      <Animated.View style={[styles.logoWrap, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+        {/* Scout wordmark — no image file needed */}
+        <View style={[styles.logoMark, { backgroundColor: theme.accent }]}>
+          <Text style={styles.logoLetter}>S</Text>
+        </View>
+        <Text style={[styles.wordmark, { color: theme.text }]}>SCOUT</Text>
+        <Text style={[styles.tagline, { color: theme.textSecondary }]}>On-Device Football AI</Text>
+      </Animated.View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 36,
+  container: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  logoWrap: { alignItems: 'center', gap: 16 },
+  logoMark: {
+    width: 80, height: 80, borderRadius: 24,
+    alignItems: 'center', justifyContent: 'center',
   },
-  logo: {
-    width: 120,
-    height: 120,
-    borderRadius: 30,
-  },
-  errorTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  errorMsg: {
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 24,
-  },
-  retryBtn: {
-    paddingHorizontal: 32,
-    paddingVertical: 14,
-    borderRadius: 14,
-  },
-  retryText: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
+  logoLetter: { fontSize: 44, fontWeight: '900', color: '#fff', letterSpacing: -1 },
+  wordmark: { fontSize: 36, fontWeight: '900', letterSpacing: 6 },
+  tagline: { fontSize: 13, fontWeight: '500', letterSpacing: 1 },
+  errorTitle: { fontSize: 20, fontWeight: '700', marginBottom: 10, textAlign: 'center' },
+  errorMsg: { fontSize: 13, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
+  retryBtn: { paddingHorizontal: 32, paddingVertical: 14, borderRadius: 14 },
+  retryText: { fontSize: 15, fontWeight: '700' },
 });

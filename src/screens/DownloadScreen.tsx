@@ -230,7 +230,7 @@ export default function DownloadScreen() {
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
         <View style={styles.brand}>
           <View style={[styles.brandDot, { backgroundColor: theme.accent }]} />
-          <Text style={[styles.brandName, { color: theme.text }]}>Peek</Text>
+          <Text style={[styles.brandName, { color: theme.text }]}>Scout</Text>
         </View>
       </View>
 
