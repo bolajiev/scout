@@ -252,18 +252,12 @@ export default function PredictorScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: theme.border }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <IconBack size={20} color={accent} />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <View style={[styles.headerIcon, { backgroundColor: accent + '22' }]}>
-            <IconTarget size={14} color={accent} />
-          </View>
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Predictor</Text>
-          {modelId && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
+      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
+        <View style={[styles.headerIcon, { backgroundColor: accent + '22' }]}>
+          <IconTarget size={14} color={accent} />
         </View>
-        <View style={{ width: 40 }} />
+        <Text style={[styles.headerTitle, { color: theme.text }]}>Predictor</Text>
+        {modelId && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
       </View>
 
       <ScrollView
@@ -416,12 +410,11 @@ export default function PredictorScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1,
   },
-  headerCenter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerIcon: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 16, fontWeight: '700' },
+  headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   liveDot: { width: 6, height: 6, borderRadius: 3 },
   content: { padding: 16, gap: 16 },
   loadingBar: {

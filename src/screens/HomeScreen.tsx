@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, StatusBar,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView,
+  Animated, StatusBar, Dimensions,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,42 +12,44 @@ import {
   IconSettings, IconModels,
 } from '../components/Icons';
 
+const { width: SW } = Dimensions.get('window');
+
 const MODULES = [
   {
     id: 'MatchAI',
-    screen: 'MatchAI',
+    tab: 'MatchAI',
     title: 'AI Coach',
-    desc: 'Ask anything about football — tactics, players, teams. On-device. No internet needed.',
+    desc: 'Tactics, players, clubs — on-device.',
     track: 'QVAC',
     trackColor: '#22c55e',
-    icon: (c: string) => <IconBall size={32} color={c} />,
+    Icon: IconBall,
   },
   {
     id: 'Predictor',
-    screen: 'Predictor',
+    tab: 'Predictor',
     title: 'Predictor',
-    desc: 'Pick two teams. Get an on-device AI match prediction with reasoning.',
-    track: 'QVAC + RAG',
+    desc: 'Match prediction with score + reasoning.',
+    track: 'QVAC',
     trackColor: '#22c55e',
-    icon: (c: string) => <IconTarget size={32} color={c} />,
+    Icon: IconTarget,
   },
   {
     id: 'ScoutLens',
-    screen: 'ScoutLens',
+    tab: 'ScoutLens',
     title: 'Scout Lens',
-    desc: 'Point your camera at a jersey, player card, or match screen. AI tells you who it is.',
+    desc: 'Identify jerseys, badges, scoreboards.',
     track: 'QVAC Vision',
     trackColor: '#22c55e',
-    icon: (c: string) => <IconCamera size={32} color={c} />,
+    Icon: IconCamera,
   },
   {
     id: 'FanRoom',
-    screen: 'FanRoom',
+    tab: 'FanRoom',
     title: 'Fan Room',
-    desc: 'Device-to-device fan chat. No server, no account. Works offline in the stadium.',
+    desc: 'P2P fan chat. No internet needed.',
     track: 'Pears P2P',
     trackColor: '#60a5fa',
-    icon: (c: string) => <IconFanRoom size={32} color={c} />,
+    Icon: IconFanRoom,
   },
 ];
 
@@ -56,136 +59,132 @@ export default function HomeScreen() {
   const theme = getTheme(themeMode);
   const insets = useSafeAreaInsets();
 
-  // Hero entrance
   const heroOpacity = useRef(new Animated.Value(0)).current;
-  const heroY = useRef(new Animated.Value(12)).current;
-
-  // Per-card animated values — translateY + opacity
-  const cardAnims = useRef(
-    MODULES.map(() => ({
-      ty: new Animated.Value(44),
-      op: new Animated.Value(0),
-    }))
-  ).current;
+  const heroScale = useRef(new Animated.Value(0.96)).current;
+  const cardAnims = useRef(MODULES.map(() => ({
+    ty: new Animated.Value(40),
+    op: new Animated.Value(0),
+  }))).current;
 
   useEffect(() => {
-    // Hero fades in first
     Animated.parallel([
-      Animated.timing(heroOpacity, { toValue: 1, duration: 380, useNativeDriver: true }),
-      Animated.spring(heroY, { toValue: 0, friction: 10, tension: 100, useNativeDriver: true }),
+      Animated.timing(heroOpacity, { toValue: 1, duration: 500, useNativeDriver: true }),
+      Animated.spring(heroScale, { toValue: 1, friction: 10, tension: 80, useNativeDriver: true }),
     ]).start();
 
-    // Cards stagger in after a 160ms head-start
-    const cardAnimations = cardAnims.map(anim =>
-      Animated.parallel([
-        Animated.spring(anim.ty, { toValue: 0, friction: 9, tension: 90, useNativeDriver: true }),
-        Animated.timing(anim.op, { toValue: 1, duration: 300, useNativeDriver: true }),
-      ])
-    );
     setTimeout(() => {
-      Animated.stagger(70, cardAnimations).start();
-    }, 160);
+      Animated.stagger(65, cardAnims.map(a =>
+        Animated.parallel([
+          Animated.spring(a.ty, { toValue: 0, friction: 9, tension: 90, useNativeDriver: true }),
+          Animated.timing(a.op, { toValue: 1, duration: 280, useNativeDriver: true }),
+        ])
+      )).start();
+    }, 180);
   }, []);
+
+  const accent = theme.accent;
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
-      <StatusBar barStyle={themeMode === 'dark' ? 'light-content' : 'dark-content'} />
-
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
-        <View style={styles.brand}>
-          <View style={[styles.brandDot, { backgroundColor: theme.accent }]} />
-          <Text style={[styles.brandName, { color: theme.text }]}>Scout</Text>
-        </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.headerBtn}
-            onPress={() => navigation.navigate('Models')}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <IconModels size={20} color={theme.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.headerBtn}
-            onPress={() => navigation.navigate('Settings')}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <IconSettings size={20} color={theme.textSecondary} />
-          </TouchableOpacity>
-        </View>
-      </View>
+      <StatusBar barStyle="light-content" />
 
       <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 24 }}
       >
-        {/* Hero — slides in */}
-        <Animated.View style={[styles.hero, { opacity: heroOpacity, transform: [{ translateY: heroY }] }]}>
-          <Text style={[styles.heroTitle, { color: theme.text }]}>Your on-device{'\n'}football AI.</Text>
-          <Text style={[styles.heroSub, { color: theme.textSecondary }]}>
-            AI runs on your phone. No cloud. No API key. Works in the stadium.
-          </Text>
-          <View style={[styles.heroBadge, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
-            <View style={[styles.heroBadgeDot, { backgroundColor: theme.accent }]} />
-            <Text style={[styles.heroBadgeText, { color: theme.textSecondary }]}>
-              Tether Developers Cup 2026
-            </Text>
+        {/* ── PITCH HERO ─────────────────────────────────────────── */}
+        <Animated.View style={[
+          styles.hero,
+          { paddingTop: insets.top + 16, opacity: heroOpacity, transform: [{ scale: heroScale }] },
+        ]}>
+          {/* Decorative pitch elements */}
+          <View style={[styles.pitchCircleOuter, { borderColor: accent + '18' }]} />
+          <View style={[styles.pitchCircleInner, { borderColor: accent + '12' }]} />
+          <View style={[styles.pitchMidLine, { backgroundColor: accent + '10' }]} />
+
+          {/* Header row */}
+          <View style={[styles.heroHeader, { paddingHorizontal: 20 }]}>
+            <View style={styles.wordmarkRow}>
+              <View style={[styles.wordmarkDot, { backgroundColor: accent }]} />
+              <Text style={styles.wordmark}>SCOUT</Text>
+            </View>
+            <View style={styles.heroActions}>
+              <TouchableOpacity onPress={() => navigation.navigate('Models')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <IconModels size={19} color="rgba(255,255,255,0.6)" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('Settings')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <IconSettings size={19} color="rgba(255,255,255,0.6)" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Hero body */}
+          <View style={styles.heroBody}>
+            <Text style={styles.heroTagline}>On-Device Football AI</Text>
+            <View style={[styles.aiReadyBadge, { backgroundColor: accent + '28', borderColor: accent + '50' }]}>
+              <View style={[styles.aiReadyDot, { backgroundColor: accent }]} />
+              <Text style={[styles.aiReadyText, { color: accent }]}>AI READY · NO CLOUD</Text>
+            </View>
+            <View style={styles.heroStats}>
+              {[
+                { v: '4', l: 'Modules' },
+                { v: 'QVAC', l: 'SDK' },
+                { v: 'P2P', l: 'Pears' },
+              ].map((s, i) => (
+                <React.Fragment key={s.l}>
+                  {i > 0 && <View style={styles.heroStatDiv} />}
+                  <View style={styles.heroStat}>
+                    <Text style={[styles.heroStatVal, { color: '#fff' }]}>{s.v}</Text>
+                    <Text style={[styles.heroStatLabel, { color: 'rgba(255,255,255,0.5)' }]}>{s.l}</Text>
+                  </View>
+                </React.Fragment>
+              ))}
+            </View>
           </View>
         </Animated.View>
 
-        {/* Stats strip */}
-        <View style={[styles.statsStrip, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          {[
-            { value: '4', label: 'Modules' },
-            { value: 'QVAC', label: 'SDK' },
-            { value: 'P2P', label: 'Pears' },
-            { value: '100%', label: 'On-Device' },
-          ].map((s, i) => (
-            <React.Fragment key={s.label}>
-              {i > 0 && <View style={[styles.statsDivider, { backgroundColor: theme.border }]} />}
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: theme.accent }]}>{s.value}</Text>
-                <Text style={[styles.statLabel, { color: theme.textSecondary }]}>{s.label}</Text>
-              </View>
-            </React.Fragment>
-          ))}
-        </View>
+        {/* ── MODULE GRID ────────────────────────────────────────── */}
+        <View style={styles.gridWrap}>
+          <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>MODULES</Text>
+          <View style={styles.grid}>
+            {MODULES.map((mod, i) => (
+              <Animated.View
+                key={mod.id}
+                style={[
+                  styles.gridCell,
+                  { opacity: cardAnims[i].op, transform: [{ translateY: cardAnims[i].ty }] },
+                ]}
+              >
+                <TouchableOpacity
+                  style={[styles.tile, { backgroundColor: theme.card, borderColor: theme.border }]}
+                  activeOpacity={0.72}
+                  onPress={() => navigation.navigate(mod.tab)}
+                >
+                  {/* Top accent stripe */}
+                  <View style={[styles.tileStripe, { backgroundColor: mod.trackColor }]} />
 
-        {/* Module cards — stagger in */}
-        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Modules</Text>
-        {MODULES.map((mod, i) => (
-          <Animated.View
-            key={mod.id}
-            style={{ opacity: cardAnims[i].op, transform: [{ translateY: cardAnims[i].ty }] }}
-          >
-            <TouchableOpacity
-              activeOpacity={0.72}
-              onPress={() => navigation.navigate(mod.screen)}
-            >
-              <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                <View style={[styles.accentBar, { backgroundColor: mod.trackColor }]} />
-                <View style={styles.cardInner}>
-                  <View style={styles.cardLeft}>
-                    <Text style={[styles.cardTitle, { color: theme.text }]}>{mod.title}</Text>
-                    <Text style={[styles.cardDesc, { color: theme.textSecondary }]}>{mod.desc}</Text>
-                    <View style={[styles.trackBadge, { backgroundColor: mod.trackColor + '18', borderColor: mod.trackColor + '44' }]}>
-                      <Text style={[styles.trackText, { color: mod.trackColor }]}>{mod.track}</Text>
+                  <View style={styles.tileBody}>
+                    <View style={[styles.tileIconBox, { backgroundColor: mod.trackColor + '18' }]}>
+                      <mod.Icon size={26} color={mod.trackColor} />
+                    </View>
+                    <Text style={[styles.tileTitle, { color: theme.text }]}>{mod.title}</Text>
+                    <Text style={[styles.tileDesc, { color: theme.textSecondary }]} numberOfLines={2}>
+                      {mod.desc}
+                    </Text>
+                    <View style={[styles.tileBadge, { backgroundColor: mod.trackColor + '18', borderColor: mod.trackColor + '44' }]}>
+                      <Text style={[styles.tileBadgeText, { color: mod.trackColor }]}>{mod.track}</Text>
                     </View>
                   </View>
-                  <View style={[styles.iconBox, { backgroundColor: mod.trackColor + '14' }]}>
-                    {mod.icon(mod.trackColor)}
-                  </View>
-                </View>
-              </View>
-            </TouchableOpacity>
-          </Animated.View>
-        ))}
+                </TouchableOpacity>
+              </Animated.View>
+            ))}
+          </View>
+        </View>
 
-        {/* Footer */}
+        {/* ── FOOTER ─────────────────────────────────────────────── */}
         <TouchableOpacity onPress={() => navigation.navigate('About')} style={styles.footer}>
           <Text style={[styles.footerText, { color: theme.textSecondary }]}>
-            Scout v1.0 · QVAC SDK · Pears · On-Device AI
+            Scout v1.0 · Tether Developers Cup 2026
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -193,61 +192,96 @@ export default function HomeScreen() {
   );
 }
 
+const HERO_H = 260;
+
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 14, borderBottomWidth: 1,
+
+  // Hero
+  hero: {
+    height: HERO_H,
+    backgroundColor: '#0d1a0d',
+    overflow: 'hidden',
+    marginBottom: 4,
   },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  brandDot: { width: 8, height: 8, borderRadius: 4 },
-  brandName: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 },
-  headerActions: { flexDirection: 'row', gap: 16 },
-  headerBtn: { padding: 4 },
-  scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 16, paddingTop: 24 },
-  hero: { marginBottom: 32, gap: 10 },
-  heroTitle: { fontSize: 32, fontWeight: '800', letterSpacing: -1, lineHeight: 38 },
-  heroSub: { fontSize: 14, lineHeight: 20 },
-  heroBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 7, alignSelf: 'flex-start',
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, marginTop: 4,
+  pitchCircleOuter: {
+    position: 'absolute',
+    width: SW * 0.95,
+    height: SW * 0.95,
+    borderRadius: SW * 0.475,
+    borderWidth: 1,
+    top: HERO_H / 2 - SW * 0.475,
+    left: SW * 0.025,
   },
-  heroBadgeDot: { width: 6, height: 6, borderRadius: 3 },
-  heroBadgeText: { fontSize: 11, fontWeight: '600' },
+  pitchCircleInner: {
+    position: 'absolute',
+    width: SW * 0.5,
+    height: SW * 0.5,
+    borderRadius: SW * 0.25,
+    borderWidth: 1,
+    top: HERO_H / 2 - SW * 0.25,
+    left: SW * 0.25,
+  },
+  pitchMidLine: {
+    position: 'absolute',
+    height: 1,
+    left: 0,
+    right: 0,
+    top: HERO_H / 2,
+  },
+  heroHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  wordmarkRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  wordmarkDot: { width: 7, height: 7, borderRadius: 3.5 },
+  wordmark: { fontSize: 22, fontWeight: '900', color: '#fff', letterSpacing: 4 },
+  heroActions: { flexDirection: 'row', gap: 20 },
+  heroBody: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingBottom: 8,
+  },
+  heroTagline: { fontSize: 15, fontWeight: '600', color: 'rgba(255,255,255,0.7)', letterSpacing: 0.5 },
+  aiReadyBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 7,
+    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1,
+  },
+  aiReadyDot: { width: 6, height: 6, borderRadius: 3 },
+  aiReadyText: { fontSize: 11, fontWeight: '800', letterSpacing: 1 },
+  heroStats: { flexDirection: 'row', alignItems: 'center', gap: 20 },
+  heroStat: { alignItems: 'center', gap: 2 },
+  heroStatVal: { fontSize: 16, fontWeight: '800' },
+  heroStatLabel: { fontSize: 10, fontWeight: '600', letterSpacing: 0.5 },
+  heroStatDiv: { width: 1, height: 24, backgroundColor: 'rgba(255,255,255,0.15)' },
+
+  // Grid
+  gridWrap: { paddingHorizontal: 14, paddingTop: 20 },
   sectionLabel: {
-    fontSize: 10, fontWeight: '700', letterSpacing: 1.4,
-    textTransform: 'uppercase', marginBottom: 12,
+    fontSize: 10, fontWeight: '700', letterSpacing: 1.6,
+    marginBottom: 14, paddingLeft: 2,
   },
-  card: {
-    borderRadius: 14, borderWidth: 1, marginBottom: 12,
-    flexDirection: 'row', overflow: 'hidden',
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  gridCell: { width: (SW - 38) / 2 },
+  tile: {
+    borderRadius: 16, borderWidth: 1,
+    overflow: 'hidden',
   },
-  accentBar: { width: 4 },
-  cardInner: {
-    flex: 1, flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between', padding: 18, gap: 16,
-  },
-  cardLeft: { flex: 1, gap: 6 },
-  cardTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  cardDesc: { fontSize: 13, lineHeight: 19 },
-  trackBadge: {
+  tileStripe: { height: 3 },
+  tileBody: { padding: 16, gap: 8 },
+  tileIconBox: { width: 46, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  tileTitle: { fontSize: 15, fontWeight: '800', letterSpacing: -0.3, marginTop: 2 },
+  tileDesc: { fontSize: 12, lineHeight: 17 },
+  tileBadge: {
     alignSelf: 'flex-start', borderWidth: 1, borderRadius: 6,
-    paddingHorizontal: 8, paddingVertical: 3, marginTop: 2,
+    paddingHorizontal: 7, paddingVertical: 3, marginTop: 2,
   },
-  trackText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
-  iconBox: {
-    width: 60, height: 60, borderRadius: 14,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  statsStrip: {
-    flexDirection: 'row', borderRadius: 14, borderWidth: 1,
-    marginBottom: 28, overflow: 'hidden',
-  },
-  statItem: { flex: 1, alignItems: 'center', paddingVertical: 14, gap: 3 },
-  statValue: { fontSize: 15, fontWeight: '800', letterSpacing: -0.3 },
-  statLabel: { fontSize: 10, fontWeight: '600', letterSpacing: 0.5 },
-  statsDivider: { width: 1 },
-  footer: { alignItems: 'center', marginTop: 16 },
+  tileBadgeText: { fontSize: 9, fontWeight: '700', letterSpacing: 0.4 },
+
+  // Footer
+  footer: { alignItems: 'center', marginTop: 20 },
   footerText: { fontSize: 11 },
 });

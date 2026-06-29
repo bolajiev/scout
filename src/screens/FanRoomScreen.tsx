@@ -48,16 +48,10 @@ export default function FanRoomScreen() {
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: theme.border }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <IconBack size={20} color={blue} />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <IconOffline size={14} color={blue} />
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Fan Room</Text>
-          <View style={[styles.onlineDot, { backgroundColor: blue }]} />
-        </View>
-        <View style={{ width: 40 }} />
+      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
+        <IconOffline size={14} color={blue} />
+        <Text style={[styles.headerTitle, { color: theme.text }]}>Fan Room</Text>
+        <View style={[styles.onlineDot, { backgroundColor: blue }]} />
       </View>
 
       {/* Room info banner */}
@@ -141,11 +135,10 @@ export default function FanRoomScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1,
   },
-  headerCenter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  headerTitle: { fontSize: 16, fontWeight: '700' },
+  headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   onlineDot: { width: 6, height: 6, borderRadius: 3 },
   roomBanner: {
     paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, gap: 2,

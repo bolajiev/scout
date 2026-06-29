@@ -121,15 +121,9 @@ export default function ScoutLensScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: theme.border }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <IconBack size={20} color={accent} />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <View style={[styles.headerDot, { backgroundColor: accent }]} />
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Scout Lens</Text>
-        </View>
-        <View style={{ width: 40 }} />
+      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
+        <View style={[styles.headerDot, { backgroundColor: accent }]} />
+        <Text style={[styles.headerTitle, { color: theme.text }]}>Scout Lens</Text>
       </View>
 
       <ScrollView
@@ -217,12 +211,11 @@ export default function ScoutLensScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1,
   },
-  headerCenter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerDot: { width: 7, height: 7, borderRadius: 3.5 },
-  headerTitle: { fontSize: 16, fontWeight: '700' },
+  headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   content: { padding: 16, gap: 14 },
   noModelCard: { borderRadius: 10, borderWidth: 1, padding: 14 },
   noModelText: { fontSize: 13, textAlign: 'center' },
