@@ -1,48 +1,35 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconBack, IconTarget, IconStop } from '../components/Icons';
+import { IconTarget, IconStop } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 
-const SYSTEM_PROMPT = `You are Scout's Predictor — an on-device football match prediction AI. Always respond in EXACTLY this format, no deviation:
+const SYSTEM_PROMPT = `You are Scout's Predictor — an on-device football match prediction AI. You use your training knowledge of team history, tactics, head-to-head records, and playing styles. If the user provides additional match context (form, injuries, venue, etc.), factor it in. Always respond in EXACTLY this format, no deviation:
 
-WINNER: [team name]
+WINNER: [team name or Draw]
 SCORE: [e.g. 2-1]
 CONFIDENCE: [Low/Medium/High]
 ---
-[2-3 sentences: key factors, head-to-head, tactical notes. No fluff. Be decisive.]
+[2-4 sentences: key tactical factors, head-to-head history, notable strengths/weaknesses. Be decisive and specific.]
 
 Do not add anything before WINNER or after the analysis. Always respond in English.`;
 
-const TEAM_GROUPS = [
-  {
-    label: 'Europe',
-    teams: ['Manchester City', 'Arsenal', 'Liverpool', 'Chelsea', 'Real Madrid', 'Barcelona', 'Bayern Munich', 'PSG', 'Juventus', 'AC Milan', 'Inter Milan', 'Atletico Madrid', 'Borussia Dortmund', 'Ajax'],
-  },
-  {
-    label: 'International',
-    teams: ['England', 'France', 'Germany', 'Spain', 'Brazil', 'Argentina', 'Portugal', 'Netherlands', 'Italy', 'Belgium', 'Uruguay', 'Colombia', 'Nigeria', 'Senegal', 'Japan', 'Morocco'],
-  },
-];
-
 export default function PredictorScreen() {
-  const navigation = useNavigation<any>();
   const themeMode = useTheme();
   const theme = getTheme(themeMode);
   const insets = useSafeAreaInsets();
 
-  const [teamA, setTeamA] = useState<string | null>(null);
-  const [teamB, setTeamB] = useState<string | null>(null);
-  const [selecting, setSelecting] = useState<'A' | 'B' | null>(null);
+  const [teamA, setTeamA] = useState('');
+  const [teamB, setTeamB] = useState('');
+  const [context, setContext] = useState('');
   const [prediction, setPrediction] = useState('');
   const [parsed, setParsed] = useState<{ winner: string; score: string; confidence: string; analysis: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -138,14 +125,16 @@ export default function PredictorScreen() {
   };
 
   const predict = async () => {
-    if (!teamA || !teamB || isGenerating || !modelId) return;
+    if (!teamA.trim() || !teamB.trim() || isGenerating || !modelId) return;
     setPrediction('');
     setParsed(null);
     setElapsed(null);
     setIsGenerating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    const prompt = `Predict the match: ${teamA} vs ${teamB}`;
+    const prompt = context.trim()
+      ? `Predict: ${teamA.trim()} vs ${teamB.trim()}\n\nMatch context: ${context.trim()}`
+      : `Predict: ${teamA.trim()} vs ${teamB.trim()}`;
     const genStart = Date.now();
 
     try {
@@ -205,51 +194,6 @@ export default function PredictorScreen() {
 
   const accent = theme.accent;
 
-  // Team picker screen
-  if (selecting) {
-    const other = selecting === 'A' ? teamB : teamA;
-    return (
-      <View style={[styles.root, { backgroundColor: theme.background }]}>
-        <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: theme.border }]}>
-          <TouchableOpacity onPress={() => setSelecting(null)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <IconBack size={20} color={accent} />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Pick Team {selecting}</Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12, paddingBottom: insets.bottom + 20 }}>
-          {TEAM_GROUPS.map(group => (
-            <View key={group.label}>
-              <Text style={[styles.groupLabel, { color: theme.textSecondary }]}>{group.label}</Text>
-              {group.teams.map(team => {
-                const isOther = team === other;
-                return (
-                  <TouchableOpacity
-                    key={team}
-                    style={[styles.teamRow, { borderColor: theme.border, opacity: isOther ? 0.3 : 1 }]}
-                    onPress={() => {
-                      if (isOther) return;
-                      if (selecting === 'A') setTeamA(team);
-                      else setTeamB(team);
-                      setSelecting(null);
-                      setPrediction('');
-                    }}
-                    disabled={isOther}
-                  >
-                    <Text style={[styles.teamRowText, { color: theme.text }]}>{team}</Text>
-                    {(selecting === 'A' ? teamA : teamB) === team && (
-                      <View style={[styles.teamRowCheck, { backgroundColor: accent }]} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          ))}
-        </ScrollView>
-      </View>
-    );
-  }
-
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
@@ -271,42 +215,57 @@ export default function PredictorScreen() {
           </Animated.View>
         )}
 
-        {/* Team picker */}
+        {/* Team inputs */}
         <View style={styles.matchup}>
-          <TouchableOpacity
-            style={[styles.teamCard, { backgroundColor: theme.card, borderColor: teamA ? accent : theme.border }]}
-            onPress={() => setSelecting('A')}
-          >
+          <View style={[styles.teamCard, { backgroundColor: theme.card, borderColor: teamA.trim() ? accent : theme.border }]}>
             <Text style={[styles.teamCardLabel, { color: theme.textSecondary }]}>Home</Text>
-            <Text style={[styles.teamCardName, { color: teamA ? theme.text : theme.textSecondary }]} numberOfLines={2}>
-              {teamA ?? 'Pick team'}
-            </Text>
-          </TouchableOpacity>
+            <TextInput
+              style={[styles.teamInput, { color: theme.text }]}
+              placeholder="e.g. Arsenal"
+              placeholderTextColor={theme.textSecondary}
+              value={teamA}
+              onChangeText={t => { setTeamA(t); setParsed(null); }}
+              returnKeyType="next"
+            />
+          </View>
 
           <View style={[styles.vsBox, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.vsText, { color: theme.textSecondary }]}>VS</Text>
           </View>
 
-          <TouchableOpacity
-            style={[styles.teamCard, { backgroundColor: theme.card, borderColor: teamB ? accent : theme.border }]}
-            onPress={() => setSelecting('B')}
-          >
+          <View style={[styles.teamCard, { backgroundColor: theme.card, borderColor: teamB.trim() ? accent : theme.border }]}>
             <Text style={[styles.teamCardLabel, { color: theme.textSecondary }]}>Away</Text>
-            <Text style={[styles.teamCardName, { color: teamB ? theme.text : theme.textSecondary }]} numberOfLines={2}>
-              {teamB ?? 'Pick team'}
-            </Text>
-          </TouchableOpacity>
+            <TextInput
+              style={[styles.teamInput, { color: theme.text }]}
+              placeholder="e.g. Real Madrid"
+              placeholderTextColor={theme.textSecondary}
+              value={teamB}
+              onChangeText={t => { setTeamB(t); setParsed(null); }}
+              returnKeyType="done"
+            />
+          </View>
         </View>
+
+        {/* Optional context */}
+        <TextInput
+          style={[styles.contextInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.text }]}
+          placeholder="Add context (optional): recent form, injuries, venue, rivalry..."
+          placeholderTextColor={theme.textSecondary}
+          value={context}
+          onChangeText={setContext}
+          multiline
+          numberOfLines={2}
+        />
 
         {/* Predict / Stop button */}
         <Animated.View style={{ opacity: pulsAnim }}>
           <TouchableOpacity
             style={[styles.predictBtn, {
               backgroundColor: isGenerating ? theme.error : accent,
-              opacity: (teamA && teamB && modelId) || isGenerating ? 1 : 0.38,
+              opacity: (teamA.trim() && teamB.trim() && modelId) || isGenerating ? 1 : 0.38,
             }]}
             onPress={isGenerating ? stopPrediction : predict}
-            disabled={!isGenerating && (!teamA || !teamB || !modelId)}
+            disabled={!isGenerating && (!teamA.trim() || !teamB.trim() || !modelId)}
             activeOpacity={0.82}
           >
             {isGenerating ? (
@@ -423,11 +382,15 @@ const styles = StyleSheet.create({
   loadingText: { fontSize: 13, fontWeight: '500' },
   matchup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   teamCard: {
-    flex: 1, borderRadius: 14, borderWidth: 1.5, padding: 16,
-    alignItems: 'center', gap: 4, minHeight: 80, justifyContent: 'center',
+    flex: 1, borderRadius: 14, borderWidth: 1.5, padding: 14,
+    gap: 4, minHeight: 80,
   },
   teamCardLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase' },
-  teamCardName: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
+  teamInput: { fontSize: 15, fontWeight: '700', paddingTop: 2 },
+  contextInput: {
+    borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12,
+    fontSize: 14, lineHeight: 20, minHeight: 60,
+  },
   vsBox: {
     width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1,
@@ -465,11 +428,4 @@ const styles = StyleSheet.create({
   scoreText: { fontSize: 32, fontWeight: '900', letterSpacing: -1 },
   scoreVs: { fontSize: 14, fontWeight: '700' },
   analysisCard: { borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden' },
-  groupLabel: {
-    fontSize: 10, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase',
-    marginTop: 16, marginBottom: 6,
-  },
-  teamRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1 },
-  teamRowText: { flex: 1, fontSize: 15, fontWeight: '500' },
-  teamRowCheck: { width: 8, height: 8, borderRadius: 4 },
 });
