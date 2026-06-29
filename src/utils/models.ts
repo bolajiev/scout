@@ -1,10 +1,7 @@
 import {
   QWEN3_1_7B_INST_Q4,
-  SMOLVLM2_500M_MULTIMODAL_Q8_0,
-  MMPROJ_SMOLVLM2_500M_MULTIMODAL_Q8_0,
   GEMMA4_2B_MULTIMODAL_Q4_K_M,
-  QWEN3VL_2B_MULTIMODAL_Q4_K,
-  MMPROJ_QWEN3VL_2B_MULTIMODAL_Q4_K,
+  MMPROJ_GEMMA4_2B_MULTIMODAL_Q8_0,
 } from '@qvac/sdk';
 
 const MEDPSY_4B_SRC = 'registry://hf/qvac/MedPsy-4B-GGUF/resolve/main/medpsy-4b-q4_k_m-imat.gguf';
@@ -15,9 +12,7 @@ export const MODEL_KEYS = {
   TEXT_FAST: 'text-fast',
   TEXT_HEALTH: 'text-health',
   TEXT_HEALTH_LITE: 'text-health-lite',
-  TEXT_CODE: 'text-code',
   VISION: 'vision',
-  VISION_2B: 'vision-2b',
 } as const;
 
 export type ModelKey = (typeof MODEL_KEYS)[keyof typeof MODEL_KEYS];
@@ -58,40 +53,17 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
     heavy: true,
   },
   {
-    id: MODEL_KEYS.TEXT_CODE,
-    name: 'Gemma 4 2B',
-    modelType: 'text',
-    tagline: 'Strong reasoning, Google model.',
-    description: 'Gemma 4 2B by Google. Powerful reasoning model, good for complex match analysis and tactical breakdowns. Requires 3 GB+ free RAM.',
-    size: '2.7 GB',
-    sizeBytes: 2_700_000_000,
-    modelSrc: GEMMA4_2B_MULTIMODAL_Q4_K_M.src,
-    supports: ['text'],
-    heavy: true,
-  },
-  {
     id: MODEL_KEYS.VISION,
-    name: 'SmolVLM2 500M',
+    name: 'Gemma 4 2B',
     modelType: 'vision',
-    tagline: 'On-device image understanding.',
-    description: 'SmolVLM2 500M for Scout Lens. Identifies player jerseys, club badges, match scoreboards, and football cards — fully offline.',
-    size: '521 MB',
-    sizeBytes: 436_808_704 + 108_785_184,
-    modelSrc: SMOLVLM2_500M_MULTIMODAL_Q8_0.src,
-    projectionModelSrc: MMPROJ_SMOLVLM2_500M_MULTIMODAL_Q8_0.src,
-    supports: ['vision'],
-  },
-  {
-    id: MODEL_KEYS.VISION_2B,
-    name: 'Qwen3-VL 2B',
-    modelType: 'vision',
-    tagline: 'Sharper vision, larger context.',
-    description: 'Qwen3-VL 2B by Alibaba. Sharper vision for Scout Lens — better at reading scoreboard text, match graphics, and complex badge details. Requires ~2 GB free RAM.',
-    size: '1.7 GB',
-    sizeBytes: 1_400_000_000 + 290_000_000,
-    modelSrc: QWEN3VL_2B_MULTIMODAL_Q4_K.src,
-    projectionModelSrc: MMPROJ_QWEN3VL_2B_MULTIMODAL_Q4_K.src,
-    supports: ['vision'],
+    tagline: 'Google vision model — Scout Lens.',
+    description: 'Gemma 4 E2B by Google. Native vision support built into the architecture — identifies jerseys, club badges, and scoreboards for Scout Lens. Also strong for text analysis. Requires ~4 GB free RAM.',
+    size: '3.8 GB',
+    sizeBytes: 3_462_678_272 + 557_367_776,
+    modelSrc: GEMMA4_2B_MULTIMODAL_Q4_K_M.src,
+    projectionModelSrc: MMPROJ_GEMMA4_2B_MULTIMODAL_Q8_0.src,
+    supports: ['vision', 'text'],
+    heavy: true,
   },
 ];
 
