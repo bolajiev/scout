@@ -22,6 +22,22 @@ CONFIDENCE: [Low/Medium/High]
 
 Do not add anything before WINNER or after the analysis. Always respond in English.`;
 
+interface Fixture {
+  idEvent: string;
+  strHomeTeam: string;
+  strAwayTeam: string;
+  strLeague: string;
+  strTime: string;
+}
+
+const todayISO = () => new Date().toISOString().split('T')[0];
+
+const fmtTime = (t: string) => {
+  if (!t || t === '00:00:00') return '';
+  const [h, m] = t.split(':');
+  return `${h}:${m}`;
+};
+
 export default function PredictorScreen() {
   const themeMode = useTheme();
   const theme = getTheme(themeMode);
@@ -31,6 +47,8 @@ export default function PredictorScreen() {
   const [teamB, setTeamB] = useState('');
   const [context, setContext] = useState('');
   const [prediction, setPrediction] = useState('');
+  const [fixtures, setFixtures] = useState<Fixture[]>([]);
+  const [fixturesLoading, setFixturesLoading] = useState(true);
   const [parsed, setParsed] = useState<{ winner: string; score: string; confidence: string; analysis: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [modelId, setModelId] = useState<string | null>(null);
@@ -53,6 +71,7 @@ export default function PredictorScreen() {
   useEffect(() => {
     mountedRef.current = true;
     loadModel();
+    fetchFixtures();
     return () => {
       mountedRef.current = false;
       clearNotification();
@@ -98,6 +117,24 @@ export default function PredictorScreen() {
       ]).start();
     }
   }, [isGenerating]);
+
+  const fetchFixtures = async () => {
+    try {
+      const res = await fetch(
+        `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${todayISO()}&s=Soccer`
+      );
+      const data = await res.json();
+      // Only show matches not yet played (no score)
+      const upcoming = (data.events ?? []).filter(
+        (e: any) => e.intHomeScore === null || e.intHomeScore === '' || e.intHomeScore === 'null'
+      );
+      if (mountedRef.current) setFixtures(upcoming);
+    } catch {
+      // Optional feature — fail silently
+    } finally {
+      if (mountedRef.current) setFixturesLoading(false);
+    }
+  };
 
   const loadModel = async () => {
     try {
@@ -208,6 +245,51 @@ export default function PredictorScreen() {
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
+        {/* Today's fixtures */}
+        {(fixtures.length > 0 || fixturesLoading) && (
+          <View style={styles.fixturesSection}>
+            <View style={styles.fixturesHeader}>
+              <Text style={[styles.fixturesSectionLabel, { color: theme.textSecondary }]}>TODAY'S MATCHES</Text>
+              <View style={[styles.apiDisclosure, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                <Text style={[styles.apiDisclosureText, { color: theme.textSecondary }]}>via TheSportsDB</Text>
+              </View>
+            </View>
+            {fixturesLoading ? (
+              <Text style={[styles.fixturesLoading, { color: theme.textSecondary }]}>Fetching fixtures...</Text>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fixturesScroll}>
+                {fixtures.map(f => (
+                  <TouchableOpacity
+                    key={f.idEvent}
+                    style={[styles.fixtureCard, {
+                      backgroundColor: theme.card,
+                      borderColor: (teamA === f.strHomeTeam && teamB === f.strAwayTeam) ? accent + '80' : theme.border,
+                    }]}
+                    onPress={() => {
+                      setTeamA(f.strHomeTeam);
+                      setTeamB(f.strAwayTeam);
+                      setParsed(null);
+                      setPrediction('');
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.fixtureLeague, { color: theme.textSecondary }]} numberOfLines={1}>
+                      {f.strLeague}
+                    </Text>
+                    <Text style={[styles.fixtureHome, { color: theme.text }]} numberOfLines={1}>{f.strHomeTeam}</Text>
+                    <Text style={[styles.fixtureVs, { color: theme.textSecondary }]}>vs</Text>
+                    <Text style={[styles.fixtureAway, { color: theme.text }]} numberOfLines={1}>{f.strAwayTeam}</Text>
+                    {fmtTime(f.strTime) ? (
+                      <Text style={[styles.fixtureTime, { color: accent }]}>{fmtTime(f.strTime)}</Text>
+                    ) : null}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        )}
+
         {/* Model loading pulse */}
         {modelLoading && !noModel && (
           <Animated.View style={[styles.loadingBar, { backgroundColor: theme.card, borderColor: theme.border, opacity: loadPulse }]}>
@@ -289,6 +371,13 @@ export default function PredictorScreen() {
             </Text>
           </View>
         )}
+
+        {/* Disclosure */}
+        <View style={styles.disclosureRow}>
+          <Text style={[styles.disclosureText, { color: theme.textSecondary }]}>
+            Fixtures: TheSportsDB (thesportsdb.com) · Prediction AI: QVAC SDK, on-device
+          </Text>
+        </View>
 
         {/* Streaming result (plain) */}
         {isGenerating && prediction.length > 0 && (
@@ -381,6 +470,27 @@ const styles = StyleSheet.create({
   },
   loadingText: { fontSize: 13, fontWeight: '500' },
   matchup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // Fixtures
+  fixturesSection: { gap: 10 },
+  fixturesHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  fixturesSectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.6 },
+  apiDisclosure: { borderRadius: 6, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
+  apiDisclosureText: { fontSize: 9, fontWeight: '600' },
+  fixturesLoading: { fontSize: 13, fontStyle: 'italic' },
+  fixturesScroll: { gap: 8, paddingBottom: 2 },
+  fixtureCard: {
+    width: 148, borderRadius: 12, borderWidth: 1, padding: 12, gap: 3,
+  },
+  fixtureLeague: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
+  fixtureHome: { fontSize: 13, fontWeight: '700' },
+  fixtureVs: { fontSize: 10 },
+  fixtureAway: { fontSize: 13, fontWeight: '700' },
+  fixtureTime: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+
+  // Disclosure
+  disclosureRow: { paddingVertical: 4 },
+  disclosureText: { fontSize: 10, lineHeight: 15, textAlign: 'center' },
+
   teamCard: {
     flex: 1, borderRadius: 14, borderWidth: 1.5, padding: 14,
     gap: 4, minHeight: 80,

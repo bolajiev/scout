@@ -120,9 +120,25 @@ export default function AboutScreen() {
         <Text style={[styles.sectionLabel, { color: theme.textSecondary, marginTop: 8 }]}>Built with</Text>
         <View style={[styles.techCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
           {[
-            { name: 'QVAC SDK', note: 'On-device LLM inference' },
+            { name: 'QVAC SDK', note: 'On-device LLM inference — all AI runs locally' },
             { name: 'Pears / Holepunch', note: 'P2P Fan Room network layer' },
             { name: 'Expo SDK 54', note: 'React Native framework' },
+          ].map((t, i) => (
+            <View key={t.name} style={[styles.techRow, { borderTopWidth: i > 0 ? 1 : 0, borderTopColor: theme.border }]}>
+              <Text style={[styles.techName, { color: theme.text }]}>{t.name}</Text>
+              <Text style={[styles.techNote, { color: theme.textSecondary }]}>{t.note}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Third-party disclosures */}
+        <Text style={[styles.sectionLabel, { color: theme.textSecondary, marginTop: 8 }]}>Third-party disclosures</Text>
+        <View style={[styles.techCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          {[
+            { name: 'TheSportsDB', note: 'Fixture data for Predictor · thesportsdb.com · Free public API · No account required' },
+            { name: 'Gemma 4 E2B', note: 'Google model weights via HuggingFace (bartowski/google_gemma-4-E2B-it-GGUF)' },
+            { name: 'Qwen3 1.7B', note: 'Alibaba model weights via QVAC SDK registry' },
+            { name: 'MedPsy 1.7B / 4B', note: 'QVAC model weights — inference on-device only' },
           ].map((t, i) => (
             <View key={t.name} style={[styles.techRow, { borderTopWidth: i > 0 ? 1 : 0, borderTopColor: theme.border }]}>
               <Text style={[styles.techName, { color: theme.text }]}>{t.name}</Text>
