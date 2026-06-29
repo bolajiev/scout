@@ -9,7 +9,8 @@ import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconBack, IconSend, IconStop, IconBall } from '../components/Icons';
+import { useRoute } from '@react-navigation/native';
+import { IconSend, IconStop, IconBall } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
@@ -33,6 +34,7 @@ interface Entry {
 
 export default function MatchAIScreen() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const themeMode = useTheme();
   const theme = getTheme(themeMode);
   const insets = useSafeAreaInsets();
@@ -47,6 +49,7 @@ export default function MatchAIScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const currentRunRef = useRef<any>(null);
   const mountedRef = useRef(true);
+  const prefillFiredRef = useRef(false);
 
   // Per-entry spring animations stored outside React state
   const entryAnimsRef = useRef<Record<string, { ty: Animated.Value; op: Animated.Value }>>({});
@@ -89,7 +92,16 @@ export default function MatchAIScreen() {
         return;
       }
       const mid = await llmManager.ensure(model, { ctx_size: 4096, device: 'auto' });
-      if (mountedRef.current) { setModelId(mid); setModelLoading(false); }
+      if (mountedRef.current) {
+        setModelId(mid);
+        setModelLoading(false);
+        // Fire prefill from HomeScreen chip — only once
+        const prefill = route.params?.prefill;
+        if (prefill && !prefillFiredRef.current) {
+          prefillFiredRef.current = true;
+          setTimeout(() => send(prefill), 100);
+        }
+      }
     } catch {
       if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
     }
