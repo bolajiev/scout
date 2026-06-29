@@ -49,6 +49,7 @@ export default function PredictorScreen() {
   const [prediction, setPrediction] = useState('');
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [fixturesLoading, setFixturesLoading] = useState(true);
+  const [noInternet, setNoInternet] = useState(false);
   const [parsed, setParsed] = useState<{ winner: string; score: string; confidence: string; analysis: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [modelId, setModelId] = useState<string | null>(null);
@@ -121,19 +122,36 @@ export default function PredictorScreen() {
   const fetchFixtures = async () => {
     try {
       const res = await fetch(
-        `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${todayISO()}&s=Soccer`
+        `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${todayISO()}&s=Soccer`,
+        { signal: AbortSignal.timeout(8000) }
       );
       const data = await res.json();
-      // Only show matches not yet played (no score)
-      const upcoming = (data.events ?? []).filter(
-        (e: any) => e.intHomeScore === null || e.intHomeScore === '' || e.intHomeScore === 'null'
-      );
-      if (mountedRef.current) setFixtures(upcoming);
+      const all: Fixture[] = data.events ?? [];
+
+      // Sort: World Cup matches first, then all others
+      const isWC = (f: Fixture) =>
+        /world cup/i.test(f.strLeague) || /fifa wc/i.test(f.strLeague);
+
+      const sorted = [
+        ...all.filter(isWC),
+        ...all.filter(f => !isWC(f)),
+      ];
+
+      if (mountedRef.current) {
+        setFixtures(sorted);
+        setNoInternet(false);
+      }
     } catch {
-      // Optional feature — fail silently
+      if (mountedRef.current) setNoInternet(true);
     } finally {
       if (mountedRef.current) setFixturesLoading(false);
     }
+  };
+
+  const retryFixtures = () => {
+    setFixturesLoading(true);
+    setNoInternet(false);
+    fetchFixtures();
   };
 
   const loadModel = async () => {
@@ -245,25 +263,49 @@ export default function PredictorScreen() {
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Today's fixtures */}
-        {(fixtures.length > 0 || fixturesLoading) && (
-          <View style={styles.fixturesSection}>
-            <View style={styles.fixturesHeader}>
-              <Text style={[styles.fixturesSectionLabel, { color: theme.textSecondary }]}>TODAY'S MATCHES</Text>
-              <View style={[styles.apiDisclosure, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                <Text style={[styles.apiDisclosureText, { color: theme.textSecondary }]}>via TheSportsDB</Text>
-              </View>
+        {/* Today's fixtures — World Cup first */}
+        <View style={styles.fixturesSection}>
+          <View style={styles.fixturesHeader}>
+            <View>
+              <Text style={[styles.fixturesSectionLabel, { color: accent }]}>FIFA WORLD CUP 2026</Text>
+              <Text style={[styles.fixturesTodayLabel, { color: theme.textSecondary }]}>Today's matches</Text>
             </View>
-            {fixturesLoading ? (
-              <Text style={[styles.fixturesLoading, { color: theme.textSecondary }]}>Fetching fixtures...</Text>
-            ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fixturesScroll}>
-                {fixtures.map(f => (
+            <View style={[styles.apiDisclosure, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <Text style={[styles.apiDisclosureText, { color: theme.textSecondary }]}>TheSportsDB</Text>
+            </View>
+          </View>
+
+          {fixturesLoading ? (
+            <Text style={[styles.fixturesLoading, { color: theme.textSecondary }]}>Loading fixtures...</Text>
+          ) : noInternet ? (
+            <TouchableOpacity
+              style={[styles.noInternetCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+              onPress={retryFixtures}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.noInternetIcon, { color: theme.textSecondary }]}>wifi</Text>
+              <View style={styles.noInternetText}>
+                <Text style={[styles.noInternetTitle, { color: theme.text }]}>Turn on internet to load fixtures</Text>
+                <Text style={[styles.noInternetSub, { color: theme.textSecondary }]}>
+                  Tap to retry · AI prediction runs offline
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ) : fixtures.length === 0 ? (
+            <Text style={[styles.fixturesLoading, { color: theme.textSecondary }]}>
+              No matches today · Type any teams below to predict
+            </Text>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fixturesScroll}>
+              {fixtures.map(f => {
+                const isWC = /world cup/i.test(f.strLeague) || /fifa wc/i.test(f.strLeague);
+                const selected = teamA === f.strHomeTeam && teamB === f.strAwayTeam;
+                return (
                   <TouchableOpacity
                     key={f.idEvent}
                     style={[styles.fixtureCard, {
                       backgroundColor: theme.card,
-                      borderColor: (teamA === f.strHomeTeam && teamB === f.strAwayTeam) ? accent + '80' : theme.border,
+                      borderColor: selected ? accent : isWC ? accent + '50' : theme.border,
                     }]}
                     onPress={() => {
                       setTeamA(f.strHomeTeam);
@@ -274,6 +316,11 @@ export default function PredictorScreen() {
                     }}
                     activeOpacity={0.75}
                   >
+                    {isWC && (
+                      <View style={[styles.wcBadge, { backgroundColor: accent + '20' }]}>
+                        <Text style={[styles.wcBadgeText, { color: accent }]}>WC 2026</Text>
+                      </View>
+                    )}
                     <Text style={[styles.fixtureLeague, { color: theme.textSecondary }]} numberOfLines={1}>
                       {f.strLeague}
                     </Text>
@@ -284,11 +331,11 @@ export default function PredictorScreen() {
                       <Text style={[styles.fixtureTime, { color: accent }]}>{fmtTime(f.strTime)}</Text>
                     ) : null}
                   </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
-          </View>
-        )}
+                );
+              })}
+            </ScrollView>
+          )}
+        </View>
 
         {/* Model loading pulse */}
         {modelLoading && !noModel && (
@@ -472,20 +519,29 @@ const styles = StyleSheet.create({
   matchup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   // Fixtures
   fixturesSection: { gap: 10 },
-  fixturesHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  fixturesSectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.6 },
-  apiDisclosure: { borderRadius: 6, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
+  fixturesHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  fixturesSectionLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 1.4 },
+  fixturesTodayLabel: { fontSize: 10, fontWeight: '500', marginTop: 1 },
+  apiDisclosure: { borderRadius: 6, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3, marginTop: 2 },
   apiDisclosureText: { fontSize: 9, fontWeight: '600' },
   fixturesLoading: { fontSize: 13, fontStyle: 'italic' },
   fixturesScroll: { gap: 8, paddingBottom: 2 },
-  fixtureCard: {
-    width: 148, borderRadius: 12, borderWidth: 1, padding: 12, gap: 3,
-  },
-  fixtureLeague: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
+  fixtureCard: { width: 152, borderRadius: 12, borderWidth: 1, padding: 12, gap: 3 },
+  wcBadge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start', marginBottom: 2 },
+  wcBadgeText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
+  fixtureLeague: { fontSize: 9, fontWeight: '600', letterSpacing: 0.3 },
   fixtureHome: { fontSize: 13, fontWeight: '700' },
   fixtureVs: { fontSize: 10 },
   fixtureAway: { fontSize: 13, fontWeight: '700' },
   fixtureTime: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+  noInternetCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderRadius: 12, borderWidth: 1, padding: 14,
+  },
+  noInternetIcon: { fontSize: 22 },
+  noInternetText: { flex: 1, gap: 2 },
+  noInternetTitle: { fontSize: 14, fontWeight: '700' },
+  noInternetSub: { fontSize: 11 },
 
   // Disclosure
   disclosureRow: { paddingVertical: 4 },
