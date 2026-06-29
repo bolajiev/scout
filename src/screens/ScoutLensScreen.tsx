@@ -94,12 +94,18 @@ export default function ScoutLensScreen() {
       });
 
       let streamed = '';
+      let lastFlush = 0;
       for await (const event of run.events) {
         if (event.type === 'contentDelta') {
           streamed += event.text;
-          if (mountedRef.current) setResult(streamed);
+          const now = Date.now();
+          if (mountedRef.current && now - lastFlush > 50) {
+            lastFlush = now;
+            setResult(streamed);
+          }
         }
       }
+      if (mountedRef.current) setResult(streamed);
       await run.final;
       currentRunRef.current = null;
       clearNotification();

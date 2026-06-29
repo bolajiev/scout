@@ -163,14 +163,23 @@ export default function MatchAIScreen() {
       showRunningNotification('AI Coach');
 
       let streamed = '';
+      let lastFlush = 0;
       for await (const event of run.events) {
         if (event.type === 'contentDelta') {
           streamed += event.text;
-          if (mountedRef.current) {
+          // Throttle renders to ~20fps — accumulate tokens between flushes
+          const now = Date.now();
+          if (mountedRef.current && now - lastFlush > 50) {
+            lastFlush = now;
             setEntries(prev => prev.map(e => e.id === entryId ? { ...e, answer: streamed } : e));
             scrollRef.current?.scrollToEnd({ animated: false });
           }
         }
+      }
+      // Final flush — always render the complete text
+      if (mountedRef.current) {
+        setEntries(prev => prev.map(e => e.id === entryId ? { ...e, answer: streamed } : e));
+        scrollRef.current?.scrollToEnd({ animated: false });
       }
 
       const [, stats] = await Promise.all([run.final, run.stats]);

@@ -218,12 +218,18 @@ export default function PredictorScreen() {
       showRunningNotification('Predictor');
 
       let streamed = '';
+      let lastFlush = 0;
       for await (const event of run.events) {
         if (event.type === 'contentDelta') {
           streamed += event.text;
-          if (mountedRef.current) setPrediction(streamed);
+          const now = Date.now();
+          if (mountedRef.current && now - lastFlush > 50) {
+            lastFlush = now;
+            setPrediction(streamed);
+          }
         }
       }
+      if (mountedRef.current) setPrediction(streamed);
       await Promise.all([run.final, run.stats]);
       currentRunRef.current = null;
       clearNotification();
