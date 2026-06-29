@@ -88,14 +88,11 @@ export default function HomeScreen() {
   const theme = getTheme(themeMode);
   const insets = useSafeAreaInsets();
 
-  const heroAnim = useRef(new Animated.Value(0)).current;
   const c1 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
   const c2 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
   const c3 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
 
   useEffect(() => {
-    Animated.timing(heroAnim, { toValue: 1, duration: 420, useNativeDriver: true }).start();
-
     const animCard = (c: typeof c1, delay: number) => {
       setTimeout(() => {
         Animated.parallel([
@@ -120,7 +117,7 @@ export default function HomeScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 36 }}>
 
         {/* ── TOP BAR ──────────────────────────────────────────────── */}
-        <Animated.View style={[styles.topBar, { paddingTop: insets.top + 14, opacity: heroAnim }]}>
+        <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
           <View style={styles.wordmarkRow}>
             <View style={[styles.wDot, { backgroundColor: accent }]} />
             <Text style={styles.wordmark}>SCOUT</Text>
@@ -133,39 +130,6 @@ export default function HomeScreen() {
               <IconSettings size={19} color="rgba(255,255,255,0.45)" />
             </TouchableOpacity>
           </View>
-        </Animated.View>
-
-        {/* ── HERO BANNER ──────────────────────────────────────────── */}
-        <Animated.View style={[styles.heroBanner, { opacity: heroAnim }]}>
-          <View style={styles.heroLeft}>
-            <Text style={styles.heroNum}>100</Text>
-            <Text style={[styles.heroNumLabel, { color: accent }]}>% ON-DEVICE</Text>
-            <Text style={styles.heroDesc}>All AI runs locally.{'\n'}No cloud. No data sent ever.</Text>
-          </View>
-          <View style={styles.heroRight}>
-            <Waveform color={accent} count={16} />
-            <View style={[styles.aiReadyBadge, { backgroundColor: accent + '20', borderColor: accent + '40' }]}>
-              <View style={[styles.aiDot, { backgroundColor: accent }]} />
-              <Text style={[styles.aiText, { color: accent }]}>AI READY</Text>
-            </View>
-          </View>
-        </Animated.View>
-
-        {/* ── QUICK CHIPS ──────────────────────────────────────────── */}
-        <View style={styles.chipsSection}>
-          <Text style={[styles.chipsLabel, { color: theme.textSecondary }]}>QUICK ANALYSIS</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-            {CHIPS.map((chip) => (
-              <TouchableOpacity
-                key={chip.label}
-                style={[styles.chip, { backgroundColor: accent + '16', borderColor: accent + '32' }]}
-                onPress={() => go('MatchAI', chip.q)}
-                activeOpacity={0.72}
-              >
-                <Text style={[styles.chipText, { color: accent }]}>{chip.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
         </View>
 
         {/* ── AI COACH CARD ─────────────────────────────────────────── */}
@@ -251,6 +215,23 @@ export default function HomeScreen() {
             </View>
           </TouchableOpacity>
         </Animated.View>
+
+        {/* ── QUICK ANALYSIS CHIPS ─────────────────────────────────── */}
+        <View style={styles.chipsSection}>
+          <Text style={[styles.chipsLabel, { color: theme.textSecondary }]}>QUICK ANALYSIS</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+            {CHIPS.map((chip) => (
+              <TouchableOpacity
+                key={chip.label}
+                style={[styles.chip, { backgroundColor: accent + '16', borderColor: accent + '32' }]}
+                onPress={() => go('MatchAI', chip.q)}
+                activeOpacity={0.72}
+              >
+                <Text style={[styles.chipText, { color: accent }]}>{chip.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
 
         <TouchableOpacity onPress={() => navigation.navigate('About')} style={styles.footer}>
           <Text style={[styles.footerText, { color: theme.textSecondary }]}>
