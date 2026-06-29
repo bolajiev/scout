@@ -137,7 +137,7 @@ export default function DownloadScreen() {
     const url = getHfDownloadUrl(src);
 
     // Load resume state if available
-    const resumeKey = `@peek_dl_resume_${m.id}_${filename}`;
+    const resumeKey = `@scout_dl_resume_${m.id}_${filename}`;
     currentResumeKeyRef.current = resumeKey;
     let resumeData: string | undefined;
     try {

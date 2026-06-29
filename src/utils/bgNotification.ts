@@ -2,9 +2,9 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 // ── Inference notification ────────────────────────────────────────────────────
-const CHANNEL_ID = 'peek-inference';
-const RUNNING_ID = 'peek-running';
-const DONE_ID = 'peek-done';
+const CHANNEL_ID = 'scout-inference';
+const RUNNING_ID = 'scout-running';
+const DONE_ID = 'scout-done';
 const STOP_ACTION_ID = 'stop-inference';
 const CATEGORY_ID = 'inference-running';
 
@@ -14,8 +14,8 @@ let _cancelFn: (() => void) | null = null;
 let _responseListener: Notifications.Subscription | null = null;
 
 // ── Download notification ─────────────────────────────────────────────────────
-const DL_CHANNEL_ID = 'peek-downloads';
-const DL_NOTIF_ID = 'peek-dl-progress';
+const DL_CHANNEL_ID = 'scout-downloads';
+const DL_NOTIF_ID = 'scout-dl-progress';
 const DL_CANCEL_ACTION = 'cancel-download';
 const DL_CATEGORY_ID = 'download-active';
 
@@ -173,7 +173,7 @@ export async function requestNotificationPermission() {
   return status === 'granted';
 }
 
-export async function showRunningNotification(label = 'Peek') {
+export async function showRunningNotification(label = 'Scout') {
   try {
     await ensureChannel();
     await ensureCategory();
@@ -193,7 +193,7 @@ export async function showRunningNotification(label = 'Peek') {
   } catch {}
 }
 
-export async function showDoneNotification(label = 'Peek') {
+export async function showDoneNotification(label = 'Scout') {
   try {
     await ensureChannel();
     await Notifications.dismissNotificationAsync(RUNNING_ID);

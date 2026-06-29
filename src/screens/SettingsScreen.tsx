@@ -77,7 +77,7 @@ export default function SettingsScreen() {
         return;
       }
       const csv = logsToCSV(logs);
-      const path = `${FileSystem.cacheDirectory}peek-inference-log.csv`;
+      const path = `${FileSystem.cacheDirectory}scout-inference-log.csv`;
       await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
       await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Export Inference Log' });
     } catch (e) {
