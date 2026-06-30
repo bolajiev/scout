@@ -62,7 +62,8 @@
           "color": "#22c55e",
           "defaultChannel": "scout-inference"
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "extra": {
       "eas": {

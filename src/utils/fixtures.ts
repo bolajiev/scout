@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SQLite from 'expo-sqlite';
 
 export interface Fixture {
   idEvent: string;
@@ -9,9 +9,6 @@ export interface Fixture {
   intHomeScore: string | null;
   intAwayScore: string | null;
 }
-
-const CACHE_KEY = '@scout_fixtures_cache';
-const CACHE_DATE_KEY = '@scout_fixtures_cache_date';
 
 export const todayISO = () => new Date().toISOString().split('T')[0];
 
@@ -34,9 +31,8 @@ export const isLive = (f: Fixture): boolean => {
   return elapsed >= 0 && elapsed <= 105;
 };
 
-// Pick the single most relevant match to surface on the home card:
-// Live match wins immediately. Then: soonest upcoming. Then: most recent finished.
-// World Cup pool is checked first; falls back to all soccer.
+// Pick the single most relevant match to surface on the home card.
+// Live match wins immediately. Then soonest upcoming. World Cup pool first.
 export const findClosestMatch = (fixtures: Fixture[]): Fixture | null => {
   if (fixtures.length === 0) return null;
 
@@ -51,23 +47,14 @@ export const findClosestMatch = (fixtures: Fixture[]): Fixture | null => {
 
   for (const f of pool) {
     const mins = timeToMins(f.strTime);
-
     if (mins === null) {
       if (!best) best = f;
       continue;
     }
-
-    const diff = mins - nowMins; // positive = starts in future, negative = already started
-
-    // Currently live (started 0–105 min ago) → surface immediately
-    if (diff >= -105 && diff <= 0) return f;
-
-    // Future matches ranked by closeness; past matches ranked much lower
+    const diff = mins - nowMins;
+    if (diff >= -105 && diff <= 0) return f; // live → immediate winner
     const score = diff > 0 ? diff : 10_000 + Math.abs(diff);
-    if (score < bestScore) {
-      bestScore = score;
-      best = f;
-    }
+    if (score < bestScore) { bestScore = score; best = f; }
   }
 
   return best;
@@ -79,40 +66,90 @@ export const fmtMatchTime = (t: string): string => {
   return `${h}:${m}`;
 };
 
-// 3-letter abbreviation: "Argentina" → "ARG", "Saudi Arabia" → "SAU"
+// "Saudi Arabia" → "SAU", "Brazil" → "BRA"
 export const teamAbbr = (name: string): string => {
   const words = name.trim().split(/\s+/);
   if (words.length === 1) return name.slice(0, 3).toUpperCase();
   return words.map(w => w[0]).join('').slice(0, 3).toUpperCase();
 };
 
+// ── SQLite cache ──────────────────────────────────────────────────────────────
+
+let _db: SQLite.SQLiteDatabase | null = null;
+
+const getDb = (): SQLite.SQLiteDatabase => {
+  if (!_db) {
+    _db = SQLite.openDatabaseSync('scout.db');
+    _db.execSync(`
+      CREATE TABLE IF NOT EXISTS fixtures (
+        id_event   TEXT PRIMARY KEY,
+        home_team  TEXT NOT NULL,
+        away_team  TEXT NOT NULL,
+        league     TEXT NOT NULL,
+        match_time TEXT NOT NULL,
+        home_score TEXT,
+        away_score TEXT,
+        cache_date TEXT NOT NULL
+      );
+    `);
+  }
+  return _db;
+};
+
+const saveFixturesToDb = (fixtures: Fixture[], date: string) => {
+  const db = getDb();
+  db.runSync('DELETE FROM fixtures WHERE cache_date != ?', [date]);
+  for (const f of fixtures) {
+    db.runSync(
+      `INSERT OR REPLACE INTO fixtures
+         (id_event, home_team, away_team, league, match_time, home_score, away_score, cache_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [f.idEvent, f.strHomeTeam, f.strAwayTeam, f.strLeague, f.strTime,
+       f.intHomeScore ?? null, f.intAwayScore ?? null, date],
+    );
+  }
+};
+
+const loadFixturesFromDb = (date: string): Fixture[] => {
+  const db = getDb();
+  const rows = db.getAllSync<{
+    id_event: string; home_team: string; away_team: string;
+    league: string; match_time: string; home_score: string | null; away_score: string | null;
+  }>('SELECT * FROM fixtures WHERE cache_date = ?', [date]);
+
+  return rows.map(r => ({
+    idEvent: r.id_event,
+    strHomeTeam: r.home_team,
+    strAwayTeam: r.away_team,
+    strLeague: r.league,
+    strTime: r.match_time,
+    intHomeScore: r.home_score,
+    intAwayScore: r.away_score,
+  }));
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const fetchAndCacheFixtures = async (): Promise<{
   fixtures: Fixture[];
   fromCache: boolean;
   online: boolean;
 }> => {
+  const today = todayISO();
+
   try {
     const res = await fetch(
-      `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${todayISO()}&s=Soccer`,
+      `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`,
       { signal: AbortSignal.timeout(8000) }
     );
     const data = await res.json();
     const fixtures: Fixture[] = data.events ?? [];
 
-    await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(fixtures));
-    await AsyncStorage.setItem(CACHE_DATE_KEY, todayISO());
+    saveFixturesToDb(fixtures, today);
 
     return { fixtures, fromCache: false, online: true };
   } catch {
-    try {
-      const cached = await AsyncStorage.getItem(CACHE_KEY);
-      const cachedDate = await AsyncStorage.getItem(CACHE_DATE_KEY);
-      if (cached) {
-        const fixtures = JSON.parse(cached) as Fixture[];
-        const isToday = cachedDate === todayISO();
-        return { fixtures: isToday ? fixtures : [], fromCache: true, online: false };
-      }
-    } catch {}
-    return { fixtures: [], fromCache: true, online: false };
+    const cached = loadFixturesFromDb(today);
+    return { fixtures: cached, fromCache: true, online: false };
   }
 };
