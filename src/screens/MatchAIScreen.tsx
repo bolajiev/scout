@@ -4,19 +4,18 @@ import {
   ScrollView, Keyboard, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { useRoute } from '@react-navigation/native';
 import { IconSend, IconStop, IconBall } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
-import { createSession, addMessage, updateLastAssistantMessage } from '../utils/historyDb';
+import { createSession, addMessage } from '../utils/historyDb';
 
-const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. Answer concisely and with authority. Always respond in English. Do not use <think> tags.`;
+const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. Answer concisely and with authority. Always respond in English.`;
 
 const SUGGESTIONS = [
   'How does a high press work?',
@@ -28,9 +27,18 @@ interface Entry {
   id: string;
   question: string;
   answer: string;
-  streaming: boolean;
+  thinking?: string;
   elapsed?: number;
   toks?: number;
+}
+
+// Active streaming slot — kept outside entries[] so old messages never re-render during streaming
+interface StreamSlot {
+  id: string;
+  question: string;
+  answer: string;
+  thought: string;
+  isThinking: boolean; // true while thought is coming in (before answer starts)
 }
 
 export default function MatchAIScreen() {
@@ -39,26 +47,28 @@ export default function MatchAIScreen() {
   const themeMode = useTheme();
   const theme = getTheme(themeMode);
   const insets = useSafeAreaInsets();
+  const accent = theme.accent;
 
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [input, setInput] = useState('');
+  const [entries, setEntries]           = useState<Entry[]>([]);
+  const [slot, setSlot]                 = useState<StreamSlot | null>(null); // active streaming
+  const [input, setInput]               = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [modelId, setModelId] = useState<string | null>(null);
+  const [modelId, setModelId]           = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
-  const [noModel, setNoModel] = useState(false);
+  const [noModel, setNoModel]           = useState(false);
+  const [thinkingOn, setThinkingOn]     = useState(false);
+  const [thoughtOpen, setThoughtOpen]   = useState<Record<string, boolean>>({});
 
-  const scrollRef = useRef<ScrollView>(null);
-  const currentRunRef = useRef<any>(null);
-  const mountedRef = useRef(true);
-  const prefillFiredRef = useRef(false);
-  const sessionIdRef = useRef<string | null>(null);
+  const scrollRef        = useRef<ScrollView>(null);
+  const currentRunRef    = useRef<any>(null);
+  const mountedRef       = useRef(true);
+  const prefillFiredRef  = useRef(false);
+  const sessionIdRef     = useRef<string | null>(null);
+  const loadPulse        = useRef(new Animated.Value(0.4)).current;
+  const loadLoopRef      = useRef<Animated.CompositeAnimation | null>(null);
 
-  // Per-entry spring animations stored outside React state
+  // Per-entry enter animation
   const entryAnimsRef = useRef<Record<string, { ty: Animated.Value; op: Animated.Value }>>({});
-
-  // Loading pulse for model warm-up
-  const loadPulse = useRef(new Animated.Value(0.4)).current;
-  const loadLoop = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -66,7 +76,7 @@ export default function MatchAIScreen() {
     return () => {
       mountedRef.current = false;
       clearNotification();
-      loadLoop.current?.stop();
+      loadLoopRef.current?.stop();
       if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
     };
   }, []);
@@ -74,14 +84,14 @@ export default function MatchAIScreen() {
   useEffect(() => {
     if (modelLoading && !noModel) {
       const loop = Animated.loop(Animated.sequence([
-        Animated.timing(loadPulse, { toValue: 1, duration: 750, useNativeDriver: true }),
-        Animated.timing(loadPulse, { toValue: 0.3, duration: 750, useNativeDriver: true }),
+        Animated.timing(loadPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(loadPulse, { toValue: 0.25, duration: 700, useNativeDriver: true }),
       ]));
-      loadLoop.current = loop;
+      loadLoopRef.current = loop;
       loop.start();
     } else {
-      loadLoop.current?.stop();
-      Animated.timing(loadPulse, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+      loadLoopRef.current?.stop();
+      Animated.timing(loadPulse, { toValue: 1, duration: 180, useNativeDriver: true }).start();
     }
   }, [modelLoading, noModel]);
 
@@ -97,7 +107,6 @@ export default function MatchAIScreen() {
       if (mountedRef.current) {
         setModelId(mid);
         setModelLoading(false);
-        // Fire prefill from HomeScreen chip — only once
         const prefill = route.params?.prefill;
         if (prefill && !prefillFiredRef.current) {
           prefillFiredRef.current = true;
@@ -109,6 +118,15 @@ export default function MatchAIScreen() {
     }
   };
 
+  const springEntry = (id: string) => {
+    const { ty, op } = entryAnimsRef.current[id] ?? {};
+    if (!ty || !op) return;
+    Animated.parallel([
+      Animated.spring(ty, { toValue: 0, friction: 9, tension: 90, useNativeDriver: true }),
+      Animated.timing(op, { toValue: 1, duration: 200, useNativeDriver: true }),
+    ]).start();
+  };
+
   const send = useCallback(async (question?: string) => {
     const q = (question ?? input).trim();
     if (!q || isGenerating || !modelId) return;
@@ -117,34 +135,23 @@ export default function MatchAIScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     const entryId = `e-${Date.now()}`;
-    const ty = new Animated.Value(36);
-    const op = new Animated.Value(0);
-    entryAnimsRef.current[entryId] = { ty, op };
+    entryAnimsRef.current[entryId] = { ty: new Animated.Value(24), op: new Animated.Value(0) };
 
-    // Create or reuse session for this conversation
-    if (!sessionIdRef.current) {
-      sessionIdRef.current = createSession('matchai', q);
-    }
+    if (!sessionIdRef.current) sessionIdRef.current = createSession('matchai', q);
     addMessage(sessionIdRef.current, 'user', q);
-
-    const newEntry: Entry = { id: entryId, question: q, answer: '', streaming: true };
-    setEntries(prev => [...prev, newEntry]);
-    setIsGenerating(true);
-
-    // Spring the card in after React paints it
-    setTimeout(() => {
-      Animated.parallel([
-        Animated.spring(ty, { toValue: 0, friction: 9, tension: 90, useNativeDriver: true }),
-        Animated.timing(op, { toValue: 1, duration: 220, useNativeDriver: true }),
-      ]).start();
-      scrollRef.current?.scrollToEnd({ animated: true });
-    }, 30);
 
     const history = entries.map(e => [
       { role: 'user' as const, content: e.question },
       { role: 'assistant' as const, content: e.answer },
     ]).flat();
     history.push({ role: 'user', content: q });
+
+    // Open the streaming slot — no entries[] change yet
+    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn });
+    setIsGenerating(true);
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 60);
 
     try {
       const gp = await getGenParams();
@@ -169,23 +176,34 @@ export default function MatchAIScreen() {
       });
       showRunningNotification('AI Coach');
 
-      let streamed = '';
+      let answerAcc = '';
+      let thoughtAcc = '';
       let lastFlush = 0;
+
       for await (const event of run.events) {
-        if (event.type === 'contentDelta') {
-          streamed += event.text;
-          // Throttle renders to ~20fps — accumulate tokens between flushes
+        if (event.type === 'thinkingDelta') {
+          thoughtAcc += event.text;
           const now = Date.now();
-          if (mountedRef.current && now - lastFlush > 50) {
+          if (mountedRef.current && now - lastFlush > 40) {
             lastFlush = now;
-            setEntries(prev => prev.map(e => e.id === entryId ? { ...e, answer: streamed } : e));
+            setSlot(s => s ? { ...s, thought: thoughtAcc, isThinking: true } : s);
+            scrollRef.current?.scrollToEnd({ animated: false });
+          }
+        } else if (event.type === 'contentDelta') {
+          answerAcc += event.text;
+          const now = Date.now();
+          if (mountedRef.current && now - lastFlush > 40) {
+            lastFlush = now;
+            // First answer token — flip isThinking off so thought block collapses
+            setSlot(s => s ? { ...s, answer: answerAcc, isThinking: false } : s);
             scrollRef.current?.scrollToEnd({ animated: false });
           }
         }
       }
-      // Final flush — always render the complete text
+
+      // Final flush
       if (mountedRef.current) {
-        setEntries(prev => prev.map(e => e.id === entryId ? { ...e, answer: streamed } : e));
+        setSlot(s => s ? { ...s, answer: answerAcc, thought: thoughtAcc, isThinking: false } : s);
         scrollRef.current?.scrollToEnd({ animated: false });
       }
 
@@ -194,113 +212,134 @@ export default function MatchAIScreen() {
       clearNotification();
 
       const elapsed = Math.round((Date.now() - t0) / 100) / 10;
-      // Save completed answer to SQLite
-      if (sessionIdRef.current && streamed) {
-        addMessage(sessionIdRef.current, 'assistant', streamed);
-      }
+      if (sessionIdRef.current && answerAcc) addMessage(sessionIdRef.current, 'assistant', answerAcc);
+
       if (mountedRef.current) {
-        setEntries(prev => prev.map(e =>
-          e.id === entryId ? { ...e, answer: streamed, streaming: false, elapsed, toks: stats?.generatedTokens } : e
-        ));
+        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, elapsed, toks: stats?.generatedTokens };
+        setSlot(null);
+        setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setTimeout(() => springEntry(entryId), 20);
       }
     } catch (err) {
       currentRunRef.current = null;
       clearNotification();
       if (mountedRef.current) {
-        setEntries(prev => prev.map(e =>
-          e.id === entryId
-            ? {
-                ...e,
-                answer: err instanceof InferenceCancelledError
-                  ? (e.answer || '...')
-                  : 'Could not get a response. Try again.',
-                streaming: false,
-              }
-            : e
-        ));
+        const fallback = err instanceof InferenceCancelledError ? (slot?.answer || '...') : 'Could not get a response. Try again.';
+        const finished: Entry = { id: entryId, question: q, answer: fallback };
+        setSlot(null);
+        setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
+        setTimeout(() => springEntry(entryId), 20);
       }
     }
-  }, [input, isGenerating, modelId, entries]);
+  }, [input, isGenerating, modelId, entries, thinkingOn]);
 
-  const accent = theme.accent;
-  const [thinkingOn, setThinkingOn] = useState(false);
+  const renderThoughtBlock = (thought: string, isStreaming: boolean, entryId: string, accent: string) => {
+    if (!thought) return null;
+    const isOpen = isStreaming || thoughtOpen[entryId];
+    return (
+      <TouchableOpacity
+        activeOpacity={isStreaming ? 1 : 0.7}
+        onPress={() => !isStreaming && setThoughtOpen(p => ({ ...p, [entryId]: !p[entryId] }))}
+        style={[styles.thoughtBlock, { backgroundColor: '#1a1200', borderColor: '#f59e0b44' }]}
+      >
+        <View style={styles.thoughtHeader}>
+          <View style={[styles.thoughtDot, { backgroundColor: isStreaming ? '#f59e0b' : '#78716c' }]} />
+          <Text style={[styles.thoughtLabel, { color: isStreaming ? '#f59e0b' : '#78716c' }]}>
+            {isStreaming ? 'Thinking...' : `Deep thought  ${isOpen ? '∧' : '∨'}`}
+          </Text>
+        </View>
+        {isOpen && (
+          <Text style={styles.thoughtText} numberOfLines={isStreaming ? undefined : 6}>
+            {thought}
+          </Text>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  const renderEntry = (entry: Entry) => {
+    const anim = entryAnimsRef.current[entry.id];
+    return (
+      <Animated.View
+        key={entry.id}
+        style={[styles.entryBlock, anim ? { opacity: anim.op, transform: [{ translateY: anim.ty }] } : undefined]}
+      >
+        {/* User bubble — right aligned */}
+        <View style={styles.userRow}>
+          <View style={[styles.userBubble, { backgroundColor: accent + '22', borderColor: accent + '40' }]}>
+            <Text style={[styles.userText, { color: theme.text }]}>{entry.question}</Text>
+          </View>
+        </View>
+
+        {/* Thought block (collapsed by default) */}
+        {entry.thinking && renderThoughtBlock(entry.thinking, false, entry.id, accent)}
+
+        {/* AI answer bubble */}
+        <View style={styles.aiRow}>
+          <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.aiText, { color: theme.text }]}>{entry.answer}</Text>
+            {entry.elapsed != null && (
+              <Text style={[styles.stat, { color: theme.textSecondary }]}>
+                {entry.elapsed}s{entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''} · on-device
+              </Text>
+            )}
+          </View>
+        </View>
+      </Animated.View>
+    );
+  };
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 14, borderBottomColor: theme.border }]}>
         <View style={styles.headerLeft}>
-          <View style={[styles.headerBall, { backgroundColor: accent + '22' }]}>
-            <IconBall size={14} color={accent} />
-          </View>
+          <View style={[styles.headerDot, { backgroundColor: accent }]} />
           <Text style={[styles.headerTitle, { color: theme.text }]}>AI Coach</Text>
-          {modelId && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
+          {modelId && !modelLoading && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
         </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            onPress={() => setThinkingOn(v => !v)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={[styles.thinkBtn, { backgroundColor: thinkingOn ? accent + '28' : 'transparent', borderColor: thinkingOn ? accent : theme.border }]}
-          >
-            <Text style={[styles.thinkBtnText, { color: thinkingOn ? accent : theme.textSecondary }]}>
-              {thinkingOn ? 'Deep ON' : 'Deep'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('History', { screen: 'matchai' })}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          onPress={() => navigation.navigate('History', { screen: 'matchai' })}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Feed */}
+      {/* Message feed */}
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 90 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Empty state */}
-        {entries.length === 0 && (
+        {entries.length === 0 && !slot && (
           <View style={styles.emptyState}>
-            {/* Pulsing ball while model loads */}
-            <Animated.View style={[styles.emptyLogoBox, { backgroundColor: accent + '14', opacity: loadPulse }]}>
-              <IconBall size={40} color={accent} />
+            <Animated.View style={[styles.emptyLogo, { backgroundColor: accent + '14', opacity: loadPulse }]}>
+              <IconBall size={38} color={accent} />
             </Animated.View>
-
             {modelLoading && !noModel ? (
-              <Text style={[styles.emptyTitle, { color: theme.textSecondary }]}>Loading model...</Text>
+              <Text style={[styles.emptyTitle, { color: theme.textSecondary }]}>Warming up...</Text>
             ) : (
               <Text style={[styles.emptyTitle, { color: theme.text }]}>Ask the AI Coach</Text>
             )}
             <Text style={[styles.emptySub, { color: theme.textSecondary }]}>
-              Tactics · Players · Clubs · Tournaments · History
+              Tactics · Players · History · Rules
             </Text>
-
             {noModel && (
               <View style={[styles.noModelCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                <Text style={[styles.noModelText, { color: theme.textSecondary }]}>
-                  No model downloaded. Go to Models to download one.
-                </Text>
+                <Text style={[styles.noModelText, { color: theme.textSecondary }]}>No model downloaded — go to Models.</Text>
               </View>
             )}
-
             {!modelLoading && !noModel && (
               <View style={styles.suggestions}>
                 {SUGGESTIONS.map(q => (
-                  <TouchableOpacity
-                    key={q}
-                    style={[styles.chip, { backgroundColor: theme.card, borderColor: theme.border }]}
-                    onPress={() => send(q)}
-                    disabled={isGenerating}
-                  >
-                    <Text style={[styles.chipText, { color: theme.text }]}>{q}</Text>
+                  <TouchableOpacity key={q} style={[styles.suggChip, { backgroundColor: theme.card, borderColor: theme.border }]} onPress={() => send(q)} activeOpacity={0.72}>
+                    <Text style={[styles.suggText, { color: theme.text }]}>{q}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -308,83 +347,81 @@ export default function MatchAIScreen() {
           </View>
         )}
 
-        {/* Q&A entries — each springs in */}
-        {entries.map(entry => {
-          const anim = entryAnimsRef.current[entry.id];
-          return (
-            <Animated.View
-              key={entry.id}
-              style={[
-                styles.entryBlock,
-                anim ? { opacity: anim.op, transform: [{ translateY: anim.ty }] } : undefined,
-              ]}
-            >
-              {/* Question */}
-              <View style={styles.questionRow}>
-                <Text style={[styles.questionLabel, { color: theme.textSecondary }]}>YOU</Text>
-                <Text style={[styles.questionText, { color: theme.text }]}>{entry.question}</Text>
-              </View>
+        {/* Committed entries */}
+        {entries.map(e => renderEntry(e))}
 
-              {/* Answer card */}
-              <View style={[
-                styles.answerCard,
-                { backgroundColor: theme.card, borderColor: entry.streaming ? accent + '60' : theme.border },
-              ]}>
-                <View style={[styles.answerBar, { backgroundColor: accent }]} />
-                <View style={styles.answerContent}>
-                  <View style={styles.answerHeader}>
-                    <Text style={[styles.answerLabel, { color: accent }]}>ANALYSIS</Text>
-                    {entry.streaming && (
-                      <View style={[styles.streamingDot, { backgroundColor: accent }]} />
-                    )}
-                  </View>
-                  <Text style={[styles.answerText, { color: theme.text }]}>
-                    {entry.answer || (entry.streaming ? 'Reading the game...' : '')}
-                  </Text>
-                  {!entry.streaming && entry.elapsed && (
-                    <Text style={[styles.stat, { color: theme.textSecondary }]}>
-                      {entry.elapsed}s
-                      {entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''}
-                      {' · on-device'}
-                    </Text>
-                  )}
-                </View>
+        {/* Active streaming slot */}
+        {slot && (
+          <View style={styles.entryBlock}>
+            {/* User bubble */}
+            <View style={styles.userRow}>
+              <View style={[styles.userBubble, { backgroundColor: accent + '22', borderColor: accent + '40' }]}>
+                <Text style={[styles.userText, { color: theme.text }]}>{slot.question}</Text>
               </View>
-            </Animated.View>
-          );
-        })}
+            </View>
+
+            {/* Live thought block */}
+            {slot.thought.length > 0 && renderThoughtBlock(slot.thought, slot.isThinking, slot.id, accent)}
+
+            {/* Live answer bubble */}
+            <View style={styles.aiRow}>
+              <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: accent + '55' }]}>
+                {slot.answer.length > 0 ? (
+                  <Text style={[styles.aiText, { color: theme.text }]}>{slot.answer}</Text>
+                ) : (
+                  <View style={styles.typingRow}>
+                    <View style={[styles.typingDot, { backgroundColor: accent }]} />
+                    <View style={[styles.typingDot, { backgroundColor: accent, opacity: 0.6 }]} />
+                    <View style={[styles.typingDot, { backgroundColor: accent, opacity: 0.3 }]} />
+                  </View>
+                )}
+              </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       {/* Input bar */}
-      <View style={[styles.inputBar, {
-        backgroundColor: theme.background,
-        borderTopColor: theme.border,
-        paddingBottom: insets.bottom + 8,
-      }]}>
+      <View style={[styles.inputBar, { backgroundColor: theme.background, borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, 12) }]}>
+        {/* Deep toggle — lives in input bar */}
+        <TouchableOpacity
+          onPress={() => setThinkingOn(v => !v)}
+          style={[styles.deepToggle, { backgroundColor: thinkingOn ? accent + '22' : theme.card, borderColor: thinkingOn ? accent : theme.border }]}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={[styles.deepToggleText, { color: thinkingOn ? accent : theme.textSecondary }]}>
+            {thinkingOn ? 'Deep' : 'Deep'}
+          </Text>
+          <View style={[styles.deepDot, { backgroundColor: thinkingOn ? accent : theme.border }]} />
+        </TouchableOpacity>
+
         <TextInput
           style={[styles.input, { backgroundColor: theme.card, borderColor: theme.border, color: theme.text }]}
-          placeholder={modelLoading ? 'Loading model...' : 'Ask about football...'}
+          placeholder={modelLoading ? 'Loading model...' : 'Message AI Coach...'}
           placeholderTextColor={theme.textSecondary}
           value={input}
           onChangeText={setInput}
           multiline
-          editable={!isGenerating && !modelLoading}
-          onSubmitEditing={() => send()}
+          editable={!isGenerating && !modelLoading && !!modelId}
+          returnKeyType="send"
+          blurOnSubmit={false}
+          onSubmitEditing={() => { if (input.trim()) send(); }}
         />
+
         {isGenerating ? (
           <TouchableOpacity
-            style={[styles.actionBtn, { backgroundColor: theme.error }]}
+            style={[styles.sendBtn, { backgroundColor: '#ef4444' }]}
             onPress={() => { if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {}); }}
           >
-            <IconStop size={18} color="#fff" />
+            <IconStop size={17} color="#fff" />
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.actionBtn, { backgroundColor: accent, opacity: input.trim() && modelId ? 1 : 0.35 }]}
+            style={[styles.sendBtn, { backgroundColor: accent, opacity: input.trim() && modelId ? 1 : 0.3 }]}
             onPress={() => send()}
-            disabled={!input.trim() || !modelId}
+            disabled={!input.trim() || !modelId || isGenerating}
           >
-            <IconSend size={18} color={theme.accentFg} />
+            <IconSend size={17} color={theme.accentFg} />
           </TouchableOpacity>
         )}
       </View>
@@ -394,49 +431,83 @@ export default function MatchAIScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+
+  // Header
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1,
+    paddingHorizontal: 20, paddingBottom: 13, borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  headerBall: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
-  liveDot: { width: 6, height: 6, borderRadius: 3 },
-  thinkBtn: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4 },
-  thinkBtnText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-  historyBtn: { fontSize: 12, fontWeight: '600' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  headerDot: { width: 8, height: 8, borderRadius: 4 },
+  headerTitle: { fontSize: 18, fontWeight: '800', letterSpacing: -0.4 },
+  liveDot: { width: 5, height: 5, borderRadius: 2.5 },
+  historyBtn: { fontSize: 13, fontWeight: '600' },
+
+  // Feed
   scroll: { flex: 1 },
-  scrollContent: { padding: 16, gap: 0 },
-  emptyState: { paddingTop: 60, gap: 12, alignItems: 'center' },
-  emptyLogoBox: { width: 80, height: 80, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  emptyTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.3 },
-  emptySub: { fontSize: 14 },
-  noModelCard: { borderRadius: 12, borderWidth: 1, padding: 14, width: '100%' },
+  scrollContent: { paddingHorizontal: 14, paddingTop: 16, gap: 4 },
+
+  // Empty state
+  emptyState: { paddingTop: 64, gap: 12, alignItems: 'center', paddingHorizontal: 10 },
+  emptyLogo: { width: 76, height: 76, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  emptyTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.4 },
+  emptySub: { fontSize: 14, letterSpacing: 0.2 },
+  noModelCard: { borderRadius: 12, borderWidth: 1, padding: 14, width: '100%', marginTop: 6 },
   noModelText: { fontSize: 13, textAlign: 'center' },
-  suggestions: { width: '100%', gap: 8, marginTop: 8 },
-  chip: { borderRadius: 10, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 12 },
-  chipText: { fontSize: 14 },
-  entryBlock: { marginBottom: 20, gap: 8 },
-  questionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  questionLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.2, marginTop: 3, width: 32 },
-  questionText: { flex: 1, fontSize: 15, fontWeight: '600', lineHeight: 22 },
-  answerCard: { borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden' },
-  answerBar: { width: 3 },
-  answerContent: { flex: 1, padding: 14, gap: 8 },
-  answerHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  answerLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
-  streamingDot: { width: 6, height: 6, borderRadius: 3 },
-  answerText: { fontSize: 15, lineHeight: 24 },
-  stat: { fontSize: 10 },
+  suggestions: { width: '100%', gap: 8, marginTop: 6 },
+  suggChip: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 13 },
+  suggText: { fontSize: 14, fontWeight: '500' },
+
+  // Message blocks
+  entryBlock: { marginBottom: 18, gap: 7 },
+
+  userRow: { alignItems: 'flex-end' },
+  userBubble: {
+    maxWidth: '82%', borderRadius: 20, borderBottomRightRadius: 5,
+    borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10,
+  },
+  userText: { fontSize: 15, lineHeight: 22, fontWeight: '500' },
+
+  aiRow: { alignItems: 'flex-start' },
+  aiBubble: {
+    maxWidth: '90%', borderRadius: 20, borderBottomLeftRadius: 5,
+    borderWidth: 1, paddingHorizontal: 15, paddingVertical: 11, gap: 6,
+  },
+  aiText: { fontSize: 15, lineHeight: 24 },
+  stat: { fontSize: 10, fontWeight: '500', marginTop: 2 },
+
+  // Typing indicator
+  typingRow: { flexDirection: 'row', gap: 5, alignItems: 'center', paddingVertical: 3 },
+  typingDot: { width: 7, height: 7, borderRadius: 3.5 },
+
+  // Thought block
+  thoughtBlock: {
+    borderRadius: 12, borderWidth: 1, padding: 11,
+    marginLeft: 0, marginRight: 30, gap: 6,
+  },
+  thoughtHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  thoughtDot: { width: 5, height: 5, borderRadius: 2.5 },
+  thoughtLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
+  thoughtText: { fontSize: 12, lineHeight: 18, color: '#a8a29e', fontStyle: 'italic' },
+
+  // Input bar
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 8,
-    paddingHorizontal: 12, paddingTop: 8, borderTopWidth: 1,
+    paddingHorizontal: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth,
   },
+  deepToggle: {
+    borderRadius: 20, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7,
+    flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3,
+  },
+  deepToggleText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
+  deepDot: { width: 5, height: 5, borderRadius: 2.5 },
   input: {
-    flex: 1, borderRadius: 14, borderWidth: 1,
-    paddingHorizontal: 14, paddingVertical: 10,
-    fontSize: 15, maxHeight: 120,
+    flex: 1, borderRadius: 22, borderWidth: 1,
+    paddingHorizontal: 15, paddingTop: 10, paddingBottom: 10,
+    fontSize: 15, lineHeight: 20, maxHeight: 130,
   },
-  actionBtn: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: {
+    width: 42, height: 42, borderRadius: 21,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 1,
+  },
 });

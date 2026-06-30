@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Image,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -30,7 +30,37 @@ export default function ScoutLensScreen() {
   const [noModel, setNoModel] = useState(false);
 
   const currentRunRef = useRef<any>(null);
-  const mountedRef = useRef(true);
+  const mountedRef    = useRef(true);
+
+  // Scan line animation
+  const scanY    = useRef(new Animated.Value(0)).current;
+  const scanLoop = useRef<Animated.CompositeAnimation | null>(null);
+  // Bracket pulse when idle (no image)
+  const bracketPulse = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(bracketPulse, { toValue: 0.6, duration: 900, useNativeDriver: true }),
+      Animated.timing(bracketPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, []);
+
+  useEffect(() => {
+    if (isAnalyzing) {
+      scanY.setValue(0);
+      const loop = Animated.loop(Animated.sequence([
+        Animated.timing(scanY, { toValue: 1, duration: 1400, useNativeDriver: true }),
+        Animated.timing(scanY, { toValue: 0, duration: 1400, useNativeDriver: true }),
+      ]));
+      scanLoop.current = loop;
+      loop.start();
+    } else {
+      scanLoop.current?.stop();
+      scanY.setValue(0);
+    }
+  }, [isAnalyzing]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -165,19 +195,44 @@ export default function ScoutLensScreen() {
         <TouchableOpacity
           style={[styles.pickerArea, {
             backgroundColor: theme.card,
-            borderColor: imagePath ? accent : theme.border,
+            borderColor: isAnalyzing ? accent : imagePath ? accent + '80' : theme.border,
           }]}
           onPress={pickImage}
           disabled={isAnalyzing}
+          activeOpacity={0.8}
         >
           {imagePath ? (
-            <Image source={{ uri: imagePath }} style={styles.previewImage} resizeMode="cover" />
+            <View style={styles.imageWrap}>
+              <Image source={{ uri: imagePath }} style={styles.previewImage} resizeMode="cover" />
+              {/* Animated scan line over image during analysis */}
+              {isAnalyzing && (
+                <Animated.View
+                  style={[styles.scanLine, {
+                    backgroundColor: accent,
+                    transform: [{ translateY: scanY.interpolate({ inputRange: [0, 1], outputRange: [0, 200] }) }],
+                  }]}
+                />
+              )}
+              {/* Corner brackets overlay */}
+              <View style={[styles.bracketTL, { borderColor: accent }]} />
+              <View style={[styles.bracketTR, { borderColor: accent }]} />
+              <View style={[styles.bracketBL, { borderColor: accent }]} />
+              <View style={[styles.bracketBR, { borderColor: accent }]} />
+            </View>
           ) : (
             <View style={styles.pickerEmpty}>
-              <IconCamera size={40} color={theme.textSecondary} />
-              <Text style={[styles.pickerHint, { color: theme.textSecondary }]}>
-                Tap to pick an image
-              </Text>
+              {/* Pulsing brackets idle state */}
+              <Animated.View style={[styles.idleBracketWrap, { opacity: bracketPulse }]}>
+                <View style={[styles.bracketTL, { borderColor: accent }]} />
+                <View style={[styles.bracketTR, { borderColor: accent }]} />
+                <View style={[styles.bracketBL, { borderColor: accent }]} />
+                <View style={[styles.bracketBR, { borderColor: accent }]} />
+                {/* Football pitch centre circle hint */}
+                <View style={[styles.pitchCircle, { borderColor: accent + '30' }]} />
+                <View style={[styles.pitchLine, { backgroundColor: accent + '20' }]} />
+                <IconCamera size={32} color={accent + '80'} />
+              </Animated.View>
+              <Text style={[styles.pickerHint, { color: theme.text }]}>Scan football content</Text>
               <Text style={[styles.pickerSub, { color: theme.textSecondary }]}>
                 Jersey · Badge · Player card · Scoreboard
               </Text>
@@ -245,13 +300,34 @@ const styles = StyleSheet.create({
   noModelCard: { borderRadius: 10, borderWidth: 1, padding: 14 },
   noModelText: { fontSize: 13, textAlign: 'center' },
   pickerArea: {
-    borderRadius: 16, borderWidth: 1.5, borderStyle: 'dashed',
+    borderRadius: 18, borderWidth: 1.5,
     minHeight: 220, overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
   },
-  pickerEmpty: { alignItems: 'center', gap: 8, padding: 32 },
-  pickerHint: { fontSize: 16, fontWeight: '600' },
-  pickerSub: { fontSize: 12 },
+  pickerEmpty: { alignItems: 'center', gap: 10, padding: 36, width: '100%' },
+  idleBracketWrap: {
+    width: 110, height: 110, alignItems: 'center', justifyContent: 'center', position: 'relative',
+  },
+  // Bracket corners
+  bracketTL: { position: 'absolute', top: 0, left: 0, width: 22, height: 22, borderTopWidth: 2.5, borderLeftWidth: 2.5, borderRadius: 3 },
+  bracketTR: { position: 'absolute', top: 0, right: 0, width: 22, height: 22, borderTopWidth: 2.5, borderRightWidth: 2.5, borderRadius: 3 },
+  bracketBL: { position: 'absolute', bottom: 0, left: 0, width: 22, height: 22, borderBottomWidth: 2.5, borderLeftWidth: 2.5, borderRadius: 3 },
+  bracketBR: { position: 'absolute', bottom: 0, right: 0, width: 22, height: 22, borderBottomWidth: 2.5, borderRightWidth: 2.5, borderRadius: 3 },
+  // Football pitch decorations on idle state
+  pitchCircle: {
+    position: 'absolute', width: 50, height: 50, borderRadius: 25, borderWidth: 1,
+  },
+  pitchLine: {
+    position: 'absolute', width: '80%', height: 1,
+  },
+  pickerHint: { fontSize: 15, fontWeight: '700', letterSpacing: -0.2 },
+  pickerSub: { fontSize: 12, textAlign: 'center' },
+  imageWrap: { width: '100%', position: 'relative' },
   previewImage: { width: '100%', height: 280 },
+  // Animated scan line
+  scanLine: {
+    position: 'absolute', left: 0, right: 0, height: 2, opacity: 0.85,
+    shadowColor: '#22c55e', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 1, shadowRadius: 6,
+  },
   changeBtn: { borderRadius: 10, borderWidth: 1, paddingVertical: 10, alignItems: 'center' },
   changeBtnText: { fontSize: 13, fontWeight: '600' },
   resultCard: {
