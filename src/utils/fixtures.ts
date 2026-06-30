@@ -130,6 +130,12 @@ const loadFixturesFromDb = (date: string): Fixture[] => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// TheSportsDB is the best fully-free no-key soccer API.
+// We fetch today's general soccer matches, then separately try the
+// FIFA World Cup 2026 league (id=4429) so WC fixtures always appear even
+// if the day endpoint doesn't surface them.
+const WC_LEAGUE_ID = '4429';
+
 export const fetchAndCacheFixtures = async (): Promise<{
   fixtures: Fixture[];
   fromCache: boolean;
@@ -138,16 +144,29 @@ export const fetchAndCacheFixtures = async (): Promise<{
   const today = todayISO();
 
   try {
-    const res = await fetch(
-      `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`,
-      { signal: AbortSignal.timeout(8000) }
-    );
-    const data = await res.json();
-    const fixtures: Fixture[] = data.events ?? [];
+    // Parallel: today's soccer + WC next events
+    const [dayRes, wcRes] = await Promise.allSettled([
+      fetch(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`, { signal: AbortSignal.timeout(8000) }),
+      fetch(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`, { signal: AbortSignal.timeout(8000) }),
+    ]);
 
-    saveFixturesToDb(fixtures, today);
+    const dayEvents: Fixture[] = dayRes.status === 'fulfilled'
+      ? ((await dayRes.value.json()).events ?? [])
+      : [];
 
-    return { fixtures, fromCache: false, online: true };
+    const wcEvents: Fixture[] = wcRes.status === 'fulfilled'
+      ? ((await wcRes.value.json()).events ?? [])
+      : [];
+
+    // Merge: WC events first, deduplicated by idEvent
+    const seen = new Set<string>();
+    const merged: Fixture[] = [];
+    for (const f of [...wcEvents, ...dayEvents]) {
+      if (!seen.has(f.idEvent)) { seen.add(f.idEvent); merged.push(f); }
+    }
+
+    saveFixturesToDb(merged, today);
+    return { fixtures: merged, fromCache: false, online: true };
   } catch {
     const cached = loadFixturesFromDb(today);
     return { fixtures: cached, fromCache: true, online: false };

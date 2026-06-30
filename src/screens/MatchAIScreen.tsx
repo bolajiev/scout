@@ -17,11 +17,28 @@ import { createSession, addMessage } from '../utils/historyDb';
 
 const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. Answer concisely and with authority. Always respond in English.`;
 
-const SUGGESTIONS = [
+const ALL_SUGGESTIONS = [
   'How does a high press work?',
   'Best striker in Champions League history?',
   'Explain the offside rule simply.',
+  'What is a false nine?',
+  'How does VAR work?',
+  'Compare 4-3-3 vs 4-2-3-1 formations.',
+  'Who invented total football?',
+  'What makes a good defensive midfielder?',
+  'Explain gegenpressing tactics.',
+  'Best World Cup goals of all time?',
+  'How does penalty shootout psychology work?',
+  'What is an overlap run in football?',
+  'Difference between a box-to-box and a holding midfielder?',
+  'How do clubs scout young players?',
+  'What makes Mbappe so fast?',
 ];
+
+const rotateSuggestions = (offset: number): string[] => {
+  const len = ALL_SUGGESTIONS.length;
+  return [0, 1, 2].map(i => ALL_SUGGESTIONS[(offset + i) % len]);
+};
 
 interface Entry {
   id: string;
@@ -58,6 +75,7 @@ export default function MatchAIScreen() {
   const [noModel, setNoModel]           = useState(false);
   const [thinkingOn, setThinkingOn]     = useState(false);
   const [thoughtOpen, setThoughtOpen]   = useState<Record<string, boolean>>({});
+  const [suggOffset, setSuggOffset]     = useState(0);
 
   const scrollRef        = useRef<ScrollView>(null);
   const currentRunRef    = useRef<any>(null);
@@ -337,11 +355,23 @@ export default function MatchAIScreen() {
             )}
             {!modelLoading && !noModel && (
               <View style={styles.suggestions}>
-                {SUGGESTIONS.map(q => (
-                  <TouchableOpacity key={q} style={[styles.suggChip, { backgroundColor: theme.card, borderColor: theme.border }]} onPress={() => send(q)} activeOpacity={0.72}>
+                {rotateSuggestions(suggOffset).map(q => (
+                  <TouchableOpacity
+                    key={q}
+                    style={[styles.suggChip, { backgroundColor: theme.card, borderColor: theme.border }]}
+                    onPress={() => send(q)}
+                    activeOpacity={0.72}
+                  >
                     <Text style={[styles.suggText, { color: theme.text }]}>{q}</Text>
                   </TouchableOpacity>
                 ))}
+                <TouchableOpacity
+                  onPress={() => setSuggOffset(o => (o + 3) % ALL_SUGGESTIONS.length)}
+                  style={[styles.suggChip, { borderColor: accent + '40', backgroundColor: accent + '10' }]}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.suggText, { color: accent }]}>More questions...</Text>
+                </TouchableOpacity>
               </View>
             )}
           </View>

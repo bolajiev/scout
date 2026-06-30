@@ -5,6 +5,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
@@ -86,12 +87,30 @@ export default function ScoutLensScreen() {
 
   const pickImage = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ['image/jpeg', 'image/png', 'image/webp'],
-        copyToCacheDirectory: true,
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.85,
+        allowsEditing: false,
       });
-      if (result.canceled || !result.assets?.[0]) return;
-      const uri = result.assets[0].uri;
+      if (res.canceled || !res.assets?.[0]) return;
+      const uri = res.assets[0].uri;
+      setImagePath(uri);
+      setResult('');
+      analyse(uri);
+    } catch {}
+  };
+
+  const takePhoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') return;
+      const res = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.85,
+        allowsEditing: false,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+      const uri = res.assets[0].uri;
       setImagePath(uri);
       setResult('');
       analyse(uri);
@@ -191,13 +210,13 @@ export default function ScoutLensScreen() {
           </View>
         )}
 
-        {/* Image picker */}
+        {/* Image picker — tap to open camera by default */}
         <TouchableOpacity
           style={[styles.pickerArea, {
             backgroundColor: theme.card,
             borderColor: isAnalyzing ? accent : imagePath ? accent + '80' : theme.border,
           }]}
-          onPress={pickImage}
+          onPress={imagePath ? pickImage : takePhoto}
           disabled={isAnalyzing}
           activeOpacity={0.8}
         >
@@ -232,23 +251,36 @@ export default function ScoutLensScreen() {
                 <View style={[styles.pitchLine, { backgroundColor: accent + '20' }]} />
                 <IconCamera size={32} color={accent + '80'} />
               </Animated.View>
-              <Text style={[styles.pickerHint, { color: theme.text }]}>Scan football content</Text>
+              <Text style={[styles.pickerHint, { color: theme.text }]}>Tap to open camera</Text>
               <Text style={[styles.pickerSub, { color: theme.textSecondary }]}>
                 Jersey · Badge · Player card · Scoreboard
               </Text>
+              <Text style={[styles.pickerSub, { color: accent + '80' }]}>or use Gallery below</Text>
             </View>
           )}
         </TouchableOpacity>
 
-        {imagePath && (
+        {/* Camera / Gallery row */}
+        <View style={styles.sourceRow}>
           <TouchableOpacity
-            style={[styles.changeBtn, { borderColor: theme.border }]}
+            style={[styles.sourceBtn, { backgroundColor: theme.card, borderColor: isAnalyzing ? theme.border : accent + '60' }]}
+            onPress={takePhoto}
+            disabled={isAnalyzing}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.sourceBtnIcon, { color: accent }]}>camera</Text>
+            <Text style={[styles.sourceBtnText, { color: theme.text }]}>Camera</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.sourceBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
             onPress={pickImage}
             disabled={isAnalyzing}
+            activeOpacity={0.8}
           >
-            <Text style={[styles.changeBtnText, { color: theme.textSecondary }]}>Change image</Text>
+            <Text style={[styles.sourceBtnIcon, { color: theme.textSecondary }]}>gallery</Text>
+            <Text style={[styles.sourceBtnText, { color: theme.text }]}>Gallery</Text>
           </TouchableOpacity>
-        )}
+        </View>
 
         {/* Result */}
         {isAnalyzing && !result && (
@@ -328,8 +360,13 @@ const styles = StyleSheet.create({
     position: 'absolute', left: 0, right: 0, height: 2, opacity: 0.85,
     shadowColor: '#22c55e', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 1, shadowRadius: 6,
   },
-  changeBtn: { borderRadius: 10, borderWidth: 1, paddingVertical: 10, alignItems: 'center' },
-  changeBtnText: { fontSize: 13, fontWeight: '600' },
+  sourceRow: { flexDirection: 'row', gap: 10 },
+  sourceBtn: {
+    flex: 1, borderRadius: 14, borderWidth: 1,
+    paddingVertical: 14, alignItems: 'center', gap: 4,
+  },
+  sourceBtnIcon: { fontSize: 11, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
+  sourceBtnText: { fontSize: 14, fontWeight: '700' },
   resultCard: {
     borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden',
   },
