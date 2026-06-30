@@ -153,14 +153,14 @@ export default function MatchAIScreen() {
         modelId,
         history: [{ role: 'system', content: SYSTEM_PROMPT }, ...history],
         stream: true,
-        captureThinking: false,
+        captureThinking: thinkingOn,
         generationParams: {
           predict: gp.maxTokens,
           temp: gp.temp,
           top_k: gp.top_k,
           top_p: gp.top_p,
           repeat_penalty: gp.repeat_penalty,
-          reasoning_budget: 0 as 0,
+          reasoning_budget: thinkingOn ? -1 as -1 : 0 as 0,
         },
       });
       currentRunRef.current = run;
@@ -226,16 +226,36 @@ export default function MatchAIScreen() {
   }, [input, isGenerating, modelId, entries]);
 
   const accent = theme.accent;
+  const [thinkingOn, setThinkingOn] = useState(false);
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
-        <View style={[styles.headerBall, { backgroundColor: accent + '22' }]}>
-          <IconBall size={14} color={accent} />
+        <View style={styles.headerLeft}>
+          <View style={[styles.headerBall, { backgroundColor: accent + '22' }]}>
+            <IconBall size={14} color={accent} />
+          </View>
+          <Text style={[styles.headerTitle, { color: theme.text }]}>AI Coach</Text>
+          {modelId && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
         </View>
-        <Text style={[styles.headerTitle, { color: theme.text }]}>AI Coach</Text>
-        {modelId && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => setThinkingOn(v => !v)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={[styles.thinkBtn, { backgroundColor: thinkingOn ? accent + '28' : 'transparent', borderColor: thinkingOn ? accent : theme.border }]}
+          >
+            <Text style={[styles.thinkBtnText, { color: thinkingOn ? accent : theme.textSecondary }]}>
+              {thinkingOn ? 'Deep ON' : 'Deep'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('History', { screen: 'matchai' })}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Feed */}
@@ -375,12 +395,17 @@ export default function MatchAIScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1,
   },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   headerBall: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   liveDot: { width: 6, height: 6, borderRadius: 3 },
+  thinkBtn: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4 },
+  thinkBtnText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  historyBtn: { fontSize: 12, fontWeight: '600' },
   scroll: { flex: 1 },
   scrollContent: { padding: 16, gap: 0 },
   emptyState: { paddingTop: 60, gap: 12, alignItems: 'center' },

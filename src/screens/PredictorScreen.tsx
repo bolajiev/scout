@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
+import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconTarget, IconStop } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
@@ -25,6 +26,7 @@ CONFIDENCE: [Low/Medium/High]
 Do not add anything before WINNER or after the analysis. Always respond in English.`;
 
 export default function PredictorScreen() {
+  const navigation = useNavigation<any>();
   const themeMode = useTheme();
   const theme = getTheme(themeMode);
   const insets = useSafeAreaInsets();
@@ -42,6 +44,7 @@ export default function PredictorScreen() {
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel] = useState(false);
   const [elapsed, setElapsed] = useState<number | null>(null);
+  const [thinkingOn, setThinkingOn] = useState(false);
 
   const currentRunRef = useRef<any>(null);
   const mountedRef = useRef(true);
@@ -175,7 +178,7 @@ export default function PredictorScreen() {
           top_k: gp.top_k,
           top_p: gp.top_p,
           repeat_penalty: gp.repeat_penalty,
-          reasoning_budget: 0 as 0,
+          reasoning_budget: thinkingOn ? -1 as -1 : 0 as 0,
         },
       });
       currentRunRef.current = run;
@@ -236,11 +239,30 @@ export default function PredictorScreen() {
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
-        <View style={[styles.headerIcon, { backgroundColor: accent + '22' }]}>
-          <IconTarget size={14} color={accent} />
+        <View style={styles.headerLeft}>
+          <View style={[styles.headerIcon, { backgroundColor: accent + '22' }]}>
+            <IconTarget size={14} color={accent} />
+          </View>
+          <Text style={[styles.headerTitle, { color: theme.text }]}>Predictor</Text>
+          {modelId && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
         </View>
-        <Text style={[styles.headerTitle, { color: theme.text }]}>Predictor</Text>
-        {modelId && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => setThinkingOn(v => !v)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={[styles.thinkBtn, { backgroundColor: thinkingOn ? accent + '28' : 'transparent', borderColor: thinkingOn ? accent : theme.border }]}
+          >
+            <Text style={[styles.thinkBtnText, { color: thinkingOn ? accent : theme.textSecondary }]}>
+              {thinkingOn ? 'Deep ON' : 'Deep'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('History', { screen: 'predictor' })}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -489,12 +511,17 @@ export default function PredictorScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1,
   },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   headerIcon: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   liveDot: { width: 6, height: 6, borderRadius: 3 },
+  thinkBtn: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4 },
+  thinkBtnText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  historyBtn: { fontSize: 12, fontWeight: '600' },
   content: { padding: 16, gap: 16 },
   loadingBar: {
     borderRadius: 10, borderWidth: 1, padding: 12, alignItems: 'center',

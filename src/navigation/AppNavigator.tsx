@@ -21,6 +21,7 @@ import ModelsScreen from '../screens/ModelsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import DownloadScreen from '../screens/DownloadScreen';
 import AboutScreen from '../screens/AboutScreen';
+import HistoryScreen from '../screens/HistoryScreen';
 
 import { IconHome, IconBall, IconTarget, IconCamera, IconFanRoom } from '../components/Icons';
 
@@ -132,6 +133,7 @@ export default function AppNavigator() {
           <Stack.Screen name="Settings" component={SettingsScreen} options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="Download" component={DownloadScreen} options={{ animation: 'slide_from_bottom' }} />
           <Stack.Screen name="About"    component={AboutScreen}   options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="History"  component={HistoryScreen} options={{ animation: 'slide_from_right' }} />
         </Stack.Navigator>
       </NavigationContainer>
     </ThemeContext.Provider>
