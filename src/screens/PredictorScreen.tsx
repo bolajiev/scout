@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, TextInput,
 } from 'react-native';
@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconTarget, IconStop } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
@@ -14,6 +14,7 @@ import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, fmtMatchTime as fmtTime, type Fixture } from '../utils/fixtures';
 import { createSession, addMessage } from '../utils/historyDb';
+import { webSearch, formatSearchContext, getTavilyKey } from '../utils/webSearch';
 
 const SYSTEM_PROMPT = `You are Scout's Predictor — an on-device football match prediction AI for the FIFA World Cup 2026.
 
@@ -49,6 +50,8 @@ export default function PredictorScreen() {
   const [noModel, setNoModel] = useState(false);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [thinkingOn, setThinkingOn] = useState(false);
+  const [webOn, setWebOn] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
 
   const currentRunRef = useRef<any>(null);
   const mountedRef = useRef(true);
@@ -73,6 +76,10 @@ export default function PredictorScreen() {
       if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
     };
   }, []);
+
+  useFocusEffect(useCallback(() => {
+    getTavilyKey().then(k => { if (mountedRef.current) setWebOn(!!k); });
+  }, []));
 
   useEffect(() => {
     if (modelLoading && !noModel) {
@@ -161,9 +168,22 @@ export default function PredictorScreen() {
     setIsGenerating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    const prompt = context.trim()
-      ? `Predict: ${teamA.trim()} vs ${teamB.trim()}\n\nMatch context: ${context.trim()}`
+    // Web search for current team form before prediction
+    let contextBlock = '';
+    if (webOn) {
+      setIsSearching(true);
+      try {
+        const searchQ = `${teamA.trim()} vs ${teamB.trim()} 2026 current form injuries lineup`;
+        const results = await webSearch(searchQ);
+        contextBlock = formatSearchContext(searchQ, results);
+      } catch {}
+      setIsSearching(false);
+    }
+
+    const basePrompt = context.trim()
+      ? `Predict: ${teamA.trim()} vs ${teamB.trim()}\n\nMatch context provided by user: ${context.trim()}`
       : `Predict: ${teamA.trim()} vs ${teamB.trim()}`;
+    const prompt = contextBlock ? `${contextBlock}\n\n${basePrompt}` : basePrompt;
     const genStart = Date.now();
 
     try {
@@ -407,7 +427,12 @@ export default function PredictorScreen() {
             disabled={!isGenerating && (!teamA.trim() || !teamB.trim() || !modelId)}
             activeOpacity={0.82}
           >
-            {isGenerating ? (
+            {isSearching ? (
+              <View style={styles.btnInner}>
+                <View style={[styles.searchDotBtn, { backgroundColor: theme.accentFg }]} />
+                <Text style={[styles.predictBtnText, { color: theme.accentFg }]}>Searching web...</Text>
+              </View>
+            ) : isGenerating ? (
               <View style={styles.btnInner}>
                 <IconStop size={18} color="#fff" />
                 <Text style={[styles.predictBtnText, { color: '#fff' }]}>Stop</Text>
@@ -415,7 +440,9 @@ export default function PredictorScreen() {
             ) : (
               <View style={styles.btnInner}>
                 <IconTarget size={18} color={theme.accentFg} />
-                <Text style={[styles.predictBtnText, { color: theme.accentFg }]}>Predict Match</Text>
+                <Text style={[styles.predictBtnText, { color: theme.accentFg }]}>
+                  {webOn ? 'Predict + Web Search' : 'Predict Match'}
+                </Text>
               </View>
             )}
           </TouchableOpacity>
@@ -582,6 +609,7 @@ const styles = StyleSheet.create({
   },
   btnInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   predictBtnText: { fontSize: 16, fontWeight: '800' },
+  searchDotBtn: { width: 8, height: 8, borderRadius: 4 },
   noModelCard: { borderRadius: 10, borderWidth: 1, padding: 14 },
   noModelText: { fontSize: 13, textAlign: 'center' },
   resultCard: { borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden' },

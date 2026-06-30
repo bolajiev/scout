@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
-  ScrollView, Keyboard, Animated,
+  ScrollView, Keyboard, Animated, Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
@@ -14,8 +14,12 @@ import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage } from '../utils/historyDb';
+import { webSearch, formatSearchContext, getTavilyKey } from '../utils/webSearch';
 
-const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. Answer concisely and with authority. Always respond in English.`;
+const { width: SCREEN_W } = Dimensions.get('window');
+const CARD_W = (SCREEN_W - 48) / 2;
+
+const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. When web context is provided inside [LIVE WEB SEARCH] tags, use it to give current accurate information. Answer concisely and with authority. Always respond in English.`;
 
 const ALL_SUGGESTIONS = [
   'How does a high press work?',
@@ -35,9 +39,21 @@ const ALL_SUGGESTIONS = [
   'What makes Mbappe so fast?',
 ];
 
-const rotateSuggestions = (offset: number): string[] => {
-  const len = ALL_SUGGESTIONS.length;
-  return [0, 1, 2].map(i => ALL_SUGGESTIONS[(offset + i) % len]);
+const CATEGORIES = [
+  { tag: 'TACTICS',   question: 'How does a high press work in modern football?' },
+  { tag: 'PLAYERS',   question: 'What makes Mbappe the fastest player right now?' },
+  { tag: 'WC 2026',   question: 'Who are the top favorites for FIFA World Cup 2026?' },
+  { tag: 'RULES',     question: 'Explain the offside rule with a simple example.' },
+];
+
+const rotateSuggestions = (offset: number): string[] =>
+  [0, 1, 2].map(i => ALL_SUGGESTIONS[(offset + i) % ALL_SUGGESTIONS.length]);
+
+const getGreeting = () => {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
 };
 
 interface Entry {
@@ -47,15 +63,18 @@ interface Entry {
   thinking?: string;
   elapsed?: number;
   toks?: number;
+  searchCount?: number;
 }
 
-// Active streaming slot — kept outside entries[] so old messages never re-render during streaming
 interface StreamSlot {
   id: string;
   question: string;
   answer: string;
   thought: string;
-  isThinking: boolean; // true while thought is coming in (before answer starts)
+  isThinking: boolean;
+  isSearching: boolean;
+  searchDone: boolean;
+  searchCount: number;
 }
 
 export default function MatchAIScreen() {
@@ -67,13 +86,14 @@ export default function MatchAIScreen() {
   const accent = theme.accent;
 
   const [entries, setEntries]           = useState<Entry[]>([]);
-  const [slot, setSlot]                 = useState<StreamSlot | null>(null); // active streaming
+  const [slot, setSlot]                 = useState<StreamSlot | null>(null);
   const [input, setInput]               = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [modelId, setModelId]           = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel]           = useState(false);
   const [thinkingOn, setThinkingOn]     = useState(false);
+  const [webOn, setWebOn]               = useState(false);
   const [thoughtOpen, setThoughtOpen]   = useState<Record<string, boolean>>({});
   const [suggOffset, setSuggOffset]     = useState(0);
 
@@ -84,9 +104,7 @@ export default function MatchAIScreen() {
   const sessionIdRef     = useRef<string | null>(null);
   const loadPulse        = useRef(new Animated.Value(0.4)).current;
   const loadLoopRef      = useRef<Animated.CompositeAnimation | null>(null);
-
-  // Per-entry enter animation
-  const entryAnimsRef = useRef<Record<string, { ty: Animated.Value; op: Animated.Value }>>({});
+  const entryAnimsRef    = useRef<Record<string, { ty: Animated.Value; op: Animated.Value }>>({});
 
   useEffect(() => {
     mountedRef.current = true;
@@ -98,6 +116,11 @@ export default function MatchAIScreen() {
       if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
     };
   }, []);
+
+  // Check if Tavily key is configured on focus
+  useFocusEffect(useCallback(() => {
+    getTavilyKey().then(k => { if (mountedRef.current) setWebOn(!!k); });
+  }, []));
 
   useEffect(() => {
     if (modelLoading && !noModel) {
@@ -137,11 +160,11 @@ export default function MatchAIScreen() {
   };
 
   const springEntry = (id: string) => {
-    const { ty, op } = entryAnimsRef.current[id] ?? {};
-    if (!ty || !op) return;
+    const anim = entryAnimsRef.current[id];
+    if (!anim) return;
     Animated.parallel([
-      Animated.spring(ty, { toValue: 0, friction: 9, tension: 90, useNativeDriver: true }),
-      Animated.timing(op, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.spring(anim.ty, { toValue: 0, friction: 9, tension: 90, useNativeDriver: true }),
+      Animated.timing(anim.op, { toValue: 1, duration: 200, useNativeDriver: true }),
     ]).start();
   };
 
@@ -162,14 +185,28 @@ export default function MatchAIScreen() {
       { role: 'user' as const, content: e.question },
       { role: 'assistant' as const, content: e.answer },
     ]).flat();
-    history.push({ role: 'user', content: q });
 
-    // Open the streaming slot — no entries[] change yet
-    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn });
+    // Open slot in "searching" phase
+    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn, isSearching: webOn, searchDone: false, searchCount: 0 });
     setIsGenerating(true);
-    setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    }, 60);
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60);
+
+    // Web search before model call
+    let contextBlock = '';
+    let searchCount = 0;
+    if (webOn) {
+      try {
+        const results = await webSearch(q);
+        searchCount = results.length;
+        contextBlock = formatSearchContext(q, results);
+      } catch {}
+      if (mountedRef.current) {
+        setSlot(s => s ? { ...s, isSearching: false, searchDone: true, searchCount } : s);
+      }
+    }
+
+    const userContent = contextBlock ? `${contextBlock}\n\nQuestion: ${q}` : q;
+    history.push({ role: 'user', content: userContent });
 
     try {
       const gp = await getGenParams();
@@ -212,14 +249,12 @@ export default function MatchAIScreen() {
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 40) {
             lastFlush = now;
-            // First answer token — flip isThinking off so thought block collapses
             setSlot(s => s ? { ...s, answer: answerAcc, isThinking: false } : s);
             scrollRef.current?.scrollToEnd({ animated: false });
           }
         }
       }
 
-      // Final flush
       if (mountedRef.current) {
         setSlot(s => s ? { ...s, answer: answerAcc, thought: thoughtAcc, isThinking: false } : s);
         scrollRef.current?.scrollToEnd({ animated: false });
@@ -233,7 +268,7 @@ export default function MatchAIScreen() {
       if (sessionIdRef.current && answerAcc) addMessage(sessionIdRef.current, 'assistant', answerAcc);
 
       if (mountedRef.current) {
-        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, elapsed, toks: stats?.generatedTokens };
+        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, elapsed, toks: stats?.generatedTokens, searchCount: searchCount || undefined };
         setSlot(null);
         setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
@@ -252,16 +287,16 @@ export default function MatchAIScreen() {
         setTimeout(() => springEntry(entryId), 20);
       }
     }
-  }, [input, isGenerating, modelId, entries, thinkingOn]);
+  }, [input, isGenerating, modelId, entries, thinkingOn, webOn]);
 
-  const renderThoughtBlock = (thought: string, isStreaming: boolean, entryId: string, accent: string) => {
+  const renderThoughtBlock = (thought: string, isStreaming: boolean, entryId: string) => {
     if (!thought) return null;
     const isOpen = isStreaming || thoughtOpen[entryId];
     return (
       <TouchableOpacity
         activeOpacity={isStreaming ? 1 : 0.7}
         onPress={() => !isStreaming && setThoughtOpen(p => ({ ...p, [entryId]: !p[entryId] }))}
-        style={[styles.thoughtBlock, { backgroundColor: '#1a1200', borderColor: '#f59e0b44' }]}
+        style={[styles.thoughtBlock, { backgroundColor: '#1a1200', borderColor: '#f59e0b33' }]}
       >
         <View style={styles.thoughtHeader}>
           <View style={[styles.thoughtDot, { backgroundColor: isStreaming ? '#f59e0b' : '#78716c' }]} />
@@ -278,6 +313,15 @@ export default function MatchAIScreen() {
     );
   };
 
+  const renderSearchBadge = (searching: boolean, done: boolean, count: number) => (
+    <View style={[styles.searchBadge, { backgroundColor: theme.card, borderColor: searching ? accent + '60' : theme.border }]}>
+      <View style={[styles.searchDot, { backgroundColor: searching ? accent : theme.textSecondary }]} />
+      <Text style={[styles.searchBadgeText, { color: searching ? accent : theme.textSecondary }]}>
+        {searching ? 'Searching the web...' : done ? `Web search · ${count} result${count !== 1 ? 's' : ''}` : ''}
+      </Text>
+    </View>
+  );
+
   const renderEntry = (entry: Entry) => {
     const anim = entryAnimsRef.current[entry.id];
     return (
@@ -285,17 +329,14 @@ export default function MatchAIScreen() {
         key={entry.id}
         style={[styles.entryBlock, anim ? { opacity: anim.op, transform: [{ translateY: anim.ty }] } : undefined]}
       >
-        {/* User bubble — right aligned */}
         <View style={styles.userRow}>
-          <View style={[styles.userBubble, { backgroundColor: accent + '22', borderColor: accent + '40' }]}>
+          <View style={[styles.userBubble, { backgroundColor: accent + '1a', borderColor: accent + '35' }]}>
             <Text style={[styles.userText, { color: theme.text }]}>{entry.question}</Text>
           </View>
         </View>
-
-        {/* Thought block (collapsed by default) */}
-        {entry.thinking && renderThoughtBlock(entry.thinking, false, entry.id, accent)}
-
-        {/* AI answer bubble */}
+        {entry.searchCount !== undefined && entry.searchCount > 0 &&
+          renderSearchBadge(false, true, entry.searchCount)}
+        {entry.thinking && renderThoughtBlock(entry.thinking, false, entry.id)}
         <View style={styles.aiRow}>
           <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <Text style={[styles.aiText, { color: theme.text }]}>{entry.answer}</Text>
@@ -309,6 +350,88 @@ export default function MatchAIScreen() {
       </Animated.View>
     );
   };
+
+  // ── Empty state ────────────────────────────────────────────────────────────
+  const renderEmpty = () => (
+    <View style={styles.emptyWrap}>
+      {/* Brand mark */}
+      <Animated.View style={[styles.brandMark, { backgroundColor: accent + '14', opacity: loadPulse }]}>
+        <IconBall size={36} color={accent} />
+      </Animated.View>
+
+      <Text style={[styles.greeting, { color: theme.textSecondary }]}>{getGreeting()}</Text>
+      <Text style={[styles.emptyTitle, { color: theme.text }]}>Your AI Football Coach</Text>
+
+      {/* Status pills row */}
+      <View style={styles.pillRow}>
+        <View style={[styles.statusPill, { backgroundColor: accent + '14', borderColor: accent + '30' }]}>
+          <View style={[styles.pillDot, { backgroundColor: modelId ? accent : theme.textSecondary }]} />
+          <Text style={[styles.pillText, { color: modelId ? accent : theme.textSecondary }]}>
+            {modelLoading ? 'Loading...' : noModel ? 'No model' : 'On-device AI'}
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.statusPill, { backgroundColor: webOn ? '#22c55e14' : theme.card, borderColor: webOn ? '#22c55e30' : theme.border }]}
+          onPress={() => navigation.navigate('Settings')}
+          activeOpacity={0.75}
+        >
+          <View style={[styles.pillDot, { backgroundColor: webOn ? '#22c55e' : theme.textSecondary }]} />
+          <Text style={[styles.pillText, { color: webOn ? '#22c55e' : theme.textSecondary }]}>
+            {webOn ? 'Web search on' : 'Set up search'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {noModel ? (
+        <View style={[styles.noModelCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text style={[styles.noModelText, { color: theme.textSecondary }]}>No model downloaded — go to Models.</Text>
+        </View>
+      ) : (
+        <>
+          {/* Category cards 2×2 */}
+          <View style={styles.cardGrid}>
+            {CATEGORIES.map((cat) => (
+              <TouchableOpacity
+                key={cat.tag}
+                style={[styles.categoryCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+                onPress={() => send(cat.question)}
+                activeOpacity={0.75}
+                disabled={modelLoading || !modelId}
+              >
+                <Text style={[styles.cardTag, { color: accent }]}>{cat.tag}</Text>
+                <Text style={[styles.cardQuestion, { color: theme.text }]} numberOfLines={3}>
+                  {cat.question}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Rotating chips */}
+          <View style={styles.chipRow}>
+            {rotateSuggestions(suggOffset).map(q => (
+              <TouchableOpacity
+                key={q}
+                style={[styles.suggChip, { backgroundColor: theme.card, borderColor: theme.border }]}
+                onPress={() => send(q)}
+                disabled={modelLoading || !modelId}
+                activeOpacity={0.72}
+              >
+                <Text style={[styles.suggText, { color: theme.textSecondary }]}>{q}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              onPress={() => setSuggOffset(o => (o + 3) % ALL_SUGGESTIONS.length)}
+              style={[styles.suggChip, { borderColor: accent + '35', backgroundColor: accent + '0c' }]}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.suggText, { color: accent }]}>More...</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
+    </View>
+  );
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
@@ -327,75 +450,29 @@ export default function MatchAIScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Message feed */}
+      {/* Feed */}
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 110 }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {entries.length === 0 && !slot && (
-          <View style={styles.emptyState}>
-            <Animated.View style={[styles.emptyLogo, { backgroundColor: accent + '14', opacity: loadPulse }]}>
-              <IconBall size={38} color={accent} />
-            </Animated.View>
-            {modelLoading && !noModel ? (
-              <Text style={[styles.emptyTitle, { color: theme.textSecondary }]}>Warming up...</Text>
-            ) : (
-              <Text style={[styles.emptyTitle, { color: theme.text }]}>Ask the AI Coach</Text>
-            )}
-            <Text style={[styles.emptySub, { color: theme.textSecondary }]}>
-              Tactics · Players · History · Rules
-            </Text>
-            {noModel && (
-              <View style={[styles.noModelCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                <Text style={[styles.noModelText, { color: theme.textSecondary }]}>No model downloaded — go to Models.</Text>
-              </View>
-            )}
-            {!modelLoading && !noModel && (
-              <View style={styles.suggestions}>
-                {rotateSuggestions(suggOffset).map(q => (
-                  <TouchableOpacity
-                    key={q}
-                    style={[styles.suggChip, { backgroundColor: theme.card, borderColor: theme.border }]}
-                    onPress={() => send(q)}
-                    activeOpacity={0.72}
-                  >
-                    <Text style={[styles.suggText, { color: theme.text }]}>{q}</Text>
-                  </TouchableOpacity>
-                ))}
-                <TouchableOpacity
-                  onPress={() => setSuggOffset(o => (o + 3) % ALL_SUGGESTIONS.length)}
-                  style={[styles.suggChip, { borderColor: accent + '40', backgroundColor: accent + '10' }]}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.suggText, { color: accent }]}>More questions...</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Committed entries */}
-        {entries.map(e => renderEntry(e))}
+        {entries.length === 0 && !slot && renderEmpty()}
+        {entries.map(renderEntry)}
 
         {/* Active streaming slot */}
         {slot && (
           <View style={styles.entryBlock}>
-            {/* User bubble */}
             <View style={styles.userRow}>
-              <View style={[styles.userBubble, { backgroundColor: accent + '22', borderColor: accent + '40' }]}>
+              <View style={[styles.userBubble, { backgroundColor: accent + '1a', borderColor: accent + '35' }]}>
                 <Text style={[styles.userText, { color: theme.text }]}>{slot.question}</Text>
               </View>
             </View>
-
-            {/* Live thought block */}
-            {slot.thought.length > 0 && renderThoughtBlock(slot.thought, slot.isThinking, slot.id, accent)}
-
-            {/* Live answer bubble */}
+            {(slot.isSearching || slot.searchDone) && renderSearchBadge(slot.isSearching, slot.searchDone, slot.searchCount)}
+            {slot.thought.length > 0 && renderThoughtBlock(slot.thought, slot.isThinking, slot.id)}
             <View style={styles.aiRow}>
-              <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: accent + '55' }]}>
+              <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: slot.isSearching ? theme.border : accent + '45' }]}>
                 {slot.answer.length > 0 ? (
                   <Text style={[styles.aiText, { color: theme.text }]}>{slot.answer}</Text>
                 ) : (
@@ -413,15 +490,12 @@ export default function MatchAIScreen() {
 
       {/* Input bar */}
       <View style={[styles.inputBar, { backgroundColor: theme.background, borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, 12) }]}>
-        {/* Deep toggle — lives in input bar */}
         <TouchableOpacity
           onPress={() => setThinkingOn(v => !v)}
-          style={[styles.deepToggle, { backgroundColor: thinkingOn ? accent + '22' : theme.card, borderColor: thinkingOn ? accent : theme.border }]}
+          style={[styles.deepToggle, { backgroundColor: thinkingOn ? accent + '1a' : theme.card, borderColor: thinkingOn ? accent : theme.border }]}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={[styles.deepToggleText, { color: thinkingOn ? accent : theme.textSecondary }]}>
-            {thinkingOn ? 'Deep' : 'Deep'}
-          </Text>
+          <Text style={[styles.deepToggleText, { color: thinkingOn ? accent : theme.textSecondary }]}>Deep</Text>
           <View style={[styles.deepDot, { backgroundColor: thinkingOn ? accent : theme.border }]} />
         </TouchableOpacity>
 
@@ -462,7 +536,6 @@ export default function MatchAIScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
 
-  // Header
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingBottom: 13, borderBottomWidth: StyleSheet.hairlineWidth,
@@ -473,22 +546,41 @@ const styles = StyleSheet.create({
   liveDot: { width: 5, height: 5, borderRadius: 2.5 },
   historyBtn: { fontSize: 13, fontWeight: '600' },
 
-  // Feed
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 14, paddingTop: 16, gap: 4 },
 
-  // Empty state
-  emptyState: { paddingTop: 64, gap: 12, alignItems: 'center', paddingHorizontal: 10 },
-  emptyLogo: { width: 76, height: 76, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  emptyTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.4 },
-  emptySub: { fontSize: 14, letterSpacing: 0.2 },
-  noModelCard: { borderRadius: 12, borderWidth: 1, padding: 14, width: '100%', marginTop: 6 },
-  noModelText: { fontSize: 13, textAlign: 'center' },
-  suggestions: { width: '100%', gap: 8, marginTop: 6 },
-  suggChip: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 13 },
-  suggText: { fontSize: 14, fontWeight: '500' },
+  // ── Empty state ────────────────────────────────────────────────────────────
+  emptyWrap: { paddingTop: 40, paddingHorizontal: 2, gap: 14, alignItems: 'center' },
+  brandMark: { width: 80, height: 80, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  greeting: { fontSize: 14, fontWeight: '500', marginTop: -4 },
+  emptyTitle: { fontSize: 24, fontWeight: '800', letterSpacing: -0.5, textAlign: 'center', marginTop: -6 },
 
-  // Message blocks
+  pillRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' },
+  statusPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderRadius: 20, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 6,
+  },
+  pillDot: { width: 5, height: 5, borderRadius: 2.5 },
+  pillText: { fontSize: 12, fontWeight: '600' },
+
+  noModelCard: { borderRadius: 12, borderWidth: 1, padding: 14, width: '100%', marginTop: 4 },
+  noModelText: { fontSize: 13, textAlign: 'center' },
+
+  // Category cards
+  cardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, width: '100%', marginTop: 4 },
+  categoryCard: {
+    width: CARD_W, borderRadius: 16, borderWidth: 1,
+    padding: 16, gap: 8, borderLeftWidth: 3,
+  },
+  cardTag: { fontSize: 10, fontWeight: '800', letterSpacing: 1.2 },
+  cardQuestion: { fontSize: 14, fontWeight: '500', lineHeight: 20 },
+
+  // Chip row
+  chipRow: { width: '100%', gap: 7, marginTop: -2 },
+  suggChip: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 11 },
+  suggText: { fontSize: 13, fontWeight: '500' },
+
+  // ── Message blocks ────────────────────────────────────────────────────────
   entryBlock: { marginBottom: 18, gap: 7 },
 
   userRow: { alignItems: 'flex-end' },
@@ -506,19 +598,26 @@ const styles = StyleSheet.create({
   aiText: { fontSize: 15, lineHeight: 24 },
   stat: { fontSize: 10, fontWeight: '500', marginTop: 2 },
 
-  // Typing indicator
   typingRow: { flexDirection: 'row', gap: 5, alignItems: 'center', paddingVertical: 3 },
   typingDot: { width: 7, height: 7, borderRadius: 3.5 },
 
   // Thought block
   thoughtBlock: {
-    borderRadius: 12, borderWidth: 1, padding: 11,
-    marginLeft: 0, marginRight: 30, gap: 6,
+    borderRadius: 12, borderWidth: 1, padding: 11, marginRight: 30, gap: 6,
   },
   thoughtHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   thoughtDot: { width: 5, height: 5, borderRadius: 2.5 },
   thoughtLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
   thoughtText: { fontSize: 12, lineHeight: 18, color: '#a8a29e', fontStyle: 'italic' },
+
+  // Search badge
+  searchBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 7,
+    borderRadius: 10, borderWidth: 1,
+    paddingHorizontal: 12, paddingVertical: 8, alignSelf: 'flex-start',
+  },
+  searchDot: { width: 5, height: 5, borderRadius: 2.5 },
+  searchBadgeText: { fontSize: 12, fontWeight: '600' },
 
   // Input bar
   inputBar: {
