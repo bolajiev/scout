@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Alert, Switch, TextInput,
+  Alert, Switch,
 } from 'react-native';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
@@ -13,7 +13,6 @@ import { useTheme, useThemeToggle } from '../navigation/AppNavigator';
 import {
   getSettings, setAccelerator, setResponseLength, clearAllData, saveSettings,
 } from '../utils/storage';
-import { getTavilyKey, setTavilyKey } from '../utils/webSearch';
 import { Accelerator, ResponseLength } from '../types';
 import ConfigSlider from '../components/ConfigSlider';
 import { getInferenceLogs, logsToCSV } from '../utils/auditLogger';
@@ -37,14 +36,7 @@ export default function SettingsScreen() {
   const [deviceModel, setDeviceModel] = useState('');
   const [deviceBrand, setDeviceBrand] = useState('');
   const [totalMemory, setTotalMemory] = useState('N/A');
-  const [tavilyKey, setTavilyKeyState] = useState('');
-  const [tavilySaved, setTavilySaved] = useState(false);
-
-  useEffect(() => {
-    loadSettings();
-    loadDeviceInfo();
-    getTavilyKey().then(k => { if (k) setTavilyKeyState(k); });
-  }, []);
+  useEffect(() => { loadSettings(); loadDeviceInfo(); }, []);
 
   const loadSettings = async () => {
     const s = await getSettings();
@@ -214,43 +206,6 @@ export default function SettingsScreen() {
 
         </View>
 
-        {/* Web Search */}
-        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Web Search</Text>
-        <View style={[styles.card, { backgroundColor: theme.card }]}>
-          <Text style={[styles.rowLabel, { color: theme.text }]}>Tavily API Key</Text>
-          <Text style={[styles.paramHint, { color: theme.textSecondary }]}>
-            Get a free key at tavily.com (1,000 searches/month, no card). Enables live web search for AI Coach and Predictor.
-          </Text>
-          <View style={styles.keyRow}>
-            <TextInput
-              style={[styles.keyInput, { backgroundColor: theme.background, borderColor: theme.border, color: theme.text }]}
-              placeholder="tvly-xxxxxxxxxxxxxxxx"
-              placeholderTextColor={theme.textSecondary}
-              value={tavilyKey}
-              onChangeText={k => { setTavilyKeyState(k); setTavilySaved(false); }}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-            />
-            <TouchableOpacity
-              style={[styles.saveKeyBtn, { backgroundColor: tavilySaved ? '#22c55e' : theme.accent, opacity: tavilyKey.trim() ? 1 : 0.4 }]}
-              onPress={async () => {
-                await setTavilyKey(tavilyKey);
-                setTavilySaved(true);
-                setTimeout(() => setTavilySaved(false), 2000);
-              }}
-              disabled={!tavilyKey.trim()}
-            >
-              <Text style={[styles.saveKeyText, { color: theme.accentFg }]}>{tavilySaved ? 'Saved' : 'Save'}</Text>
-            </TouchableOpacity>
-          </View>
-          {tavilyKey.trim().length > 0 && (
-            <TouchableOpacity onPress={async () => { await setTavilyKey(''); setTavilyKeyState(''); }}>
-              <Text style={[styles.clearKeyText, { color: theme.textSecondary }]}>Remove key</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
         {/* Device */}
         <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Device</Text>
         <View style={[styles.card, { backgroundColor: theme.card }]}>
@@ -324,9 +279,4 @@ const styles = StyleSheet.create({
   dangerBtn: { borderRadius: 14, paddingVertical: 16, alignItems: 'center', borderWidth: 1, marginTop: 10 },
   dangerText: { fontSize: 15, fontWeight: '700' },
   footer: { fontSize: 12, textAlign: 'center', marginTop: 20 },
-  keyRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  keyInput: { flex: 1, borderRadius: 10, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13 },
-  saveKeyBtn: { borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
-  saveKeyText: { fontSize: 13, fontWeight: '700' },
-  clearKeyText: { fontSize: 12, fontWeight: '600' },
 });

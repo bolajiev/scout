@@ -4,7 +4,7 @@ import {
   ScrollView, Keyboard, Animated, Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
@@ -14,7 +14,6 @@ import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage } from '../utils/historyDb';
-import { webSearch, formatSearchContext, getTavilyKey } from '../utils/webSearch';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_W = (SCREEN_W - 48) / 2;
@@ -63,7 +62,6 @@ interface Entry {
   thinking?: string;
   elapsed?: number;
   toks?: number;
-  searchCount?: number;
 }
 
 interface StreamSlot {
@@ -72,9 +70,6 @@ interface StreamSlot {
   answer: string;
   thought: string;
   isThinking: boolean;
-  isSearching: boolean;
-  searchDone: boolean;
-  searchCount: number;
 }
 
 export default function MatchAIScreen() {
@@ -93,7 +88,6 @@ export default function MatchAIScreen() {
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel]           = useState(false);
   const [thinkingOn, setThinkingOn]     = useState(false);
-  const [webOn, setWebOn]               = useState(false);
   const [thoughtOpen, setThoughtOpen]   = useState<Record<string, boolean>>({});
   const [suggOffset, setSuggOffset]     = useState(0);
 
@@ -117,10 +111,6 @@ export default function MatchAIScreen() {
     };
   }, []);
 
-  // Check if Tavily key is configured on focus
-  useFocusEffect(useCallback(() => {
-    getTavilyKey().then(k => { if (mountedRef.current) setWebOn(!!k); });
-  }, []));
 
   useEffect(() => {
     if (modelLoading && !noModel) {
@@ -186,27 +176,11 @@ export default function MatchAIScreen() {
       { role: 'assistant' as const, content: e.answer },
     ]).flat();
 
-    // Open slot in "searching" phase
-    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn, isSearching: webOn, searchDone: false, searchCount: 0 });
+    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn });
     setIsGenerating(true);
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60);
 
-    // Web search before model call
-    let contextBlock = '';
-    let searchCount = 0;
-    if (webOn) {
-      try {
-        const results = await webSearch(q);
-        searchCount = results.length;
-        contextBlock = formatSearchContext(q, results);
-      } catch {}
-      if (mountedRef.current) {
-        setSlot(s => s ? { ...s, isSearching: false, searchDone: true, searchCount } : s);
-      }
-    }
-
-    const userContent = contextBlock ? `${contextBlock}\n\nQuestion: ${q}` : q;
-    history.push({ role: 'user', content: userContent });
+    history.push({ role: 'user', content: q });
 
     try {
       const gp = await getGenParams();
@@ -268,7 +242,7 @@ export default function MatchAIScreen() {
       if (sessionIdRef.current && answerAcc) addMessage(sessionIdRef.current, 'assistant', answerAcc);
 
       if (mountedRef.current) {
-        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, elapsed, toks: stats?.generatedTokens, searchCount: searchCount || undefined };
+        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, elapsed, toks: stats?.generatedTokens };
         setSlot(null);
         setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
@@ -287,7 +261,7 @@ export default function MatchAIScreen() {
         setTimeout(() => springEntry(entryId), 20);
       }
     }
-  }, [input, isGenerating, modelId, entries, thinkingOn, webOn]);
+  }, [input, isGenerating, modelId, entries, thinkingOn]);
 
   const renderThoughtBlock = (thought: string, isStreaming: boolean, entryId: string) => {
     if (!thought) return null;
@@ -313,15 +287,6 @@ export default function MatchAIScreen() {
     );
   };
 
-  const renderSearchBadge = (searching: boolean, done: boolean, count: number) => (
-    <View style={[styles.searchBadge, { backgroundColor: theme.card, borderColor: searching ? accent + '60' : theme.border }]}>
-      <View style={[styles.searchDot, { backgroundColor: searching ? accent : theme.textSecondary }]} />
-      <Text style={[styles.searchBadgeText, { color: searching ? accent : theme.textSecondary }]}>
-        {searching ? 'Searching the web...' : done ? `Web search · ${count} result${count !== 1 ? 's' : ''}` : ''}
-      </Text>
-    </View>
-  );
-
   const renderEntry = (entry: Entry) => {
     const anim = entryAnimsRef.current[entry.id];
     return (
@@ -334,8 +299,6 @@ export default function MatchAIScreen() {
             <Text style={[styles.userText, { color: theme.text }]}>{entry.question}</Text>
           </View>
         </View>
-        {entry.searchCount !== undefined && entry.searchCount > 0 &&
-          renderSearchBadge(false, true, entry.searchCount)}
         {entry.thinking && renderThoughtBlock(entry.thinking, false, entry.id)}
         <View style={styles.aiRow}>
           <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -371,16 +334,10 @@ export default function MatchAIScreen() {
           </Text>
         </View>
 
-        <TouchableOpacity
-          style={[styles.statusPill, { backgroundColor: webOn ? '#22c55e14' : theme.card, borderColor: webOn ? '#22c55e30' : theme.border }]}
-          onPress={() => navigation.navigate('Settings')}
-          activeOpacity={0.75}
-        >
-          <View style={[styles.pillDot, { backgroundColor: webOn ? '#22c55e' : theme.textSecondary }]} />
-          <Text style={[styles.pillText, { color: webOn ? '#22c55e' : theme.textSecondary }]}>
-            {webOn ? 'Web search on' : 'Set up search'}
-          </Text>
-        </TouchableOpacity>
+        <View style={[styles.statusPill, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={[styles.pillDot, { backgroundColor: accent }]} />
+          <Text style={[styles.pillText, { color: theme.textSecondary }]}>Private · No cloud</Text>
+        </View>
       </View>
 
       {noModel ? (
@@ -469,10 +426,9 @@ export default function MatchAIScreen() {
                 <Text style={[styles.userText, { color: theme.text }]}>{slot.question}</Text>
               </View>
             </View>
-            {(slot.isSearching || slot.searchDone) && renderSearchBadge(slot.isSearching, slot.searchDone, slot.searchCount)}
             {slot.thought.length > 0 && renderThoughtBlock(slot.thought, slot.isThinking, slot.id)}
             <View style={styles.aiRow}>
-              <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: slot.isSearching ? theme.border : accent + '45' }]}>
+              <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: accent + '45' }]}>
                 {slot.answer.length > 0 ? (
                   <Text style={[styles.aiText, { color: theme.text }]}>{slot.answer}</Text>
                 ) : (
@@ -609,15 +565,6 @@ const styles = StyleSheet.create({
   thoughtDot: { width: 5, height: 5, borderRadius: 2.5 },
   thoughtLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
   thoughtText: { fontSize: 12, lineHeight: 18, color: '#a8a29e', fontStyle: 'italic' },
-
-  // Search badge
-  searchBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 7,
-    borderRadius: 10, borderWidth: 1,
-    paddingHorizontal: 12, paddingVertical: 8, alignSelf: 'flex-start',
-  },
-  searchDot: { width: 5, height: 5, borderRadius: 2.5 },
-  searchBadgeText: { fontSize: 12, fontWeight: '600' },
 
   // Input bar
   inputBar: {
