@@ -12,6 +12,7 @@ import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, fmtMatchTime as fmtTime, type Fixture } from '../utils/fixtures';
+import { createSession, addMessage } from '../utils/historyDb';
 
 const SYSTEM_PROMPT = `You are Scout's Predictor — an on-device football match prediction AI. You use your training knowledge of team history, tactics, head-to-head records, and playing styles. If the user provides additional match context (form, injuries, venue, etc.), factor it in. Always respond in EXACTLY this format, no deviation:
 
@@ -199,6 +200,17 @@ export default function PredictorScreen() {
       await Promise.all([run.final, run.stats]);
       currentRunRef.current = null;
       clearNotification();
+
+      // Save prediction to SQLite history
+      if (streamed) {
+        const sessionId = createSession('predictor', `${teamA} vs ${teamB}`);
+        const prompt = context.trim()
+          ? `${teamA} vs ${teamB}\n\nContext: ${context.trim()}`
+          : `${teamA} vs ${teamB}`;
+        addMessage(sessionId, 'user', prompt);
+        addMessage(sessionId, 'assistant', streamed);
+      }
+
       if (mountedRef.current) {
         setElapsed(Math.round((Date.now() - genStart) / 100) / 10);
         setParsed(parsePrediction(streamed));

@@ -14,6 +14,7 @@ import { IconSend, IconStop, IconBall } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
+import { createSession, addMessage, updateLastAssistantMessage } from '../utils/historyDb';
 
 const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. Answer concisely and with authority. Always respond in English. Do not use <think> tags.`;
 
@@ -50,6 +51,7 @@ export default function MatchAIScreen() {
   const currentRunRef = useRef<any>(null);
   const mountedRef = useRef(true);
   const prefillFiredRef = useRef(false);
+  const sessionIdRef = useRef<string | null>(null);
 
   // Per-entry spring animations stored outside React state
   const entryAnimsRef = useRef<Record<string, { ty: Animated.Value; op: Animated.Value }>>({});
@@ -115,10 +117,15 @@ export default function MatchAIScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     const entryId = `e-${Date.now()}`;
-    // Create animation values before state update so they exist on first render
     const ty = new Animated.Value(36);
     const op = new Animated.Value(0);
     entryAnimsRef.current[entryId] = { ty, op };
+
+    // Create or reuse session for this conversation
+    if (!sessionIdRef.current) {
+      sessionIdRef.current = createSession('matchai', q);
+    }
+    addMessage(sessionIdRef.current, 'user', q);
 
     const newEntry: Entry = { id: entryId, question: q, answer: '', streaming: true };
     setEntries(prev => [...prev, newEntry]);
@@ -187,6 +194,10 @@ export default function MatchAIScreen() {
       clearNotification();
 
       const elapsed = Math.round((Date.now() - t0) / 100) / 10;
+      // Save completed answer to SQLite
+      if (sessionIdRef.current && streamed) {
+        addMessage(sessionIdRef.current, 'assistant', streamed);
+      }
       if (mountedRef.current) {
         setEntries(prev => prev.map(e =>
           e.id === entryId ? { ...e, answer: streamed, streaming: false, elapsed, toks: stats?.generatedTokens } : e

@@ -13,6 +13,7 @@ import { IconBack, IconCamera, IconStop } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
+import { createSession, addMessage } from '../utils/historyDb';
 
 const VISION_PROMPT = `You are Scout Lens — an on-device football vision AI. When shown an image, identify any football-related content: player jerseys and their numbers/teams, club badges/crests, stadium features, match scoreboard text, player cards, or trophies. Be specific: name the club if you can identify it from the badge or kit color. Keep your response concise and factual — under 100 words. If the image has no football content, say so briefly.`;
 
@@ -109,6 +110,14 @@ export default function ScoutLensScreen() {
       await run.final;
       currentRunRef.current = null;
       clearNotification();
+
+      // Save scan result to SQLite history
+      if (streamed) {
+        const sessionId = createSession('scoutlens', 'Scan — ' + new Date().toLocaleTimeString());
+        addMessage(sessionId, 'user', `[image] ${uri}`);
+        addMessage(sessionId, 'assistant', streamed);
+      }
+
       if (mountedRef.current) {
         setIsAnalyzing(false);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
