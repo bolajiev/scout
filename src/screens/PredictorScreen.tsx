@@ -11,6 +11,7 @@ import { IconTarget, IconStop } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
+import { fetchAndCacheFixtures, isWorldCup, fmtMatchTime as fmtTime, type Fixture } from '../utils/fixtures';
 
 const SYSTEM_PROMPT = `You are Scout's Predictor — an on-device football match prediction AI. You use your training knowledge of team history, tactics, head-to-head records, and playing styles. If the user provides additional match context (form, injuries, venue, etc.), factor it in. Always respond in EXACTLY this format, no deviation:
 
@@ -21,22 +22,6 @@ CONFIDENCE: [Low/Medium/High]
 [2-4 sentences: key tactical factors, head-to-head history, notable strengths/weaknesses. Be decisive and specific.]
 
 Do not add anything before WINNER or after the analysis. Always respond in English.`;
-
-interface Fixture {
-  idEvent: string;
-  strHomeTeam: string;
-  strAwayTeam: string;
-  strLeague: string;
-  strTime: string;
-}
-
-const todayISO = () => new Date().toISOString().split('T')[0];
-
-const fmtTime = (t: string) => {
-  if (!t || t === '00:00:00') return '';
-  const [h, m] = t.split(':');
-  return `${h}:${m}`;
-};
 
 export default function PredictorScreen() {
   const themeMode = useTheme();
@@ -120,32 +105,13 @@ export default function PredictorScreen() {
   }, [isGenerating]);
 
   const fetchFixtures = async () => {
-    try {
-      const res = await fetch(
-        `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${todayISO()}&s=Soccer`,
-        { signal: AbortSignal.timeout(8000) }
-      );
-      const data = await res.json();
-      const all: Fixture[] = data.events ?? [];
-
-      // Sort: World Cup matches first, then all others
-      const isWC = (f: Fixture) =>
-        /world cup/i.test(f.strLeague) || /fifa wc/i.test(f.strLeague);
-
-      const sorted = [
-        ...all.filter(isWC),
-        ...all.filter(f => !isWC(f)),
-      ];
-
-      if (mountedRef.current) {
-        setFixtures(sorted);
-        setNoInternet(false);
-      }
-    } catch {
-      if (mountedRef.current) setNoInternet(true);
-    } finally {
-      if (mountedRef.current) setFixturesLoading(false);
-    }
+    const { fixtures: all, online } = await fetchAndCacheFixtures();
+    if (!mountedRef.current) return;
+    // World Cup first, then rest
+    const sorted = [...all.filter(isWorldCup), ...all.filter(f => !isWorldCup(f))];
+    setFixtures(sorted);
+    setNoInternet(!online);
+    setFixturesLoading(false);
   };
 
   const retryFixtures = () => {

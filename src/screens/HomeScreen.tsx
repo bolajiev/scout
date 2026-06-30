@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   Animated, StatusBar, Dimensions,
@@ -8,6 +8,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconSettings, IconModels } from '../components/Icons';
+import {
+  fetchAndCacheFixtures, findClosestMatch, isLive,
+  fmtMatchTime, teamAbbr, isWorldCup,
+  type Fixture,
+} from '../utils/fixtures';
 
 const { width: SW } = Dimensions.get('window');
 const HIT = { top: 10, bottom: 10, left: 10, right: 10 };
@@ -88,11 +93,18 @@ export default function HomeScreen() {
   const theme = getTheme(themeMode);
   const insets = useSafeAreaInsets();
 
+  const [nextMatch, setNextMatch] = useState<Fixture | null>(null);
+  const [matchOnline, setMatchOnline] = useState(true);
+  const [matchFromCache, setMatchFromCache] = useState(false);
+  const mountedRef = useRef(true);
+
   const c1 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
   const c2 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
   const c3 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
 
   useEffect(() => {
+    mountedRef.current = true;
+
     const animCard = (c: typeof c1, delay: number) => {
       setTimeout(() => {
         Animated.parallel([
@@ -104,6 +116,15 @@ export default function HomeScreen() {
     animCard(c1, 240);
     animCard(c2, 360);
     animCard(c3, 480);
+
+    fetchAndCacheFixtures().then(({ fixtures, fromCache, online }) => {
+      if (!mountedRef.current) return;
+      setNextMatch(findClosestMatch(fixtures));
+      setMatchOnline(online);
+      setMatchFromCache(fromCache);
+    });
+
+    return () => { mountedRef.current = false; };
   }, []);
 
   const accent = '#22c55e';
@@ -162,16 +183,79 @@ export default function HomeScreen() {
           {/* Predictor */}
           <TouchableOpacity style={styles.predictCard} onPress={() => go('Predictor')} activeOpacity={0.85}>
             <Text style={styles.predictModLabel}>PREDICTOR</Text>
-            <Text style={styles.predictTitle}>Match{'\n'}Outcome</Text>
-            <View style={styles.fixtureVis}>
-              <View style={[styles.teamCircle, { backgroundColor: '#ef4444' }]}>
-                <Text style={styles.teamLetter}>H</Text>
-              </View>
-              <Text style={styles.vsLabel}>vs</Text>
-              <View style={[styles.teamCircle, { backgroundColor: '#3b82f6' }]}>
-                <Text style={styles.teamLetter}>A</Text>
-              </View>
-            </View>
+
+            {nextMatch ? (
+              <>
+                {/* League / live badge */}
+                <View style={styles.matchBadgeRow}>
+                  {isLive(nextMatch) ? (
+                    <View style={styles.liveBadge}>
+                      <View style={styles.liveDot} />
+                      <Text style={styles.liveBadgeText}>LIVE</Text>
+                    </View>
+                  ) : isWorldCup(nextMatch) ? (
+                    <Text style={styles.wcLabel}>WC 2026</Text>
+                  ) : (
+                    <Text style={styles.wcLabel} numberOfLines={1}>{nextMatch.strLeague.slice(0, 14)}</Text>
+                  )}
+                  {matchFromCache && !matchOnline && (
+                    <Text style={styles.cachedLabel}>cached</Text>
+                  )}
+                </View>
+
+                {/* Teams */}
+                <View style={styles.fixtureVis}>
+                  <View style={styles.teamCol}>
+                    <View style={[styles.teamCircle, { backgroundColor: '#ef4444' }]}>
+                      <Text style={styles.teamLetter}>{teamAbbr(nextMatch.strHomeTeam)}</Text>
+                    </View>
+                    <Text style={styles.teamName} numberOfLines={1}>{nextMatch.strHomeTeam.split(' ')[0]}</Text>
+                  </View>
+                  <View style={styles.vsCol}>
+                    <Text style={styles.vsLabel}>vs</Text>
+                    {fmtMatchTime(nextMatch.strTime) ? (
+                      <Text style={styles.matchTime}>{fmtMatchTime(nextMatch.strTime)}</Text>
+                    ) : null}
+                  </View>
+                  <View style={styles.teamCol}>
+                    <View style={[styles.teamCircle, { backgroundColor: '#3b82f6' }]}>
+                      <Text style={styles.teamLetter}>{teamAbbr(nextMatch.strAwayTeam)}</Text>
+                    </View>
+                    <Text style={styles.teamName} numberOfLines={1}>{nextMatch.strAwayTeam.split(' ')[0]}</Text>
+                  </View>
+                </View>
+              </>
+            ) : (
+              <>
+                {/* Offline / no data fallback */}
+                <View style={styles.offlineBadgeRow}>
+                  {!matchOnline && (
+                    <Text style={styles.offlineLabel}>offline</Text>
+                  )}
+                </View>
+                <View style={styles.fixtureVis}>
+                  <View style={styles.teamCol}>
+                    <View style={[styles.teamCircle, { backgroundColor: '#374151' }]}>
+                      <Text style={styles.teamLetter}>---</Text>
+                    </View>
+                    <Text style={styles.teamName}>Home</Text>
+                  </View>
+                  <View style={styles.vsCol}>
+                    <Text style={styles.vsLabel}>vs</Text>
+                  </View>
+                  <View style={styles.teamCol}>
+                    <View style={[styles.teamCircle, { backgroundColor: '#374151' }]}>
+                      <Text style={styles.teamLetter}>---</Text>
+                    </View>
+                    <Text style={styles.teamName}>Away</Text>
+                  </View>
+                </View>
+                {!matchOnline && (
+                  <Text style={styles.offlineHint}>Go online for live fixtures</Text>
+                )}
+              </>
+            )}
+
             <Text style={styles.predictCta}>Predict →</Text>
           </TouchableOpacity>
 
@@ -317,11 +401,32 @@ const styles = StyleSheet.create({
   },
   predictModLabel: { fontSize: 9, fontWeight: '800', color: '#f97316', letterSpacing: 1.6 },
   predictTitle: { fontSize: 21, fontWeight: '900', color: '#fff', lineHeight: 27, letterSpacing: -0.3 },
-  fixtureVis: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
-  teamCircle: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  teamLetter: { fontSize: 14, fontWeight: '800', color: '#fff' },
+
+  // Match badge row (WC / LIVE / cached)
+  matchBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  offlineBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 16 },
+  wcLabel: { fontSize: 9, fontWeight: '800', color: '#f97316', letterSpacing: 1 },
+  cachedLabel: { fontSize: 9, color: 'rgba(255,255,255,0.28)', fontStyle: 'italic' },
+  offlineLabel: {
+    fontSize: 9, fontWeight: '700', color: 'rgba(255,255,255,0.28)',
+    letterSpacing: 0.8,
+  },
+  liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  liveDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#ef4444' },
+  liveBadgeText: { fontSize: 9, fontWeight: '800', color: '#ef4444', letterSpacing: 1 },
+
+  // Fixture vis
+  fixtureVis: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  teamCol: { alignItems: 'center', gap: 3, flex: 1 },
+  vsCol: { alignItems: 'center', gap: 2 },
+  teamCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  teamLetter: { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
+  teamName: { fontSize: 9, color: 'rgba(255,255,255,0.45)', fontWeight: '600', maxWidth: 52 },
   vsLabel: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.35)' },
-  predictCta: { fontSize: 13, fontWeight: '800', color: '#f97316', marginTop: 4 },
+  matchTime: { fontSize: 9, color: '#f97316', fontWeight: '700' },
+  offlineHint: { fontSize: 9, color: 'rgba(255,255,255,0.25)', marginTop: -2 },
+
+  predictCta: { fontSize: 13, fontWeight: '800', color: '#f97316', marginTop: 2 },
 
   // Scout Lens card
   lensCard: {
