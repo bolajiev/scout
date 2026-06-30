@@ -14,10 +14,13 @@ import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, fmtMatchTime as fmtTime, type Fixture } from '../utils/fixtures';
 import { createSession, addMessage } from '../utils/historyDb';
+import { fetchBothTeamForms, formatFormContext, type TeamForm } from '../utils/teamStats';
 
-const SYSTEM_PROMPT = `You are Scout's Predictor — an on-device football match prediction AI for the FIFA World Cup 2026.
+const SYSTEM_PROMPT = `You are Scout's Predictor — an on-device football match prediction AI.
 
-IMPORTANT: Your training data has a knowledge cutoff. Do NOT claim to know current 2025/2026 form, recent injuries, or live squad news unless the user provides that in the context field. Instead, base your prediction on: historical head-to-head records, each team's established playing style and tactical identity, tournament pedigree, and key player archetypes. If the user provides current context (recent form, injuries, venue, group stage pressure), use it heavily.
+When [LIVE FORM DATA] is present in the message, treat it as ground truth for recent form — it comes directly from TheSportsDB and overrides any assumptions from your training. Weight recent form heavily alongside tactical identity and head-to-head history.
+
+When no live data is present, base your prediction on historical records, playing style, and tournament pedigree. Do NOT fabricate recent results.
 
 Always respond in EXACTLY this format, no deviation:
 
@@ -25,7 +28,7 @@ WINNER: [team name or Draw]
 SCORE: [e.g. 2-1]
 CONFIDENCE: [Low/Medium/High]
 ---
-[2-4 sentences: explain your reasoning based on historical patterns, tactical matchup, and any provided context. Be specific about WHY. Do not fabricate recent results.]
+[2-4 sentences explaining your reasoning. If live form data was provided, reference it directly. Be specific.]
 
 Do not add anything before WINNER or after the analysis. Always respond in English.`;
 
@@ -49,9 +52,13 @@ export default function PredictorScreen() {
   const [noModel, setNoModel] = useState(false);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [thinkingOn, setThinkingOn] = useState(false);
+  const [formA, setFormA] = useState<TeamForm | null>(null);
+  const [formB, setFormB] = useState<TeamForm | null>(null);
+  const [formLoading, setFormLoading] = useState(false);
 
   const currentRunRef = useRef<any>(null);
   const mountedRef = useRef(true);
+  const formDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Predict button pulse while generating
   const pulsAnim = useRef(new Animated.Value(1)).current;
@@ -70,9 +77,28 @@ export default function PredictorScreen() {
       mountedRef.current = false;
       clearNotification();
       loadLoop.current?.stop();
+      if (formDebounceRef.current) clearTimeout(formDebounceRef.current);
       if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
     };
   }, []);
+
+  // Debounced team form lookup — fires 700ms after both names reach 3+ chars
+  useEffect(() => {
+    if (formDebounceRef.current) clearTimeout(formDebounceRef.current);
+    if (teamA.trim().length < 3 || teamB.trim().length < 3) {
+      setFormA(null); setFormB(null);
+      return;
+    }
+    formDebounceRef.current = setTimeout(async () => {
+      if (!mountedRef.current) return;
+      setFormLoading(true);
+      const [fa, fb] = await fetchBothTeamForms(teamA.trim(), teamB.trim());
+      if (!mountedRef.current) return;
+      setFormA(fa);
+      setFormB(fb);
+      setFormLoading(false);
+    }, 700);
+  }, [teamA, teamB]);
 
 
   useEffect(() => {
@@ -162,9 +188,11 @@ export default function PredictorScreen() {
     setIsGenerating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    const prompt = context.trim()
-      ? `Predict: ${teamA.trim()} vs ${teamB.trim()}\n\nMatch context provided by user: ${context.trim()}`
-      : `Predict: ${teamA.trim()} vs ${teamB.trim()}`;
+    const formBlock = (formA || formB)
+      ? formatFormContext(teamA.trim(), formA, teamB.trim(), formB) + '\n\n'
+      : '';
+    const userContext = context.trim() ? `\n\nAdditional context: ${context.trim()}` : '';
+    const prompt = `${formBlock}Predict: ${teamA.trim()} vs ${teamB.trim()}${userContext}`;
     const genStart = Date.now();
 
     try {
@@ -386,10 +414,45 @@ export default function PredictorScreen() {
           </View>
         </View>
 
+        {/* Live form section — appears when both teams searched */}
+        {(formLoading || formA || formB) && (
+          <View style={[styles.formSection, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={styles.formHeader}>
+              <View style={[styles.formDot, { backgroundColor: formLoading ? theme.textSecondary : '#22c55e' }]} />
+              <Text style={[styles.formLabel, { color: formLoading ? theme.textSecondary : '#22c55e' }]}>
+                {formLoading ? 'Fetching live form...' : 'Live form · TheSportsDB'}
+              </Text>
+            </View>
+            {!formLoading && (
+              <View style={styles.formRows}>
+                {[{ name: teamA, form: formA }, { name: teamB, form: formB }].map(({ name, form }) => (
+                  <View key={name} style={styles.formRow}>
+                    <Text style={[styles.formTeamName, { color: theme.textSecondary }]} numberOfLines={1}>
+                      {name.slice(0, 12).toUpperCase()}
+                    </Text>
+                    <View style={styles.formDots}>
+                      {form ? form.form.map((r, i) => (
+                        <View key={i} style={[
+                          styles.formDotCircle,
+                          { backgroundColor: r === 'W' ? '#22c55e' : r === 'D' ? '#f59e0b' : '#ef4444' },
+                        ]}>
+                          <Text style={styles.formDotText}>{r}</Text>
+                        </View>
+                      )) : (
+                        <Text style={[styles.formNotFound, { color: theme.textSecondary }]}>not found</Text>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
         {/* Optional context */}
         <TextInput
           style={[styles.contextInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.text }]}
-          placeholder="Add context (optional): recent form, injuries, venue, rivalry..."
+          placeholder="Add context: injuries, venue, pressure, head-to-head..."
           placeholderTextColor={theme.textSecondary}
           value={context}
           onChangeText={setContext}
@@ -573,6 +636,23 @@ const styles = StyleSheet.create({
     borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12,
     fontSize: 14, lineHeight: 20, minHeight: 60,
   },
+  // Live form section
+  formSection: {
+    borderRadius: 14, borderWidth: 1, padding: 14, gap: 10,
+  },
+  formHeader: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  formDot: { width: 6, height: 6, borderRadius: 3 },
+  formLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
+  formRows: { gap: 8 },
+  formRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  formTeamName: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8, width: 78 },
+  formDots: { flexDirection: 'row', gap: 5, flexWrap: 'wrap' },
+  formDotCircle: {
+    width: 26, height: 26, borderRadius: 13,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  formDotText: { fontSize: 10, fontWeight: '800', color: '#fff' },
+  formNotFound: { fontSize: 11, fontStyle: 'italic' },
   vsBox: {
     width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1,

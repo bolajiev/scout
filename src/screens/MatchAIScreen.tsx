@@ -14,11 +14,17 @@ import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage } from '../utils/historyDb';
+import { needsLiveData, formatFixtureContext } from '../utils/teamStats';
+import { fetchAndCacheFixtures } from '../utils/fixtures';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_W = (SCREEN_W - 48) / 2;
 
-const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. When web context is provided inside [LIVE WEB SEARCH] tags, use it to give current accurate information. Answer concisely and with authority. Always respond in English.`;
+const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy.
+
+When [LIVE FIXTURES] data is present in the message, use it to answer questions about today's matches accurately. For general tactical or historical questions, rely on your training knowledge — do not fabricate live data that isn't provided.
+
+Answer concisely and with authority. Always respond in English.`;
 
 const ALL_SUGGESTIONS = [
   'How does a high press work?',
@@ -62,6 +68,7 @@ interface Entry {
   thinking?: string;
   elapsed?: number;
   toks?: number;
+  usedLiveData?: boolean;
 }
 
 interface StreamSlot {
@@ -70,6 +77,8 @@ interface StreamSlot {
   answer: string;
   thought: string;
   isThinking: boolean;
+  fetchingLive: boolean;   // true while TheSportsDB fetch is in progress
+  usedLiveData: boolean;   // true if live fixture context was injected
 }
 
 export default function MatchAIScreen() {
@@ -176,11 +185,26 @@ export default function MatchAIScreen() {
       { role: 'assistant' as const, content: e.answer },
     ]).flat();
 
-    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn });
+    const wantsLive = needsLiveData(q);
+    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn, fetchingLive: wantsLive, usedLiveData: false });
     setIsGenerating(true);
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60);
 
-    history.push({ role: 'user', content: q });
+    // Only hit TheSportsDB if the question actually needs live match data
+    let liveBlock = '';
+    if (wantsLive) {
+      try {
+        const { fixtures } = await fetchAndCacheFixtures();
+        const ctx = formatFixtureContext(fixtures);
+        if (ctx) liveBlock = ctx;
+      } catch {}
+      if (mountedRef.current) {
+        setSlot(s => s ? { ...s, fetchingLive: false, usedLiveData: !!liveBlock } : s);
+      }
+    }
+
+    const userContent = liveBlock ? `${liveBlock}\n\nQuestion: ${q}` : q;
+    history.push({ role: 'user', content: userContent });
 
     try {
       const gp = await getGenParams();
@@ -242,7 +266,8 @@ export default function MatchAIScreen() {
       if (sessionIdRef.current && answerAcc) addMessage(sessionIdRef.current, 'assistant', answerAcc);
 
       if (mountedRef.current) {
-        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, elapsed, toks: stats?.generatedTokens };
+        const usedLive = slot?.usedLiveData ?? false;
+        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, elapsed, toks: stats?.generatedTokens, usedLiveData: usedLive };
         setSlot(null);
         setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
@@ -301,13 +326,23 @@ export default function MatchAIScreen() {
         </View>
         {entry.thinking && renderThoughtBlock(entry.thinking, false, entry.id)}
         <View style={styles.aiRow}>
-          <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.aiText, { color: theme.text }]}>{entry.answer}</Text>
-            {entry.elapsed != null && (
-              <Text style={[styles.stat, { color: theme.textSecondary }]}>
-                {entry.elapsed}s{entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''} · on-device
-              </Text>
-            )}
+          <View style={styles.aiCol}>
+            <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <Text style={[styles.aiText, { color: theme.text }]}>{entry.answer}</Text>
+            </View>
+            <View style={styles.statRow}>
+              {entry.usedLiveData && (
+                <View style={[styles.liveChip, { backgroundColor: '#22c55e14', borderColor: '#22c55e25' }]}>
+                  <View style={[styles.liveDotSmall, { backgroundColor: '#22c55e' }]} />
+                  <Text style={[styles.liveChipText, { color: '#22c55e' }]}>TheSportsDB</Text>
+                </View>
+              )}
+              {entry.elapsed != null && (
+                <Text style={[styles.stat, { color: theme.textSecondary }]}>
+                  {entry.elapsed}s{entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''} · on-device
+                </Text>
+              )}
+            </View>
           </View>
         </View>
       </Animated.View>
@@ -426,6 +461,12 @@ export default function MatchAIScreen() {
                 <Text style={[styles.userText, { color: theme.text }]}>{slot.question}</Text>
               </View>
             </View>
+            {slot.fetchingLive && (
+              <View style={[styles.liveChip, { backgroundColor: '#22c55e14', borderColor: '#22c55e25', alignSelf: 'flex-start' }]}>
+                <View style={[styles.liveDotSmall, { backgroundColor: '#22c55e' }]} />
+                <Text style={[styles.liveChipText, { color: '#22c55e' }]}>Fetching live fixtures...</Text>
+              </View>
+            )}
             {slot.thought.length > 0 && renderThoughtBlock(slot.thought, slot.isThinking, slot.id)}
             <View style={styles.aiRow}>
               <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: accent + '45' }]}>
@@ -547,12 +588,20 @@ const styles = StyleSheet.create({
   userText: { fontSize: 15, lineHeight: 22, fontWeight: '500' },
 
   aiRow: { alignItems: 'flex-start' },
+  aiCol: { alignItems: 'flex-start', gap: 5, maxWidth: '90%' },
   aiBubble: {
-    maxWidth: '90%', borderRadius: 20, borderBottomLeftRadius: 5,
+    borderRadius: 20, borderBottomLeftRadius: 5,
     borderWidth: 1, paddingHorizontal: 15, paddingVertical: 11, gap: 6,
   },
   aiText: { fontSize: 15, lineHeight: 24 },
-  stat: { fontSize: 10, fontWeight: '500', marginTop: 2 },
+  statRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 4 },
+  stat: { fontSize: 10, fontWeight: '500' },
+  liveChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4,
+  },
+  liveDotSmall: { width: 4, height: 4, borderRadius: 2 },
+  liveChipText: { fontSize: 10, fontWeight: '700' },
 
   typingRow: { flexDirection: 'row', gap: 5, alignItems: 'center', paddingVertical: 3 },
   typingDot: { width: 7, height: 7, borderRadius: 3.5 },
