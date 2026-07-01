@@ -145,11 +145,10 @@ Models stay loaded across screens. The app releases the model automatically afte
 
 | Model | Type | Size | Used for |
 |---|---|---|---|
-| Qwen3 1.7B | Text | 1.1 GB | Match AI, Predictor |
-| MedPsy 1.7B | Text | 1.1 GB | Match AI, Predictor (default) |
-| MedPsy 4B | Text | 2.7 GB | Match AI, Predictor (higher quality) |
-| SmolVLM2 500M | Vision | 521 MB | Scout Lens |
-| Qwen3-VL 2B | Vision | 1.7 GB | Scout Lens (sharper) |
+| Qwen3 1.7B | Text | 1.1 GB | Match AI, Predictor — fast, recommended |
+| MedPsy 1.7B | Text | 1.1 GB | Match AI, Predictor — lighter weight |
+| MedPsy 4B | Text | 2.7 GB | Match AI, Predictor — richer reasoning |
+| Gemma 4 2B | Vision | 3.8 GB | Scout Lens — jersey, badge, scoreboard ID |
 
 Models are downloaded once to app-private storage (`DocumentDirectory/scout/models/<id>/`) and run fully offline. The app migrates old folder names automatically on first launch.
 
