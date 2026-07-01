@@ -42,3 +42,8 @@ credentials.json
 # generated native folders
 /ios
 /android
+!/android/
+!/android/app/
+!/android/app/src/
+!/android/app/src/main/
+!/android/app/src/main/AndroidManifest.xml
