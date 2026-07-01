@@ -9,7 +9,9 @@ const STOP_ACTION_ID = 'stop-inference';
 const CATEGORY_ID = 'inference-running';
 
 let channelReady = false;
+let _channelSetupPromise: Promise<void> | null = null;
 let categoryReady = false;
+let _categorySetupPromise: Promise<void> | null = null;
 let _cancelFn: (() => void) | null = null;
 let _responseListener: Notifications.Subscription | null = null;
 
@@ -20,7 +22,9 @@ const DL_CANCEL_ACTION = 'cancel-download';
 const DL_CATEGORY_ID = 'download-active';
 
 let dlChannelReady = false;
+let _dlChannelSetupPromise: Promise<void> | null = null;
 let dlCategoryReady = false;
+let _dlCategorySetupPromise: Promise<void> | null = null;
 let _dlCancelFn: (() => Promise<void>) | null = null;
 let _dlResponseListener: Notifications.Subscription | null = null;
 let _dlLastNotifMs = 0;
@@ -35,37 +39,47 @@ function fmtSpeed(bps: number): string {
   return `${Math.round(bps)} B/s`;
 }
 
-async function ensureDlChannel() {
+async function ensureDlChannel(): Promise<void> {
   if (dlChannelReady || Platform.OS !== 'android') return;
-  await Notifications.setNotificationChannelAsync(DL_CHANNEL_ID, {
-    name: 'Downloads',
-    importance: Notifications.AndroidImportance.DEFAULT,
-    sound: null,
-    vibrationPattern: null,
-    enableVibrate: false,
-  });
-  dlChannelReady = true;
+  if (_dlChannelSetupPromise) return _dlChannelSetupPromise;
+  _dlChannelSetupPromise = (async () => {
+    await Notifications.setNotificationChannelAsync(DL_CHANNEL_ID, {
+      name: 'Downloads',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: null,
+      vibrationPattern: null,
+      enableVibrate: false,
+    });
+    dlChannelReady = true;
+    _dlChannelSetupPromise = null;
+  })();
+  return _dlChannelSetupPromise;
 }
 
-async function ensureDlCategory() {
+async function ensureDlCategory(): Promise<void> {
   if (dlCategoryReady) return;
-  try {
-    await Notifications.setNotificationCategoryAsync(DL_CATEGORY_ID, [
-      {
-        identifier: DL_CANCEL_ACTION,
-        buttonTitle: 'Cancel',
-        options: { isDestructive: true, opensAppToForeground: false },
-      },
-    ]);
-    dlCategoryReady = true;
-    if (!_dlResponseListener) {
-      _dlResponseListener = Notifications.addNotificationResponseReceivedListener(response => {
-        if (response.actionIdentifier === DL_CANCEL_ACTION) {
-          _dlCancelFn?.();
-        }
-      });
-    }
-  } catch {}
+  if (_dlCategorySetupPromise) return _dlCategorySetupPromise;
+  _dlCategorySetupPromise = (async () => {
+    try {
+      await Notifications.setNotificationCategoryAsync(DL_CATEGORY_ID, [
+        {
+          identifier: DL_CANCEL_ACTION,
+          buttonTitle: 'Cancel',
+          options: { isDestructive: true, opensAppToForeground: false },
+        },
+      ]);
+      dlCategoryReady = true;
+      if (!_dlResponseListener) {
+        _dlResponseListener = Notifications.addNotificationResponseReceivedListener(response => {
+          if (response.actionIdentifier === DL_CANCEL_ACTION) {
+            _dlCancelFn?.();
+          }
+        });
+      }
+    } catch {}
+    _dlCategorySetupPromise = null;
+  })();
+  return _dlCategorySetupPromise;
 }
 
 export function registerDownloadCancel(fn: () => Promise<void>) { _dlCancelFn = fn; }
@@ -134,38 +148,48 @@ export function unregisterInferenceCancel() {
   _cancelFn = null;
 }
 
-async function ensureChannel() {
+async function ensureChannel(): Promise<void> {
   if (channelReady || Platform.OS !== 'android') return;
-  await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
-    name: 'AI Tasks',
-    importance: Notifications.AndroidImportance.DEFAULT,
-    sound: null,
-    vibrationPattern: null,
-    enableVibrate: false,
-  });
-  channelReady = true;
+  if (_channelSetupPromise) return _channelSetupPromise;
+  _channelSetupPromise = (async () => {
+    await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
+      name: 'AI Tasks',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: null,
+      vibrationPattern: null,
+      enableVibrate: false,
+    });
+    channelReady = true;
+    _channelSetupPromise = null;
+  })();
+  return _channelSetupPromise;
 }
 
-async function ensureCategory() {
+async function ensureCategory(): Promise<void> {
   if (categoryReady) return;
-  try {
-    await Notifications.setNotificationCategoryAsync(CATEGORY_ID, [
-      {
-        identifier: STOP_ACTION_ID,
-        buttonTitle: 'Stop',
-        options: { isDestructive: true, opensAppToForeground: false },
-      },
-    ]);
-    categoryReady = true;
-    if (!_responseListener) {
-      _responseListener = Notifications.addNotificationResponseReceivedListener(response => {
-        if (response.actionIdentifier === STOP_ACTION_ID) {
-          _cancelFn?.();
-          void clearInferenceNotifications();
-        }
-      });
-    }
-  } catch {}
+  if (_categorySetupPromise) return _categorySetupPromise;
+  _categorySetupPromise = (async () => {
+    try {
+      await Notifications.setNotificationCategoryAsync(CATEGORY_ID, [
+        {
+          identifier: STOP_ACTION_ID,
+          buttonTitle: 'Stop',
+          options: { isDestructive: true, opensAppToForeground: false },
+        },
+      ]);
+      categoryReady = true;
+      if (!_responseListener) {
+        _responseListener = Notifications.addNotificationResponseReceivedListener(response => {
+          if (response.actionIdentifier === STOP_ACTION_ID) {
+            _cancelFn?.();
+            void clearInferenceNotifications();
+          }
+        });
+      }
+    } catch {}
+    _categorySetupPromise = null;
+  })();
+  return _categorySetupPromise;
 }
 
 export async function requestNotificationPermission() {
