@@ -5,16 +5,16 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
+import { completion, cancel, InferenceCancelledError, type Tool } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconSend, IconStop, IconBall } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
-import { syncModelsFromDisk, getGenParams } from '../utils/storage';
+import { syncModelsFromDisk, getGenParams, getSettings } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage } from '../utils/historyDb';
-import { needsLiveData, formatFixtureContext } from '../utils/teamStats';
+import { formatFixtureContext } from '../utils/teamStats';
 import { fetchAndCacheFixtures } from '../utils/fixtures';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -22,9 +22,30 @@ const CARD_W = (SCREEN_W - 48) / 2;
 
 const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy.
 
-When [LIVE FIXTURES] data is present in the message, use it to answer questions about today's matches accurately. For general tactical or historical questions, rely on your training knowledge — do not fabricate live data that isn't provided.
+You have tools to fetch live football data from TheSportsDB. Use get_today_fixtures when the user asks about today's matches, games, fixtures, or live scores. Use get_team_form when asked about a specific team's recent results or form.
 
-Answer concisely and with authority. Always respond in English.`;
+For tactical, historical, or general football questions, rely on your training knowledge. Always respond in English.`;
+
+const SCOUT_TOOLS: Tool[] = [
+  {
+    type: 'function',
+    name: 'get_today_fixtures',
+    description: "Get today's football matches and scores from TheSportsDB. Use when the user asks about today's games, fixtures, live scores, or who is playing.",
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    type: 'function',
+    name: 'get_team_form',
+    description: "Get a football team's recent match results from TheSportsDB. Use when asked about a specific team's recent form, results, or performance.",
+    parameters: {
+      type: 'object',
+      properties: {
+        team_name: { type: 'string', description: 'Name of the football team' },
+      },
+      required: ['team_name'],
+    },
+  },
+];
 
 const ALL_SUGGESTIONS = [
   'How does a high press work?',
@@ -77,8 +98,8 @@ interface StreamSlot {
   answer: string;
   thought: string;
   isThinking: boolean;
-  fetchingLive: boolean;   // true while TheSportsDB fetch is in progress
-  usedLiveData: boolean;   // true if live fixture context was injected
+  toolStatus: string | null;  // non-null while a tool call is executing
+  usedLiveData: boolean;
 }
 
 export default function MatchAIScreen() {
@@ -104,6 +125,7 @@ export default function MatchAIScreen() {
   const currentRunRef    = useRef<any>(null);
   const mountedRef       = useRef(true);
   const prefillFiredRef  = useRef(false);
+  const prefillRef       = useRef<string | null>(null);
   const sessionIdRef     = useRef<string | null>(null);
   const loadPulse        = useRef(new Animated.Value(0.4)).current;
   const loadLoopRef      = useRef<Animated.CompositeAnimation | null>(null);
@@ -112,6 +134,10 @@ export default function MatchAIScreen() {
   useEffect(() => {
     mountedRef.current = true;
     loadModel();
+    // Sync Deep Reasoning default from global settings
+    getSettings().then(s => {
+      if (mountedRef.current) setThinkingOn(s.deepReasoning ?? false);
+    }).catch(() => {});
     return () => {
       mountedRef.current = false;
       clearNotification();
@@ -119,7 +145,6 @@ export default function MatchAIScreen() {
       if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
     };
   }, []);
-
 
   useEffect(() => {
     if (modelLoading && !noModel) {
@@ -143,14 +168,14 @@ export default function MatchAIScreen() {
         if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
         return;
       }
-      const mid = await llmManager.ensure(model, { ctx_size: 4096, device: 'auto' });
+      const mid = await llmManager.ensure(model, { ctx_size: 4096, device: 'auto', tools: true });
       if (mountedRef.current) {
         setModelId(mid);
         setModelLoading(false);
         const prefill = route.params?.prefill;
         if (prefill && !prefillFiredRef.current) {
           prefillFiredRef.current = true;
-          setTimeout(() => send(prefill), 100);
+          prefillRef.current = prefill; // fired via useEffect once modelId is set
         }
       }
     } catch {
@@ -177,63 +202,55 @@ export default function MatchAIScreen() {
     const entryId = `e-${Date.now()}`;
     entryAnimsRef.current[entryId] = { ty: new Animated.Value(24), op: new Animated.Value(0) };
 
-    if (!sessionIdRef.current) sessionIdRef.current = createSession('matchai', q);
-    addMessage(sessionIdRef.current, 'user', q);
+    try {
+      if (!sessionIdRef.current) sessionIdRef.current = createSession('matchai', q);
+      addMessage(sessionIdRef.current, 'user', q);
+    } catch {}
 
-    const history = entries.map(e => [
+    const history: { role: 'user' | 'assistant' | 'tool'; content: string }[] = entries.map(e => [
       { role: 'user' as const, content: e.question },
       { role: 'assistant' as const, content: e.answer },
     ]).flat();
+    history.push({ role: 'user', content: q });
 
-    const wantsLive = needsLiveData(q);
-    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn, fetchingLive: wantsLive, usedLiveData: false });
+    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn, toolStatus: null, usedLiveData: false });
     setIsGenerating(true);
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60);
 
-    // Only hit TheSportsDB if the question actually needs live match data
-    let liveBlock = '';
-    if (wantsLive) {
-      try {
-        const { fixtures } = await fetchAndCacheFixtures();
-        const ctx = formatFixtureContext(fixtures);
-        if (ctx) liveBlock = ctx;
-      } catch {}
-      if (mountedRef.current) {
-        setSlot(s => s ? { ...s, fetchingLive: false, usedLiveData: !!liveBlock } : s);
-      }
-    }
-
-    const userContent = liveBlock ? `${liveBlock}\n\nQuestion: ${q}` : q;
-    history.push({ role: 'user', content: userContent });
+    let usedLiveData = false;
+    let answerAcc = '';
+    let thoughtAcc = '';
+    let lastFlush = 0;
 
     try {
       const gp = await getGenParams();
+      const genParams = {
+        predict: gp.maxTokens,
+        temp: gp.temp,
+        top_k: gp.top_k,
+        top_p: gp.top_p,
+        repeat_penalty: gp.repeat_penalty,
+        reasoning_budget: thinkingOn ? -1 as -1 : 0 as 0,
+      };
       const t0 = Date.now();
-      const run = completion({
+
+      // ── Pass 1: completion with tools available ─────────────────────────
+      const run1 = completion({
         modelId,
         history: [{ role: 'system', content: SYSTEM_PROMPT }, ...history],
         stream: true,
+        tools: SCOUT_TOOLS,
         captureThinking: thinkingOn,
-        generationParams: {
-          predict: gp.maxTokens,
-          temp: gp.temp,
-          top_k: gp.top_k,
-          top_p: gp.top_p,
-          repeat_penalty: gp.repeat_penalty,
-          reasoning_budget: thinkingOn ? -1 as -1 : 0 as 0,
-        },
+        generationParams: genParams,
       });
-      currentRunRef.current = run;
+      currentRunRef.current = run1;
       registerInferenceCancel(() => {
         if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
       });
       showRunningNotification('AI Coach');
 
-      let answerAcc = '';
-      let thoughtAcc = '';
-      let lastFlush = 0;
-
-      for await (const event of run.events) {
+      let pass1Answer = '';
+      for await (const event of run1.events) {
         if (event.type === 'thinkingDelta') {
           thoughtAcc += event.text;
           const now = Date.now();
@@ -243,14 +260,76 @@ export default function MatchAIScreen() {
             scrollRef.current?.scrollToEnd({ animated: false });
           }
         } else if (event.type === 'contentDelta') {
-          answerAcc += event.text;
+          pass1Answer += event.text;
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 40) {
             lastFlush = now;
-            setSlot(s => s ? { ...s, answer: answerAcc, isThinking: false } : s);
+            setSlot(s => s ? { ...s, answer: pass1Answer, isThinking: false } : s);
             scrollRef.current?.scrollToEnd({ animated: false });
           }
         }
+      }
+
+      const toolCalls = await run1.toolCalls;
+      let finalStats = await run1.stats;
+
+      if (toolCalls.length > 0 && mountedRef.current) {
+        // ── Tool execution ──────────────────────────────────────────────────
+        setSlot(s => s ? { ...s, toolStatus: 'Fetching live data...', answer: '' } : s);
+
+        const toolHistory = [...history, { role: 'assistant' as const, content: pass1Answer }];
+
+        for (const tc of toolCalls) {
+          let toolResult = 'No data available.';
+          try {
+            if (tc.name === 'get_today_fixtures') {
+              const { fixtures } = await fetchAndCacheFixtures();
+              toolResult = formatFixtureContext(fixtures) || 'No fixtures scheduled today.';
+              usedLiveData = true;
+            } else if (tc.name === 'get_team_form') {
+              const teamName = String(tc.arguments.team_name ?? '');
+              const { fixtures } = await fetchAndCacheFixtures();
+              const teamFix = fixtures.filter(f =>
+                f.strHomeTeam?.toLowerCase().includes(teamName.toLowerCase()) ||
+                f.strAwayTeam?.toLowerCase().includes(teamName.toLowerCase())
+              );
+              toolResult = teamFix.length > 0 ? formatFixtureContext(teamFix) : `No fixtures found for ${teamName}.`;
+              usedLiveData = true;
+            }
+          } catch { toolResult = 'Unable to fetch live data.'; }
+          toolHistory.push({ role: 'tool', content: toolResult });
+        }
+
+        if (!mountedRef.current) return;
+        setSlot(s => s ? { ...s, toolStatus: null, answer: '', usedLiveData } : s);
+
+        // ── Pass 2: final answer incorporating tool results ─────────────────
+        const run2 = completion({
+          modelId,
+          history: [{ role: 'system', content: SYSTEM_PROMPT }, ...toolHistory],
+          stream: true,
+          tools: SCOUT_TOOLS,
+            captureThinking: false,
+          generationParams: { ...genParams, reasoning_budget: 0 as 0 },
+        });
+        currentRunRef.current = run2;
+
+        answerAcc = '';
+        lastFlush = 0;
+        for await (const event of run2.events) {
+          if (event.type === 'contentDelta') {
+            answerAcc += event.text;
+            const now = Date.now();
+            if (mountedRef.current && now - lastFlush > 40) {
+              lastFlush = now;
+              setSlot(s => s ? { ...s, answer: answerAcc } : s);
+              scrollRef.current?.scrollToEnd({ animated: false });
+            }
+          }
+        }
+        finalStats = await run2.stats;
+      } else {
+        answerAcc = pass1Answer;
       }
 
       if (mountedRef.current) {
@@ -258,7 +337,6 @@ export default function MatchAIScreen() {
         scrollRef.current?.scrollToEnd({ animated: false });
       }
 
-      const [, stats] = await Promise.all([run.final, run.stats]);
       currentRunRef.current = null;
       clearNotification();
 
@@ -266,8 +344,7 @@ export default function MatchAIScreen() {
       if (sessionIdRef.current && answerAcc) addMessage(sessionIdRef.current, 'assistant', answerAcc);
 
       if (mountedRef.current) {
-        const usedLive = slot?.usedLiveData ?? false;
-        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, elapsed, toks: stats?.generatedTokens, usedLiveData: usedLive };
+        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, elapsed, toks: finalStats?.generatedTokens, usedLiveData };
         setSlot(null);
         setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
@@ -287,6 +364,15 @@ export default function MatchAIScreen() {
       }
     }
   }, [input, isGenerating, modelId, entries, thinkingOn]);
+
+  // Fire prefill after send() is memoized with the real modelId
+  useEffect(() => {
+    if (modelId && prefillRef.current) {
+      const q = prefillRef.current;
+      prefillRef.current = null;
+      setTimeout(() => send(q), 80);
+    }
+  }, [modelId, send]);
 
   const renderThoughtBlock = (thought: string, isStreaming: boolean, entryId: string) => {
     if (!thought) return null;
@@ -461,10 +547,10 @@ export default function MatchAIScreen() {
                 <Text style={[styles.userText, { color: theme.text }]}>{slot.question}</Text>
               </View>
             </View>
-            {slot.fetchingLive && (
+            {slot.toolStatus && (
               <View style={[styles.liveChip, { backgroundColor: '#22c55e14', borderColor: '#22c55e25', alignSelf: 'flex-start' }]}>
                 <View style={[styles.liveDotSmall, { backgroundColor: '#22c55e' }]} />
-                <Text style={[styles.liveChipText, { color: '#22c55e' }]}>Fetching live fixtures...</Text>
+                <Text style={[styles.liveChipText, { color: '#22c55e' }]}>{slot.toolStatus}</Text>
               </View>
             )}
             {slot.thought.length > 0 && renderThoughtBlock(slot.thought, slot.isThinking, slot.id)}

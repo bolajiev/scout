@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   accelerator: 'cpu',
   responseLength: 'balanced',
+  deepReasoning: false,
   huggingFaceToken: '',
   temperature: 0.7,
   topK: 20,
@@ -352,13 +353,6 @@ export async function setDefaultModelId(modelId: string): Promise<void> {
   await AsyncStorage.setItem('@scout_default_model', modelId);
 }
 
-export async function getQuickChatDefaultId(): Promise<string | null> {
-  return AsyncStorage.getItem('@scout_quickchat_default');
-}
-
-export async function setQuickChatDefaultId(modelId: string): Promise<void> {
-  await AsyncStorage.setItem('@scout_quickchat_default', modelId);
-}
 
 export async function getThemeOverride(): Promise<'dark' | 'light' | null> {
   const val = await AsyncStorage.getItem('@scout_theme_override');

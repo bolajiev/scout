@@ -56,8 +56,10 @@ export const fetchTeamForm = async (teamName: string): Promise<TeamForm | null> 
       const away = ev.strAwayTeam ?? '';
       const hs = parseInt(ev.intHomeScore ?? '-1', 10);
       const as_ = parseInt(ev.intAwayScore ?? '-1', 10);
-      const isHome = home.toLowerCase().includes(teamName.toLowerCase()) ||
-                     teamName.toLowerCase().includes(home.toLowerCase().slice(0, 5));
+      // Use exact substring match only — the slice(0,5) heuristic caused false positives
+      const homeLower = home.toLowerCase();
+      const nameLower = teamName.toLowerCase();
+      const isHome = homeLower.includes(nameLower) || nameLower.includes(homeLower);
 
       let result: FormResult = 'D';
       if (hs >= 0 && as_ >= 0) {
@@ -116,24 +118,6 @@ export const formatFormContext = (
   ].join('\n');
 };
 
-// ── MatchAI intent detection ───────────────────────────────────────────────
-// Returns true if the question likely needs live match data rather than
-// just training knowledge. We do NOT fetch for general tactical/rule questions.
-
-const LIVE_KEYWORDS = [
-  'last match', 'last game', 'last week', 'recent', 'lately',
-  'current form', 'in form', 'out of form', 'form',
-  'score', 'result', 'won', 'lost', 'drew', 'beat', 'defeated',
-  'today', 'yesterday', 'this week', 'tonight',
-  'fixture', 'next match', 'upcoming',
-  'standings', 'table', 'points', 'top scorer', 'leading scorer',
-  'who is playing', 'playing now', 'live',
-];
-
-export const needsLiveData = (question: string): boolean => {
-  const q = question.toLowerCase();
-  return LIVE_KEYWORDS.some(kw => q.includes(kw));
-};
 
 // Format today's fixtures as a lightweight context block for MatchAI
 export const formatFixtureContext = (fixtures: Array<{

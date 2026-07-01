@@ -47,15 +47,6 @@ export const IconCamera = ({ size = 24, color = '#fff' }: IconProps) => (
   </Svg>
 );
 
-// Chat bubbles — for Fan Room
-export const IconFanRoom = ({ size = 24, color = '#fff' }: IconProps) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-    <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
-    <Line x1="8" y1="9" x2="16" y2="9" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-    <Line x1="8" y1="13" x2="13" y2="13" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-  </Svg>
-);
-
 // Settings / gear
 export const IconSettings = ({ size = 24, color = '#fff' }: IconProps) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -131,10 +122,12 @@ export const IconCopy = ({ size = 24, color = '#fff' }: IconProps) => (
   </Svg>
 );
 
-// Wifi off — for offline/Pears indicator
-export const IconOffline = ({ size = 24, color = '#fff' }: IconProps) => (
+// Photo / gallery
+export const IconPhoto = ({ size = 24, color = '#fff' }: IconProps) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-    <Line x1="1" y1="1" x2="23" y2="23" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-    <Path d="M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <Rect x="3" y="3" width="18" height="18" rx="2" stroke={color} strokeWidth="1.8" />
+    <Circle cx="8.5" cy="8.5" r="1.5" fill={color} />
+    <Path d="M21 15l-5-5L5 21" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
   </Svg>
 );
+

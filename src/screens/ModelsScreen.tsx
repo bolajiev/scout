@@ -24,6 +24,7 @@ import {
   setDefaultModelId,
 } from '../utils/storage';
 import { ModelInfo, DownloadedModel } from '../types';
+import { llmManager } from '../utils/modelManager';
 
 type DownloadPhase = {
   phase: 'model' | 'mmproj';
@@ -52,6 +53,9 @@ export default function ModelsScreen() {
   const [downloadedModels, setDownloadedModels] = useState<DownloadedModel[]>([]);
   const [downloading, setDownloading] = useState<Record<string, DownloadPhase>>({});
   const [defaultTextModelId, setDefaultTextModelIdState] = useState<string>(MODEL_KEYS.TEXT_FAST);
+  const [loadedModelId, setLoadedModelId] = useState<string | null>(null);
+  const [loadingModelId, setLoadingModelId] = useState<string | null>(null);
+  const [loadProgress, setLoadProgress] = useState(0);
 
   useEffect(() => {
     init();
@@ -69,6 +73,7 @@ export default function ModelsScreen() {
     } catch (e) {
       console.warn('[ModelsScreen] init failed:', e);
     }
+    setLoadedModelId(llmManager.getLoadedModelId());
   };
 
   const handleSetDefault = async (modelId: string) => {
@@ -188,25 +193,49 @@ export default function ModelsScreen() {
     }
   };
 
-  const handleDownload = async (model: ModelInfo) => {
+  const handleDownload = (model: ModelInfo) => {
     const hasProjection = !!model.projectionModelSrc;
     const sizeLabel = `${model.size}${hasProjection ? ' + vision file' : ''}`;
+    const isLarge = model.sizeBytes > 1.5e9;
+    const timeHint = isLarge ? '5–15 minutes on Wi-Fi.' : '2–5 minutes on Wi-Fi.';
 
-    if (model.sizeBytes > 1.5e9) {
-      const confirmed = await new Promise<boolean>((resolve) => {
-        Alert.alert(
-          'Large Download',
-          `${model.name} requires ${sizeLabel} of storage.\n\nUse Wi-Fi — this may take several minutes. The model may take 30–60 seconds to load after download.`,
-          [
-            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-            { text: 'Download', onPress: () => resolve(true) },
-          ]
-        );
-      });
-      if (!confirmed) return;
+    Alert.alert(
+      'Before You Download',
+      `${model.name} · ${sizeLabel}\n\n` +
+      `• Connect to Wi-Fi — mobile data will be used otherwise\n` +
+      `• Keep the app open until the download finishes\n` +
+      `• Download takes ${timeHint}\n` +
+      (isLarge ? `• You need ${sizeLabel} of free storage\n` : '') +
+      `\nThe model runs 100% on your device — no data is sent anywhere.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Download', onPress: () => startDownload(model) },
+      ]
+    );
+  };
+
+  const handleLoad = async (model: DownloadedModel) => {
+    if (loadingModelId) return;
+    setLoadingModelId(model.id);
+    setLoadProgress(0);
+    try {
+      await llmManager.ensure(
+        model,
+        { ctx_size: 4096, device: 'auto', tools: model.modelType !== 'vision' },
+        pct => setLoadProgress(Math.round(pct)),
+      );
+      setLoadedModelId(llmManager.getLoadedModelId());
+    } catch {
+      Alert.alert('Load Failed', 'Could not load the model into memory. Try restarting the app.');
+    } finally {
+      setLoadingModelId(null);
+      setLoadProgress(0);
     }
+  };
 
-    startDownload(model);
+  const handleUnload = async () => {
+    await llmManager.release();
+    setLoadedModelId(null);
   };
 
   const handleDelete = (model: DownloadedModel) => {
@@ -257,11 +286,18 @@ export default function ModelsScreen() {
     const isDownloading = downloading[model.id] !== undefined;
     const isVision = !!model.projectionModelSrc;
     const dlModel = showDelete ? downloadedModels.find((m) => m.id === model.id) : null;
+    const isLoaded = loadedModelId === model.id;
+    const isLoadingThis = loadingModelId === model.id;
+    const accent = theme.accent;
 
     return (
       <View
         key={model.id}
-        style={[styles.modelCard, { backgroundColor: theme.card }]}
+        style={[
+          styles.modelCard,
+          { backgroundColor: theme.card },
+          isLoaded && { borderWidth: 1, borderColor: accent + '50' },
+        ]}
       >
         {/* Top row: model name + actions */}
         <View style={styles.cardTop}>
@@ -272,14 +308,26 @@ export default function ModelsScreen() {
             )}
           </View>
 
-          {!isDownloading && (
+          {!isDownloading && !isLoadingThis && (
             <View style={styles.cardActions}>
               {dl ? (
                 <>
-                  <View style={[styles.checkmark, { backgroundColor: theme.accent + '22', borderColor: theme.accent + '55' }]}>
-                    <Text style={[styles.checkmarkText, { color: theme.accent }]}>✓ On Device</Text>
-                  </View>
-                  {showDelete && dlModel && (
+                  {isLoaded ? (
+                    <TouchableOpacity
+                      style={[styles.stopBtn, { borderColor: theme.error }]}
+                      onPress={handleUnload}
+                    >
+                      <Text style={[styles.stopBtnText, { color: theme.error }]}>Stop</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={[styles.loadBtn, { backgroundColor: accent + '20', borderColor: accent + '60' }]}
+                      onPress={() => dlModel && handleLoad(dlModel)}
+                    >
+                      <Text style={[styles.loadBtnText, { color: accent }]}>Start</Text>
+                    </TouchableOpacity>
+                  )}
+                  {showDelete && dlModel && !isLoaded && (
                     <TouchableOpacity
                       style={[styles.deleteBtn, { borderColor: theme.error }]}
                       onPress={() => handleDelete(dlModel)}
@@ -290,7 +338,7 @@ export default function ModelsScreen() {
                 </>
               ) : (
                 <TouchableOpacity
-                  style={[styles.downloadBtn, { backgroundColor: theme.accent }]}
+                  style={[styles.downloadBtn, { backgroundColor: accent }]}
                   onPress={() => handleDownload(model)}
                 >
                   <Text style={[styles.downloadBtnText, { color: theme.accentFg }]}>Get</Text>
@@ -299,6 +347,27 @@ export default function ModelsScreen() {
             </View>
           )}
         </View>
+
+        {/* In-memory status badge */}
+        {isLoaded && (
+          <View style={[styles.loadedBadge, { backgroundColor: accent + '18', borderColor: accent + '40' }]}>
+            <View style={[styles.loadedDot, { backgroundColor: accent }]} />
+            <Text style={[styles.loadedText, { color: accent }]}>In memory — ready</Text>
+          </View>
+        )}
+
+        {/* Loading into memory progress */}
+        {isLoadingThis && (
+          <View style={styles.progressWrapper}>
+            <View style={styles.progressHeader}>
+              <Text style={[styles.progressLabel, { color: theme.text }]}>Loading into memory...</Text>
+              <Text style={[styles.progressDetail, { color: theme.textSecondary }]}>{loadProgress}%</Text>
+            </View>
+            <View style={[styles.progressTrack, { backgroundColor: theme.border }]}>
+              <View style={[styles.progressFill, { backgroundColor: accent, width: `${loadProgress}%` }]} />
+            </View>
+          </View>
+        )}
 
         {/* Description */}
         {model.description && (
@@ -424,11 +493,27 @@ const styles = StyleSheet.create({
     borderRadius: 10, paddingHorizontal: 18, paddingVertical: 8,
   },
   downloadBtnText: { fontSize: 14, fontWeight: '700' },
+  loadBtn: {
+    borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 7,
+  },
+  loadBtnText: { fontSize: 13, fontWeight: '700' },
+  stopBtn: {
+    borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 7,
+  },
+  stopBtnText: { fontSize: 13, fontWeight: '700' },
   deleteBtn: {
     borderWidth: 1, borderRadius: 10,
     paddingHorizontal: 12, paddingVertical: 6,
   },
   deleteBtnText: { fontSize: 13, fontWeight: '600' },
+  loadedBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderWidth: 1, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 6,
+    alignSelf: 'flex-start', marginBottom: 4,
+  },
+  loadedDot: { width: 7, height: 7, borderRadius: 4 },
+  loadedText: { fontSize: 12, fontWeight: '600' },
   modelName: { fontSize: 16, fontWeight: '700', marginBottom: 2 },
   modelTagline: { fontSize: 12, lineHeight: 16 },
   modelDescription: { fontSize: 13, lineHeight: 18, marginBottom: 10, marginTop: 8 },

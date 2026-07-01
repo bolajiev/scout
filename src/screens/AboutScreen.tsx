@@ -4,7 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import Constants from 'expo-constants';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconBack, IconBall, IconTarget, IconCamera, IconFanRoom } from '../components/Icons';
+import { IconBack, IconBall, IconTarget, IconCamera } from '../components/Icons';
 
 const appVersion = Constants.expoConfig?.version ?? '1.0';
 
@@ -21,7 +21,7 @@ const MODULES = [
     tag: 'QVAC',
     tagColor: '#22c55e',
     title: 'Predictor',
-    desc: 'Pick two teams and generate an on-device AI match prediction with score, reasoning, and confidence level.',
+    desc: 'Pick two teams and generate an on-device AI match prediction with score, reasoning, and live form data.',
   },
   {
     icon: (c: string) => <IconCamera size={18} color={c} />,
@@ -29,13 +29,6 @@ const MODULES = [
     tagColor: '#22c55e',
     title: 'Scout Lens',
     desc: 'Point your camera at any football image — jersey, club badge, player card, scoreboard — and get instant on-device identification.',
-  },
-  {
-    icon: (c: string) => <IconFanRoom size={18} color={c} />,
-    tag: 'Pears P2P',
-    tagColor: '#60a5fa',
-    title: 'Fan Room',
-    desc: 'Device-to-device fan chat powered by Holepunch. No server, no account, no internet. Works in the stadium.',
   },
 ];
 
@@ -85,7 +78,7 @@ export default function AboutScreen() {
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.cardTitle, { color: theme.text }]}>What is Scout?</Text>
           <Text style={[styles.cardBody, { color: theme.textSecondary }]}>
-            Scout is an on-device football AI built for the Tether Developers Cup 2026. All inference runs locally via the QVAC SDK — no data leaves your phone. Modules: AI Coach, Predictor, Scout Lens, and Fan Room (Pears P2P).
+            Scout is an on-device football AI built for the Tether Developers Cup 2026. All inference runs locally via the QVAC SDK — no data leaves your phone. Modules: AI Coach, Predictor, and Scout Lens.
           </Text>
         </View>
 
@@ -121,7 +114,7 @@ export default function AboutScreen() {
         <View style={[styles.techCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
           {[
             { name: 'QVAC SDK', note: 'On-device LLM inference — all AI runs locally' },
-            { name: 'Pears / Holepunch', note: 'P2P Fan Room network layer' },
+            { name: 'TheSportsDB', note: 'Free public API — fixtures and team form data' },
             { name: 'Expo SDK 54', note: 'React Native framework' },
           ].map((t, i) => (
             <View key={t.name} style={[styles.techRow, { borderTopWidth: i > 0 ? 1 : 0, borderTopColor: theme.border }]}>
@@ -148,7 +141,7 @@ export default function AboutScreen() {
         </View>
 
         <Text style={[styles.version, { color: theme.textSecondary }]}>
-          {`Scout v${appVersion} · QVAC SDK · Pears · On-Device Football AI`}
+          {`Scout v${appVersion} · QVAC SDK · On-Device Football AI`}
         </Text>
         <View style={{ height: 40 }} />
       </ScrollView>

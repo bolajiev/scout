@@ -8,7 +8,7 @@ import { useNavigation } from '@react-navigation/native';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { markOnboarded } from '../utils/storage';
-import { IconBall, IconTarget, IconCamera, IconFanRoom } from '../components/Icons';
+import { IconBall, IconTarget, IconCamera } from '../components/Icons';
 
 const { width: SW } = Dimensions.get('window');
 
@@ -25,7 +25,7 @@ const MODULES = [
     tag: 'QVAC',
     tagColor: '#22c55e',
     title: 'Predictor',
-    desc: 'Pick two teams and get an on-device match prediction with reasoning.',
+    desc: 'Pick two teams and get an on-device match prediction with live form data.',
   },
   {
     icon: (c: string) => <IconCamera size={28} color={c} />,
@@ -33,13 +33,6 @@ const MODULES = [
     tagColor: '#22c55e',
     title: 'Scout Lens',
     desc: 'Point your camera at a jersey, badge, or match screen. AI identifies it instantly.',
-  },
-  {
-    icon: (c: string) => <IconFanRoom size={28} color={c} />,
-    tag: 'Pears P2P',
-    tagColor: '#60a5fa',
-    title: 'Fan Room',
-    desc: 'Chat with fans nearby — device-to-device. No server, no account. Works offline in the stadium.',
   },
 ];
 
@@ -112,7 +105,7 @@ export default function OnboardingScreen() {
 
         {/* Slide 2 — Modules */}
         <View style={[styles.slide, { paddingTop: topPad }]}>
-          <Text style={[styles.slideTitle, { color: theme.text }]}>Four modules.</Text>
+          <Text style={[styles.slideTitle, { color: theme.text }]}>Three modules.</Text>
           <Text style={[styles.slideSub, { color: theme.textSecondary }]}>All running on your phone.</Text>
           <ScrollView style={styles.moduleScroll} showsVerticalScrollIndicator={false}>
             {MODULES.map(m => (
@@ -156,9 +149,9 @@ export default function OnboardingScreen() {
             <View style={[styles.infoCard, { backgroundColor: theme.card, borderColor: '#60a5fa40' }]}>
               <View style={[styles.infoBar, { backgroundColor: '#60a5fa' }]} />
               <View style={styles.infoCardContent}>
-                <Text style={[styles.infoCardTitle, { color: theme.text }]}>Fan Room uses Pears P2P</Text>
+                <Text style={[styles.infoCardTitle, { color: theme.text }]}>Live match data</Text>
                 <Text style={[styles.infoCardBody, { color: theme.textSecondary }]}>
-                  Fan Room connects devices directly via Holepunch. No server, no account. Works offline in the stadium.
+                  Today's fixtures and team form come from TheSportsDB — a free, open football database. No account needed. All AI analysis still runs fully offline.
                 </Text>
               </View>
             </View>

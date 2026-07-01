@@ -150,19 +150,19 @@ export const fetchAndCacheFixtures = async (): Promise<{
       fetch(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`, { signal: AbortSignal.timeout(8000) }),
     ]);
 
-    const dayEvents: Fixture[] = dayRes.status === 'fulfilled'
+    const dayEvents: Fixture[] = dayRes.status === 'fulfilled' && dayRes.value.ok
       ? ((await dayRes.value.json()).events ?? [])
       : [];
 
-    const wcEvents: Fixture[] = wcRes.status === 'fulfilled'
+    const wcEvents: Fixture[] = wcRes.status === 'fulfilled' && wcRes.value.ok
       ? ((await wcRes.value.json()).events ?? [])
       : [];
 
-    // Merge: WC events first, deduplicated by idEvent
+    // Merge: WC events first, deduplicated by idEvent (skip entries missing idEvent)
     const seen = new Set<string>();
     const merged: Fixture[] = [];
     for (const f of [...wcEvents, ...dayEvents]) {
-      if (!seen.has(f.idEvent)) { seen.add(f.idEvent); merged.push(f); }
+      if (f.idEvent && !seen.has(f.idEvent)) { seen.add(f.idEvent); merged.push(f); }
     }
 
     saveFixturesToDb(merged, today);

@@ -1,8 +1,30 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, AppState, AppStateStatus } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import AppNavigator from './src/navigation/AppNavigator';
+import { llmManager } from './src/utils/modelManager';
+import { clearInferenceNotifications } from './src/utils/bgNotification';
+
+// Release model when app goes to background.
+// 30-second grace period so quick task-switching doesn't reload the model.
+// On full close (swipe from recents), MainActivity.onTaskRemoved kills the
+// process, so native QVAC memory is freed immediately regardless.
+let bgReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+
+AppState.addEventListener('change', (next: AppStateStatus) => {
+  if (next === 'background') {
+    bgReleaseTimer = setTimeout(async () => {
+      await clearInferenceNotifications();
+      await llmManager.release().catch(() => {});
+    }, 30_000);
+  } else if (next === 'active') {
+    if (bgReleaseTimer !== null) {
+      clearTimeout(bgReleaseTimer);
+      bgReleaseTimer = null;
+    }
+  }
+});
 
 // Must be called before any notification scheduling
 Notifications.setNotificationHandler({

@@ -10,7 +10,7 @@ import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconBack, IconCamera, IconStop } from '../components/Icons';
+import { IconCamera, IconPhoto, IconStop } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
@@ -96,7 +96,7 @@ export default function ScoutLensScreen() {
       const uri = res.assets[0].uri;
       setImagePath(uri);
       setResult('');
-      analyse(uri);
+      await analyse(uri);
     } catch {}
   };
 
@@ -113,7 +113,7 @@ export default function ScoutLensScreen() {
       const uri = res.assets[0].uri;
       setImagePath(uri);
       setResult('');
-      analyse(uri);
+      await analyse(uri);
     } catch {}
   };
 
@@ -268,7 +268,7 @@ export default function ScoutLensScreen() {
             disabled={isAnalyzing}
             activeOpacity={0.8}
           >
-            <Text style={[styles.sourceBtnIcon, { color: accent }]}>camera</Text>
+            <IconCamera size={20} color={isAnalyzing ? theme.border : accent} />
             <Text style={[styles.sourceBtnText, { color: theme.text }]}>Camera</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -277,7 +277,7 @@ export default function ScoutLensScreen() {
             disabled={isAnalyzing}
             activeOpacity={0.8}
           >
-            <Text style={[styles.sourceBtnIcon, { color: theme.textSecondary }]}>gallery</Text>
+            <IconPhoto size={20} color={isAnalyzing ? theme.border : theme.textSecondary} />
             <Text style={[styles.sourceBtnText, { color: theme.text }]}>Gallery</Text>
           </TouchableOpacity>
         </View>
@@ -365,7 +365,6 @@ const styles = StyleSheet.create({
     flex: 1, borderRadius: 14, borderWidth: 1,
     paddingVertical: 14, alignItems: 'center', gap: 4,
   },
-  sourceBtnIcon: { fontSize: 11, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
   sourceBtnText: { fontSize: 14, fontWeight: '700' },
   resultCard: {
     borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden',

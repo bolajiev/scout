@@ -1,9 +1,9 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   Animated, StatusBar, Dimensions,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
@@ -13,6 +13,8 @@ import {
   fmtMatchTime, teamAbbr, isWorldCup,
   type Fixture,
 } from '../utils/fixtures';
+import { llmManager } from '../utils/modelManager';
+import { syncModelsFromDisk } from '../utils/storage';
 
 const { width: SW } = Dimensions.get('window');
 const HIT = { top: 10, bottom: 10, left: 10, right: 10 };
@@ -96,6 +98,9 @@ export default function HomeScreen() {
   const [nextMatch, setNextMatch] = useState<Fixture | null>(null);
   const [matchOnline, setMatchOnline] = useState(true);
   const [matchFromCache, setMatchFromCache] = useState(false);
+  const [loadedModel, setLoadedModel] = useState<string | null>(null);
+  const [hasAnyModel, setHasAnyModel] = useState<boolean | null>(null); // null = checking
+  const [modelLoading, setModelLoading] = useState(false);
   const mountedRef = useRef(true);
 
   const c1 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
@@ -122,15 +127,43 @@ export default function HomeScreen() {
       setNextMatch(findClosestMatch(fixtures));
       setMatchOnline(online);
       setMatchFromCache(fromCache);
-    });
+    }).catch(() => {});
 
     return () => { mountedRef.current = false; };
   }, []);
+
+  // Refresh model status every time this tab is focused
+  useFocusEffect(useCallback(() => {
+    mountedRef.current = true;
+    syncModelsFromDisk().then(models => {
+      if (!mountedRef.current) return;
+      setHasAnyModel(models.some(m => m.modelType === 'text'));
+      setLoadedModel(llmManager.getLoadedModelId());
+    }).catch(() => { setHasAnyModel(false); });
+  }, []));
 
   const accent = '#22c55e';
 
   const go = (tab: string, prefill?: string) =>
     navigation.navigate(tab, prefill ? { prefill } : undefined);
+
+  const quickLoad = async () => {
+    if (modelLoading) return;
+    setModelLoading(true);
+    try {
+      const models = await syncModelsFromDisk();
+      const text = models.find(m => m.modelType === 'text');
+      if (!text) { navigation.navigate('Models'); return; }
+      await llmManager.ensure(text, { ctx_size: 4096, device: 'auto', tools: true });
+      setLoadedModel(llmManager.getLoadedModelId());
+    } catch {}
+    setModelLoading(false);
+  };
+
+  const quickStop = async () => {
+    await llmManager.release();
+    setLoadedModel(null);
+  };
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
@@ -152,6 +185,52 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* ── MODEL STATUS STRIP ───────────────────────────────────── */}
+        {hasAnyModel !== null && (
+          <View style={[styles.modelStrip, { backgroundColor: theme.card }]}>
+            {loadedModel ? (
+              <>
+                <View style={styles.modelStripLeft}>
+                  <View style={[styles.modelStatusDot, { backgroundColor: accent }]} />
+                  <Text style={[styles.modelStatusText, { color: accent }]}>AI Ready</Text>
+                </View>
+                <TouchableOpacity onPress={quickStop} style={[styles.modelStripBtn, { borderColor: '#ef444440' }]}>
+                  <Text style={[styles.modelStripBtnText, { color: '#ef4444' }]}>Stop</Text>
+                </TouchableOpacity>
+              </>
+            ) : hasAnyModel ? (
+              <>
+                <View style={styles.modelStripLeft}>
+                  <View style={[styles.modelStatusDot, { backgroundColor: theme.border }]} />
+                  <Text style={[styles.modelStatusText, { color: theme.textSecondary }]}>Model not loaded</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={quickLoad}
+                  style={[styles.modelStripBtn, { borderColor: accent + '50', backgroundColor: accent + '12' }]}
+                  disabled={modelLoading}
+                >
+                  <Text style={[styles.modelStripBtnText, { color: accent }]}>
+                    {modelLoading ? 'Loading...' : 'Start'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <View style={styles.modelStripLeft}>
+                  <View style={[styles.modelStatusDot, { backgroundColor: '#f59e0b' }]} />
+                  <Text style={[styles.modelStatusText, { color: '#f59e0b' }]}>No model downloaded</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('Models')}
+                  style={[styles.modelStripBtn, { borderColor: '#f59e0b50', backgroundColor: '#f59e0b12' }]}
+                >
+                  <Text style={[styles.modelStripBtnText, { color: '#f59e0b' }]}>Get Model</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
 
         {/* ── AI COACH CARD ─────────────────────────────────────────── */}
         <Animated.View style={[styles.fullCardWrap, { opacity: c1.op, transform: [{ translateY: c1.ty }] }]}>
@@ -270,37 +349,8 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </Animated.View>
 
-        {/* ── FAN ROOM CARD ─────────────────────────────────────────── */}
-        <Animated.View style={[styles.fullCardWrap, { opacity: c3.op, transform: [{ translateY: c3.ty }] }]}>
-          <TouchableOpacity style={styles.fanCard} onPress={() => go('FanRoom')} activeOpacity={0.85}>
-            <View style={styles.fanLeft}>
-              <Text style={styles.fanModLabel}>FAN ROOM</Text>
-              <Text style={styles.fanTitle}>Live fan{'\n'}chat</Text>
-              <Text style={styles.fanDesc}>Device-to-device via Pears.{'\n'}No internet needed in the stadium.</Text>
-              <View style={[styles.pearsBadge, { backgroundColor: '#3b82f618', borderColor: '#3b82f635' }]}>
-                <View style={[styles.pearsDot, { backgroundColor: '#3b82f6' }]} />
-                <Text style={[styles.pearsLabel, { color: '#3b82f6' }]}>PEARS P2P</Text>
-              </View>
-            </View>
-            <View style={styles.fanRight}>
-              {(['F', 'A', 'N'] as const).map((l, i) => (
-                <View
-                  key={l}
-                  style={[
-                    styles.fanAvatar,
-                    { marginTop: i > 0 ? -10 : 0 },
-                    { backgroundColor: i === 0 ? '#60a5fa' : i === 1 ? '#60a5facc' : '#60a5fa80' },
-                  ]}
-                >
-                  <Text style={styles.fanAvatarText}>{l}</Text>
-                </View>
-              ))}
-              <Text style={styles.fanJoin}>Join →</Text>
-            </View>
-          </TouchableOpacity>
-        </Animated.View>
-
         {/* ── QUICK ANALYSIS CHIPS ─────────────────────────────────── */}
+        <Animated.View style={{ opacity: c3.op, transform: [{ translateY: c3.ty }] }}>
         <View style={styles.chipsSection}>
           <Text style={[styles.chipsLabel, { color: theme.textSecondary }]}>QUICK ANALYSIS</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
@@ -316,6 +366,7 @@ export default function HomeScreen() {
             ))}
           </ScrollView>
         </View>
+        </Animated.View>
 
         <TouchableOpacity onPress={() => navigation.navigate('About')} style={styles.footer}>
           <Text style={[styles.footerText, { color: theme.textSecondary }]}>
@@ -340,30 +391,27 @@ const styles = StyleSheet.create({
   wordmark: { fontSize: 20, fontWeight: '900', color: '#fff', letterSpacing: 4 },
   topActions: { flexDirection: 'row', gap: 20 },
 
-  // Hero banner
-  heroBanner: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#0d1f0d', marginHorizontal: 14, marginTop: 6,
-    borderRadius: 22, paddingHorizontal: 24, paddingVertical: 22, overflow: 'hidden',
-  },
-  heroLeft: { gap: 4 },
-  heroNum: { fontSize: 78, fontWeight: '900', color: '#fff', lineHeight: 78, letterSpacing: -4 },
-  heroNumLabel: { fontSize: 13, fontWeight: '800', letterSpacing: 1.2 },
-  heroDesc: { fontSize: 11.5, color: 'rgba(255,255,255,0.38)', marginTop: 8, lineHeight: 18 },
-  heroRight: { alignItems: 'center', gap: 14 },
-  aiReadyBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1,
-  },
-  aiDot: { width: 5, height: 5, borderRadius: 2.5 },
-  aiText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
-
   // Chips
   chipsSection: { marginTop: 20, gap: 9 },
   chipsLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.6, paddingHorizontal: 20 },
   chipsRow: { paddingHorizontal: 16, gap: 8 },
   chip: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 8 },
   chipText: { fontSize: 13, fontWeight: '700' },
+
+  // Model status strip
+  modelStrip: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginHorizontal: 14, marginTop: 4, marginBottom: 2,
+    borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
+  },
+  modelStripLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  modelStatusDot: { width: 7, height: 7, borderRadius: 4 },
+  modelStatusText: { fontSize: 13, fontWeight: '600' },
+  modelStripBtn: {
+    borderWidth: 1, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 5,
+  },
+  modelStripBtnText: { fontSize: 12, fontWeight: '700' },
 
   // Full-width card wrapper
   fullCardWrap: { paddingHorizontal: 14, marginTop: 12 },
@@ -436,29 +484,6 @@ const styles = StyleSheet.create({
   lensBracketWrap: { marginTop: 2, marginBottom: 2 },
   lensTitle: { fontSize: 15, fontWeight: '800', color: '#fff', lineHeight: 22, letterSpacing: -0.2 },
   lensCta: { fontSize: 13, fontWeight: '800', color: '#34d399', marginTop: 2 },
-
-  // Fan Room card
-  fanCard: {
-    backgroundColor: '#080c18', borderRadius: 22, padding: 22,
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
-    overflow: 'hidden',
-  },
-  fanLeft: { flex: 1, gap: 8 },
-  fanModLabel: { fontSize: 9, fontWeight: '800', color: '#60a5fa', letterSpacing: 1.6 },
-  fanTitle: { fontSize: 26, fontWeight: '900', color: '#fff', lineHeight: 32, letterSpacing: -0.5 },
-  fanDesc: { fontSize: 11, color: 'rgba(255,255,255,0.38)', lineHeight: 17 },
-  pearsBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1, marginTop: 2,
-  },
-  pearsDot: { width: 5, height: 5, borderRadius: 2.5 },
-  pearsLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
-  fanRight: { alignItems: 'center', paddingLeft: 16, paddingTop: 4 },
-  fanAvatar: {
-    width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center',
-  },
-  fanAvatarText: { fontSize: 16, fontWeight: '800', color: '#fff' },
-  fanJoin: { fontSize: 13, fontWeight: '800', color: '#60a5fa', marginTop: 14 },
 
   // Footer
   footer: { alignItems: 'center', marginTop: 24 },

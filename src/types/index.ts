@@ -83,6 +83,7 @@ export interface AppSettings {
   theme: ThemeMode;
   accelerator: Accelerator;
   responseLength: ResponseLength;
+  deepReasoning: boolean;
   huggingFaceToken: string;
   temperature: number;
   topK: number;

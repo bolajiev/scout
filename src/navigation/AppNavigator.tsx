@@ -16,14 +16,13 @@ import HomeScreen from '../screens/HomeScreen';
 import MatchAIScreen from '../screens/MatchAIScreen';
 import PredictorScreen from '../screens/PredictorScreen';
 import ScoutLensScreen from '../screens/ScoutLensScreen';
-import FanRoomScreen from '../screens/FanRoomScreen';
 import ModelsScreen from '../screens/ModelsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import DownloadScreen from '../screens/DownloadScreen';
 import AboutScreen from '../screens/AboutScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 
-import { IconHome, IconBall, IconTarget, IconCamera, IconFanRoom } from '../components/Icons';
+import { IconHome, IconBall, IconTarget, IconCamera } from '../components/Icons';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -36,11 +35,10 @@ export const useThemeToggle = () => useContext(ThemeContext).toggle;
 // ─── Custom football tab bar ─────────────────────────────────────────────────
 
 const TABS = [
-  { name: 'Home',      Icon: IconHome,    label: 'Home' },
-  { name: 'MatchAI',   Icon: IconBall,    label: 'Coach' },
-  { name: 'Predictor', Icon: IconTarget,  label: 'Predict' },
-  { name: 'ScoutLens', Icon: IconCamera,  label: 'Lens' },
-  { name: 'FanRoom',   Icon: IconFanRoom, label: 'Room' },
+  { name: 'Home',      Icon: IconHome,   label: 'Home' },
+  { name: 'MatchAI',   Icon: IconBall,   label: 'Coach' },
+  { name: 'Predictor', Icon: IconTarget, label: 'Predict' },
+  { name: 'ScoutLens', Icon: IconCamera, label: 'Lens' },
 ];
 
 function FootballTabBar({ state, navigation }: BottomTabBarProps) {
@@ -88,7 +86,6 @@ function MainTabs() {
       <Tab.Screen name="MatchAI"   component={MatchAIScreen} />
       <Tab.Screen name="Predictor" component={PredictorScreen} />
       <Tab.Screen name="ScoutLens" component={ScoutLensScreen} />
-      <Tab.Screen name="FanRoom"   component={FanRoomScreen} />
     </Tab.Navigator>
   );
 }
@@ -103,7 +100,7 @@ export default function AppNavigator() {
     getThemeOverride().then((override) => {
       if (override) setThemeMode(override);
       else setThemeMode(systemScheme === 'light' ? 'light' : 'dark');
-    });
+    }).catch(() => {});
   }, []);
 
   const toggle = useCallback(() => {

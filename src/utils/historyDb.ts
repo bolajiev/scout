@@ -18,28 +18,35 @@ export interface Message {
 }
 
 let _db: SQLite.SQLiteDatabase | null = null;
+let _dbFailed = false;
 
 const getDb = (): SQLite.SQLiteDatabase => {
+  if (_dbFailed) throw new Error('DB unavailable');
   if (!_db) {
-    _db = SQLite.openDatabaseSync('scout.db');
-    _db.execSync(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        id         TEXT PRIMARY KEY,
-        screen     TEXT NOT NULL,
-        title      TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS messages (
-        id         TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        role       TEXT NOT NULL,
-        content    TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      );
-      CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-      CREATE INDEX IF NOT EXISTS idx_sessions_screen  ON sessions(screen, created_at DESC);
-    `);
+    try {
+      _db = SQLite.openDatabaseSync('scout.db');
+      _db.execSync(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          id         TEXT PRIMARY KEY,
+          screen     TEXT NOT NULL,
+          title      TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+          id         TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role       TEXT NOT NULL,
+          content    TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_screen  ON sessions(screen, created_at DESC);
+      `);
+    } catch (e) {
+      _dbFailed = true;
+      throw e;
+    }
   }
   return _db;
 };
@@ -67,8 +74,10 @@ export const getSessions = (screen: ScreenType, limit = 50): Session[] =>
     .map(r => ({ id: r.id, screen: r.screen as ScreenType, title: r.title, createdAt: r.created_at }));
 
 export const deleteSession = (sessionId: string): void => {
-  getDb().runSync('DELETE FROM messages WHERE session_id = ?', [sessionId]);
-  getDb().runSync('DELETE FROM sessions WHERE id = ?', [sessionId]);
+  getDb().withTransactionSync(() => {
+    getDb().runSync('DELETE FROM messages WHERE session_id = ?', [sessionId]);
+    getDb().runSync('DELETE FROM sessions WHERE id = ?', [sessionId]);
+  });
 };
 
 // ── Messages ──────────────────────────────────────────────────────────────────

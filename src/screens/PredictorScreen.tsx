@@ -90,13 +90,18 @@ export default function PredictorScreen() {
       return;
     }
     formDebounceRef.current = setTimeout(async () => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return;  // unmounted before timeout fired
       setFormLoading(true);
-      const [fa, fb] = await fetchBothTeamForms(teamA.trim(), teamB.trim());
-      if (!mountedRef.current) return;
-      setFormA(fa);
-      setFormB(fb);
-      setFormLoading(false);
+      try {
+        const [fa, fb] = await fetchBothTeamForms(teamA.trim(), teamB.trim());
+        if (!mountedRef.current) return;
+        setFormA(fa);
+        setFormB(fb);
+      } catch {
+        if (mountedRef.current) { setFormA(null); setFormB(null); }
+      } finally {
+        if (mountedRef.current) setFormLoading(false);
+      }
     }, 700);
   }, [teamA, teamB]);
 
@@ -239,12 +244,14 @@ export default function PredictorScreen() {
 
       // Save prediction to SQLite history
       if (streamed) {
-        const sessionId = createSession('predictor', `${teamA} vs ${teamB}`);
-        const prompt = context.trim()
-          ? `${teamA} vs ${teamB}\n\nContext: ${context.trim()}`
-          : `${teamA} vs ${teamB}`;
-        addMessage(sessionId, 'user', prompt);
-        addMessage(sessionId, 'assistant', streamed);
+        try {
+          const sessionId = createSession('predictor', `${teamA} vs ${teamB}`);
+          const historyPrompt = context.trim()
+            ? `${teamA} vs ${teamB}\n\nContext: ${context.trim()}`
+            : `${teamA} vs ${teamB}`;
+          addMessage(sessionId, 'user', historyPrompt);
+          addMessage(sessionId, 'assistant', streamed);
+        } catch {}
       }
 
       if (mountedRef.current) {
@@ -322,7 +329,7 @@ export default function PredictorScreen() {
               onPress={retryFixtures}
               activeOpacity={0.8}
             >
-              <Text style={[styles.noInternetIcon, { color: theme.textSecondary }]}>wifi</Text>
+              <View style={[styles.noInternetDot, { backgroundColor: theme.border }]} />
               <View style={styles.noInternetText}>
                 <Text style={[styles.noInternetTitle, { color: theme.text }]}>Turn on internet to load fixtures</Text>
                 <Text style={[styles.noInternetSub, { color: theme.textSecondary }]}>
@@ -617,7 +624,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 12,
     borderRadius: 12, borderWidth: 1, padding: 14,
   },
-  noInternetIcon: { fontSize: 22 },
+  noInternetDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
   noInternetText: { flex: 1, gap: 2 },
   noInternetTitle: { fontSize: 14, fontWeight: '700' },
   noInternetSub: { fontSize: 11 },
