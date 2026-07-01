@@ -15,6 +15,7 @@ import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage } from '../utils/historyDb';
+import { logInference } from '../utils/auditLogger';
 
 const VISION_PROMPT = `You are Scout Lens — an on-device football vision AI. When shown an image, identify any football-related content: player jerseys and their numbers/teams, club badges/crests, stadium features, match scoreboard text, player cards, or trophies. Be specific: name the club if you can identify it from the badge or kit color. Keep your response concise and factual — under 100 words. If the image has no football content, say so briefly.`;
 
@@ -30,8 +31,9 @@ export default function ScoutLensScreen() {
   const [modelId, setModelId] = useState<string | null>(null);
   const [noModel, setNoModel] = useState(false);
 
-  const currentRunRef = useRef<any>(null);
-  const mountedRef    = useRef(true);
+  const currentRunRef  = useRef<any>(null);
+  const mountedRef     = useRef(true);
+  const modelNameRef   = useRef<string>('');
 
   // Scan line animation
   const scanY    = useRef(new Animated.Value(0)).current;
@@ -78,7 +80,8 @@ export default function ScoutLensScreen() {
       const synced = await syncModelsFromDisk();
       const vision = synced.find((m: any) => m.modelType === 'vision');
       if (!vision) { setNoModel(true); return; }
-      const mid = await llmManager.ensure(vision, { ctx_size: 2048, device: 'auto' });
+      const mid = await llmManager.ensure(vision, { ctx_size: 2048, device: 'auto', projectionModelSrc: vision.projectionModelSrc });
+      modelNameRef.current = vision.name;
       if (mountedRef.current) setModelId(mid);
     } catch {
       if (mountedRef.current) setNoModel(true);
@@ -156,15 +159,23 @@ export default function ScoutLensScreen() {
         }
       }
       if (mountedRef.current) setResult(streamed);
-      await run.final;
+      const genStart = Date.now();
+      const [, stats] = await Promise.all([run.final, run.stats]);
       currentRunRef.current = null;
       clearNotification();
 
+      const totalMs = Date.now() - genStart;
+      logInference('scoutlens', modelNameRef.current, stats?.timeToFirstToken ?? 0, totalMs, stats?.generatedTokens ?? 0).catch(() => {});
+
       // Save scan result to SQLite history
       if (streamed) {
-        const sessionId = createSession('scoutlens', 'Scan — ' + new Date().toLocaleTimeString());
-        addMessage(sessionId, 'user', `[image] ${uri}`);
-        addMessage(sessionId, 'assistant', streamed);
+        try {
+          const sessionId = createSession('scoutlens', 'Scan — ' + new Date().toLocaleTimeString());
+          addMessage(sessionId, 'user', `[image] ${uri}`);
+          addMessage(sessionId, 'assistant', streamed);
+        } catch (e) {
+          console.warn('[ScoutLens] DB write:', e);
+        }
       }
 
       if (mountedRef.current) {

@@ -132,7 +132,7 @@ export default function DownloadScreen() {
   ) => {
     setLabel(labelText);
     const folder = new Directory(getModelsDir(), m.id);
-    folder.create({ intermediates: true, idempotent: true });
+    await folder.create({ intermediates: true, idempotent: true });
     const destUri = new File(folder, filename).uri;
     const url = getHfDownloadUrl(src);
 
@@ -157,6 +157,7 @@ export default function DownloadScreen() {
 
     lastBytesRef.current = 0;
     lastTimeRef.current = Date.now();
+    let localSpeed = 0;
 
     // Show notification immediately so it's visible before any progress callback fires
     void showDownloadProgressNotification(m.name, labelText, startPct, 0, m.sizeBytes ?? 0, 0, true);
@@ -167,11 +168,12 @@ export default function DownloadScreen() {
       // Speed calculation — update every 0.5s
       const now = Date.now();
       const dt = (now - lastTimeRef.current) / 1000;
-      let currentSpeed = speedBps;
+      let currentSpeed = localSpeed;
       if (dt >= 0.5) {
         const delta = p.totalBytesWritten - lastBytesRef.current;
-        currentSpeed = Math.round(delta / dt);
-        setSpeedBps(currentSpeed);
+        localSpeed = Math.round(delta / dt);
+        currentSpeed = localSpeed;
+        setSpeedBps(localSpeed);
         lastBytesRef.current = p.totalBytesWritten;
         lastTimeRef.current = now;
       }

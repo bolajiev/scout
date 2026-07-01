@@ -16,6 +16,7 @@ import { registerInferenceCancel, showRunningNotification, clearInferenceNotific
 import { createSession, addMessage } from '../utils/historyDb';
 import { formatFixtureContext } from '../utils/teamStats';
 import { fetchAndCacheFixtures } from '../utils/fixtures';
+import { logInference } from '../utils/auditLogger';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_W = (SCREEN_W - 48) / 2;
@@ -130,6 +131,10 @@ export default function MatchAIScreen() {
   const loadPulse        = useRef(new Animated.Value(0.4)).current;
   const loadLoopRef      = useRef<Animated.CompositeAnimation | null>(null);
   const entryAnimsRef    = useRef<Record<string, { ty: Animated.Value; op: Animated.Value }>>({});
+  const slotRef          = useRef<typeof slot>(null);
+  const modelNameRef     = useRef<string>('');
+
+  useEffect(() => { slotRef.current = slot; }, [slot]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -168,7 +173,8 @@ export default function MatchAIScreen() {
         if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
         return;
       }
-      const mid = await llmManager.ensure(model, { ctx_size: 4096, device: 'auto', tools: true });
+      const mid = await llmManager.ensure(model, { ctx_size: 4096, device: 'auto', tools: true, projectionModelSrc: model.projectionModelSrc });
+      modelNameRef.current = model.name;
       if (mountedRef.current) {
         setModelId(mid);
         setModelLoading(false);
@@ -275,7 +281,7 @@ export default function MatchAIScreen() {
 
       if (toolCalls.length > 0 && mountedRef.current) {
         // ── Tool execution ──────────────────────────────────────────────────
-        setSlot(s => s ? { ...s, toolStatus: 'Fetching live data...', answer: '' } : s);
+        if (mountedRef.current) { setSlot(s => s ? { ...s, toolStatus: 'Fetching live data...', answer: '' } : s); }
 
         const toolHistory = [...history, { role: 'assistant' as const, content: pass1Answer }];
 
@@ -339,7 +345,10 @@ export default function MatchAIScreen() {
       currentRunRef.current = null;
       clearNotification();
 
-      const elapsed = Math.round((Date.now() - t0) / 100) / 10;
+      const totalMs = Date.now() - t0;
+      logInference('matchai', modelNameRef.current, finalStats?.timeToFirstToken ?? 0, totalMs, finalStats?.generatedTokens ?? 0).catch(() => {});
+
+      const elapsed = Math.round(totalMs / 100) / 10;
       if (sessionIdRef.current && answerAcc) addMessage(sessionIdRef.current, 'assistant', answerAcc);
 
       if (mountedRef.current) {
@@ -354,7 +363,7 @@ export default function MatchAIScreen() {
       currentRunRef.current = null;
       clearNotification();
       if (mountedRef.current) {
-        const fallback = err instanceof InferenceCancelledError ? (slot?.answer || '...') : 'Could not get a response. Try again.';
+        const fallback = err instanceof InferenceCancelledError ? (slotRef.current?.answer || '...') : 'Could not get a response. Try again.';
         const finished: Entry = { id: entryId, question: q, answer: fallback };
         setSlot(null);
         setEntries(prev => [...prev, finished]);

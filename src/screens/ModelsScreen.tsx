@@ -221,7 +221,7 @@ export default function ModelsScreen() {
     try {
       await llmManager.ensure(
         model,
-        { ctx_size: 4096, device: 'auto', tools: model.modelType !== 'vision' },
+        { ctx_size: 4096, device: 'auto', tools: model.modelType !== 'vision', projectionModelSrc: model.projectionModelSrc },
         pct => setLoadProgress(Math.round(pct)),
       );
       setLoadedModelId(llmManager.getLoadedModelId());
@@ -249,12 +249,16 @@ export default function ModelsScreen() {
     );
   };
 
-  const doDelete = async (modelId: string) => {
-    const folder = new Directory(getModelsDir(), modelId);
+  const doDelete = async (id: string) => {
+    if (llmManager.getLoadedModelId() === id) {
+      await llmManager.release();
+      setLoadedModelId(null);
+    }
+    const folder = new Directory(getModelsDir(), id);
     try {
       if (folder.exists) await folder.delete();
     } catch {}
-    await removeDownloadedModel(modelId);
+    await removeDownloadedModel(id);
     await loadDownloaded();
   };
 

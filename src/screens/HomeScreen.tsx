@@ -140,6 +140,7 @@ export default function HomeScreen() {
       setHasAnyModel(models.some(m => m.modelType === 'text'));
       setLoadedModel(llmManager.getLoadedModelId());
     }).catch(() => { setHasAnyModel(false); });
+    return () => { mountedRef.current = false; };
   }, []));
 
   const accent = '#22c55e';
@@ -154,7 +155,7 @@ export default function HomeScreen() {
       const models = await syncModelsFromDisk();
       const text = models.find(m => m.modelType === 'text');
       if (!text) { navigation.navigate('Models'); return; }
-      await llmManager.ensure(text, { ctx_size: 4096, device: 'auto', tools: true });
+      await llmManager.ensure(text, { ctx_size: 4096, device: 'auto', tools: true, projectionModelSrc: text.projectionModelSrc });
       setLoadedModel(llmManager.getLoadedModelId());
     } catch {}
     setModelLoading(false);

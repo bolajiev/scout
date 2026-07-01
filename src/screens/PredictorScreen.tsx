@@ -15,6 +15,7 @@ import { registerInferenceCancel, showRunningNotification, clearInferenceNotific
 import { fetchAndCacheFixtures, isWorldCup, fmtMatchTime as fmtTime, type Fixture } from '../utils/fixtures';
 import { createSession, addMessage } from '../utils/historyDb';
 import { fetchBothTeamForms, formatFormContext, type TeamForm } from '../utils/teamStats';
+import { logInference } from '../utils/auditLogger';
 
 const SYSTEM_PROMPT = `You are Scout's Predictor — an on-device football match prediction AI.
 
@@ -56,9 +57,10 @@ export default function PredictorScreen() {
   const [formB, setFormB] = useState<TeamForm | null>(null);
   const [formLoading, setFormLoading] = useState(false);
 
-  const currentRunRef = useRef<any>(null);
-  const mountedRef = useRef(true);
+  const currentRunRef  = useRef<any>(null);
+  const mountedRef     = useRef(true);
   const formDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const modelNameRef   = useRef<string>('');
 
   // Predict button pulse while generating
   const pulsAnim = useRef(new Animated.Value(1)).current;
@@ -169,6 +171,7 @@ export default function PredictorScreen() {
         return;
       }
       const mid = await llmManager.ensure(model, { ctx_size: 2048, device: 'auto' });
+      modelNameRef.current = model.name;
       if (mountedRef.current) { setModelId(mid); setModelLoading(false); }
     } catch {
       if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
@@ -238,9 +241,12 @@ export default function PredictorScreen() {
         }
       }
       if (mountedRef.current) setPrediction(streamed);
-      await Promise.all([run.final, run.stats]);
+      const [, stats] = await Promise.all([run.final, run.stats]);
       currentRunRef.current = null;
       clearNotification();
+
+      const totalMs = Date.now() - genStart;
+      logInference('predictor', modelNameRef.current, stats?.timeToFirstToken ?? 0, totalMs, stats?.generatedTokens ?? 0).catch(() => {});
 
       // Save prediction to SQLite history
       if (streamed) {
