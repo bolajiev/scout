@@ -1,7 +1,4 @@
-import {
-  loadModel, unloadModel,
-  WHISPER_EN_TINY_Q8_0,
-} from '@qvac/sdk';
+import { loadModel, unloadModel } from '@qvac/sdk';
 import { DownloadedModel } from '../types';
 import { toPath } from './storage';
 
@@ -79,34 +76,4 @@ class LLMManager {
   }
 }
 
-// Keeps descriptor-based models (Whisper, TTS) loaded for the whole session
-class DescriptorModelManager {
-  private descriptor: any;
-  private qvacId: string | null = null;
-  private pending: Promise<string> | null = null;
-
-  constructor(descriptor: any) {
-    this.descriptor = descriptor;
-  }
-
-  async ensure(): Promise<string> {
-    if (this.qvacId) return this.qvacId;
-    if (this.pending) return this.pending;
-
-    this.pending = loadModel({ modelSrc: this.descriptor }).then(id => {
-      this.qvacId = id;
-      this.pending = null;
-      return id;
-    }).catch(err => {
-      this.pending = null;
-      throw err;
-    });
-    return this.pending;
-  }
-
-  getQvacId(): string | null { return this.qvacId; }
-  isLoaded(): boolean { return !!this.qvacId; }
-}
-
 export const llmManager = new LLMManager();
-export const whisperManager = new DescriptorModelManager(WHISPER_EN_TINY_Q8_0);

@@ -13,7 +13,7 @@ Scout is a fully private football AI app that runs entirely on your Android devi
 | **Match AI** | QVAC SDK | Ask any football question — on-device LLM with tool calling fetches today's live fixtures from TheSportsDB to ground answers in real match data |
 | **Predictor** | QVAC SDK | Pick two teams, get a structured prediction: winner, score, confidence, and reasoning — all on-device |
 | **Scout Lens** | QVAC Vision | Point your camera at a jersey, badge, or scoreboard — vision model identifies it on-device |
-| **Fan Room** | Pears P2P | Device-to-device fan chat — no server, no internet, no account required |
+| **History** | SQLite | Browse and replay past Match AI, Predictor, and Scout Lens sessions |
 
 ---
 
@@ -119,20 +119,6 @@ Models stay loaded across screens. The app releases the model automatically afte
 
 ---
 
-## Pears P2P — Fan Room
-
-Fan Room uses [Holepunch](https://holepunch.to) (Pears runtime) for device-to-device messaging. No server, no relay, no account. Works over LAN and in stadiums where internet may be unreliable.
-
-Architecture:
-- Each Fan Room generates a unique **room key** (6-char base36 code)
-- Room members share the key (shown on screen)
-- Hyperswarm discovers peers using the key as a topic hash
-- Messages travel directly device-to-device over Pears encrypted channel
-
-Current status: UI complete. Pears runtime wiring in progress.
-
----
-
 ## Data & Privacy
 
 - All AI inference runs on-device via QVAC SDK — no data sent to any AI cloud
@@ -148,8 +134,7 @@ Current status: UI complete. Pears runtime wiring in progress.
 |---|---|
 | Framework | Expo SDK 54, React Native (bare workflow) |
 | AI inference | QVAC SDK (`@qvac/sdk` v0.13.5) |
-| P2P networking | Pears / Holepunch |
-| Storage | SQLite (`expo-sqlite` v16, WAL mode) + AsyncStorage |
+| Storage | SQLite (`expo-sqlite` v16) + AsyncStorage |
 | Live data | TheSportsDB REST API (free, no key) |
 | Language | TypeScript |
 | Target | Android arm64 (minSdk 29) |
@@ -186,4 +171,4 @@ The `android/` directory is gitignored but included in the EAS archive via `.eas
 
 ---
 
-Built for the **Tether Developers Cup 2026** — QVAC track + Pears track.
+Built for the **Tether Developers Cup 2026** — QVAC primary track.

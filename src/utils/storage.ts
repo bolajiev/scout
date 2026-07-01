@@ -74,7 +74,7 @@ async function migrateOldModelFolders(): Promise<void> {
   let oldExternal: Directory | null = null;
   if (Platform.OS === 'android') {
     try {
-      const d = new Directory('file:///storage/emulated/0/Android/data/com.scout.app/files/peek/models');
+      const d = new Directory('file:///storage/emulated/0/Android/data/com.scout.app/files/scout/models');
       oldExternal = d;
     } catch { /* path doesn't exist or no permission — skip external migration */ }
   }
