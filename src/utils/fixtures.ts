@@ -1,4 +1,4 @@
-import * as SQLite from 'expo-sqlite';
+import { getDb } from './historyDb';
 
 export interface Fixture {
   idEvent: string;
@@ -74,27 +74,6 @@ export const teamAbbr = (name: string): string => {
 };
 
 // ── SQLite cache ──────────────────────────────────────────────────────────────
-
-let _db: SQLite.SQLiteDatabase | null = null;
-
-const getDb = (): SQLite.SQLiteDatabase => {
-  if (!_db) {
-    _db = SQLite.openDatabaseSync('scout.db');
-    _db.execSync(`
-      CREATE TABLE IF NOT EXISTS fixtures (
-        id_event   TEXT PRIMARY KEY,
-        home_team  TEXT NOT NULL,
-        away_team  TEXT NOT NULL,
-        league     TEXT NOT NULL,
-        match_time TEXT NOT NULL,
-        home_score TEXT,
-        away_score TEXT,
-        cache_date TEXT NOT NULL
-      );
-    `);
-  }
-  return _db;
-};
 
 const saveFixturesToDb = (fixtures: Fixture[], date: string) => {
   const db = getDb();
