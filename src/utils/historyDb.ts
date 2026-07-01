@@ -20,12 +20,23 @@ export interface Message {
 let _db: SQLite.SQLiteDatabase | null = null;
 let _dbFailed = false;
 
-const getDb = (): SQLite.SQLiteDatabase => {
+export const getDb = (): SQLite.SQLiteDatabase => {
   if (_dbFailed) throw new Error('DB unavailable');
   if (!_db) {
     try {
       _db = SQLite.openDatabaseSync('scout.db');
       _db.execSync(`
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE IF NOT EXISTS fixtures (
+          id_event   TEXT PRIMARY KEY,
+          home_team  TEXT NOT NULL,
+          away_team  TEXT NOT NULL,
+          league     TEXT NOT NULL,
+          match_time TEXT NOT NULL,
+          home_score TEXT,
+          away_score TEXT,
+          cache_date TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS sessions (
           id         TEXT PRIMARY KEY,
           screen     TEXT NOT NULL,
@@ -74,9 +85,10 @@ export const getSessions = (screen: ScreenType, limit = 50): Session[] =>
     .map(r => ({ id: r.id, screen: r.screen as ScreenType, title: r.title, createdAt: r.created_at }));
 
 export const deleteSession = (sessionId: string): void => {
-  getDb().withTransactionSync(() => {
-    getDb().runSync('DELETE FROM messages WHERE session_id = ?', [sessionId]);
-    getDb().runSync('DELETE FROM sessions WHERE id = ?', [sessionId]);
+  const db = getDb();
+  db.withTransactionSync(() => {
+    db.runSync('DELETE FROM messages WHERE session_id = ?', [sessionId]);
+    db.runSync('DELETE FROM sessions WHERE id = ?', [sessionId]);
   });
 };
 
