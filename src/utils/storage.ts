@@ -401,9 +401,24 @@ export async function clearCustomSystemPrompt(useCase: string): Promise<void> {
 }
 
 export async function clearAllData(): Promise<void> {
-  const keys = [...Object.values(KEYS), '@scout_onboarded'];
+  const keys = [
+    ...Object.values(KEYS),
+    '@scout_onboarded',
+    '@scout_theme_override',
+    '@scout_default_model',
+    '@scout_seen_version',
+  ];
   for (const key of keys) {
     await AsyncStorage.removeItem(key);
+  }
+  try {
+    const SQLite = require('expo-sqlite') as typeof import('expo-sqlite');
+    const db = SQLite.openDatabaseSync('scout.db');
+    db.withTransactionSync(() => {
+      db.execSync('DELETE FROM messages; DELETE FROM sessions; DELETE FROM fixtures;');
+    });
+  } catch (e) {
+    console.warn('[storage] SQLite clear failed:', e);
   }
 }
 
