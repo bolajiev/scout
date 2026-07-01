@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Paths, File, Directory } from 'expo-file-system';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import { HistoryItem, InferenceLog, AppSettings, ThemeMode, Accelerator, ResponseLength, DownloadedModel, Conversation, ChatMessage, ModuleId } from '../types';
+import { InferenceLog, AppSettings, ThemeMode, Accelerator, ResponseLength, DownloadedModel } from '../types';
 import { AVAILABLE_MODELS } from './models';
 
 // QVAC SDK expects bare filesystem paths, not file:// URIs.
@@ -12,10 +12,8 @@ export function toPath(uri: string): string {
 
 const KEYS = {
   SETTINGS: '@scout_settings',
-  HISTORY: '@scout_history',
   INFERENCE_LOGS: '@scout_inference_logs',
   DOWNLOADED_MODELS: '@scout_downloaded_models',
-  SCAN_STREAK: '@scout_scan_streak',
   HF_TOKEN: 'scout_hf_token',
   CUSTOM_PROMPTS: '@scout_custom_prompts',
 };
@@ -153,15 +151,6 @@ export async function saveSettings(settings: Partial<AppSettings>): Promise<void
   await AsyncStorage.setItem(KEYS.SETTINGS, JSON.stringify(updated));
 }
 
-export async function getThemeMode(): Promise<ThemeMode> {
-  const settings = await getSettings();
-  return settings.theme;
-}
-
-export async function setThemeMode(mode: ThemeMode): Promise<void> {
-  await saveSettings({ theme: mode });
-}
-
 export async function getAccelerator(): Promise<Accelerator> {
   const settings = await getSettings();
   return settings.accelerator;
@@ -169,15 +158,6 @@ export async function getAccelerator(): Promise<Accelerator> {
 
 export async function setAccelerator(accel: Accelerator): Promise<void> {
   await saveSettings({ accelerator: accel });
-}
-
-export async function getTemperature(): Promise<number> {
-  const settings = await getSettings();
-  return settings.temperature ?? 0.7;
-}
-
-export async function setTemperature(temp: number): Promise<void> {
-  await saveSettings({ temperature: temp });
 }
 
 export async function getGenParams(): Promise<{ temp: number; top_k: number; top_p: number; repeat_penalty: number; maxTokens: number }> {
@@ -200,16 +180,6 @@ export async function setResponseLength(length: ResponseLength): Promise<void> {
   await saveSettings({ responseLength: length });
 }
 
-export async function getHuggingFaceToken(): Promise<string> {
-  const settings = await getSettings();
-  return settings.huggingFaceToken;
-}
-
-export async function setHuggingFaceToken(token: string): Promise<void> {
-  await saveSettings({ huggingFaceToken: token });
-  await AsyncStorage.setItem(KEYS.HF_TOKEN, token);
-}
-
 export async function getHfToken(): Promise<string> {
   try {
     const token = await AsyncStorage.getItem(KEYS.HF_TOKEN);
@@ -217,31 +187,6 @@ export async function getHfToken(): Promise<string> {
   } catch {
     return '';
   }
-}
-
-export async function getHistory(): Promise<HistoryItem[]> {
-  try {
-    const data = await AsyncStorage.getItem(KEYS.HISTORY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
-}
-
-export async function addHistoryItem(item: HistoryItem): Promise<void> {
-  const history = await getHistory();
-  history.unshift(item);
-  await AsyncStorage.setItem(KEYS.HISTORY, JSON.stringify(history));
-}
-
-export async function clearHistory(): Promise<void> {
-  await AsyncStorage.setItem(KEYS.HISTORY, JSON.stringify([]));
-}
-
-export async function clearHistoryByCategory(useCase: string): Promise<void> {
-  const history = await getHistory();
-  const filtered = history.filter((item) => (item as any).useCase !== useCase);
-  await AsyncStorage.setItem(KEYS.HISTORY, JSON.stringify(filtered));
 }
 
 export async function getInferenceLogs(): Promise<InferenceLog[]> {
@@ -283,48 +228,6 @@ export async function removeDownloadedModel(id: string): Promise<void> {
   const models = await getDownloadedModels();
   const filtered = models.filter((m) => m.id !== id);
   await AsyncStorage.setItem(KEYS.DOWNLOADED_MODELS, JSON.stringify(filtered));
-}
-
-export async function getScanStreak(): Promise<{ lastScanDate: string; count: number }> {
-  try {
-    const data = await AsyncStorage.getItem(KEYS.SCAN_STREAK);
-    return data ? JSON.parse(data) : { lastScanDate: '', count: 0 };
-  } catch {
-    return { lastScanDate: '', count: 0 };
-  }
-}
-
-export async function updateScanStreak(): Promise<number> {
-  const streak = await getScanStreak();
-  const today = new Date().toISOString().split('T')[0];
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-
-  let newCount = 1;
-  if (streak.lastScanDate === today) {
-    newCount = streak.count;
-  } else if (streak.lastScanDate === yesterday) {
-    newCount = streak.count + 1;
-  }
-
-  await AsyncStorage.setItem(
-    KEYS.SCAN_STREAK,
-    JSON.stringify({ lastScanDate: today, count: newCount })
-  );
-  return newCount;
-}
-
-export async function isModelDownloaded(): Promise<boolean> {
-  const models = await getDownloadedModels();
-  return models.length > 0;
-}
-
-export async function hasOnboarded(): Promise<boolean> {
-  try {
-    const val = await AsyncStorage.getItem('@scout_onboarded');
-    return val === 'true';
-  } catch {
-    return false;
-  }
 }
 
 export async function markOnboarded(): Promise<void> {
@@ -401,136 +304,4 @@ export async function clearAllData(): Promise<void> {
   }
 }
 
-// ── Conversation history (per-module, persisted) ─────────────────────────────
-
-function convListKey(moduleId: string) { return `@scout_convs_${moduleId}`; }
-function msgListKey(convId: string) { return `@scout_msgs_${convId}`; }
-
-export async function getConversations(moduleId: ModuleId): Promise<Conversation[]> {
-  try {
-    const data = await AsyncStorage.getItem(convListKey(moduleId));
-    return data ? JSON.parse(data) : [];
-  } catch { return []; }
-}
-
-export async function saveConversation(conv: Conversation): Promise<void> {
-  const list = await getConversations(conv.moduleId);
-  const idx = list.findIndex(c => c.id === conv.id);
-  if (idx >= 0) list[idx] = conv; else list.unshift(conv);
-  await AsyncStorage.setItem(convListKey(conv.moduleId), JSON.stringify(list));
-}
-
-export async function deleteConversation(moduleId: ModuleId, convId: string): Promise<void> {
-  const list = await getConversations(moduleId);
-  await AsyncStorage.setItem(convListKey(moduleId), JSON.stringify(list.filter(c => c.id !== convId)));
-  await AsyncStorage.removeItem(msgListKey(convId));
-}
-
-export async function getMessages(convId: string): Promise<ChatMessage[]> {
-  try {
-    const data = await AsyncStorage.getItem(msgListKey(convId));
-    return data ? JSON.parse(data) : [];
-  } catch { return []; }
-}
-
-export async function appendMessage(msg: ChatMessage): Promise<void> {
-  const msgs = await getMessages(msg.conversationId);
-  msgs.push(msg);
-  await AsyncStorage.setItem(msgListKey(msg.conversationId), JSON.stringify(msgs));
-}
-
-export async function updateLastMessage(convId: string, content: string): Promise<void> {
-  const msgs = await getMessages(convId);
-  if (msgs.length > 0) {
-    msgs[msgs.length - 1].content = content;
-    await AsyncStorage.setItem(msgListKey(convId), JSON.stringify(msgs));
-  }
-}
-
-export function createConversationId(): string {
-  return `conv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-}
-
-// ── Lens scan history ─────────────────────────────────────────────────────────
-
-const LENS_HISTORY_KEY = '@scout_lens_history';
-
-export interface LensScanRecord {
-  id: string;
-  imagePath?: string;
-  query: string;
-  text: string;
-  modelName?: string;
-  inferenceMs?: number;
-  createdAt: string;
-}
-
-export async function saveLensScan(record: LensScanRecord): Promise<void> {
-  try {
-    const raw = await AsyncStorage.getItem(LENS_HISTORY_KEY);
-    const list: LensScanRecord[] = raw ? JSON.parse(raw) : [];
-    list.unshift(record);
-    await AsyncStorage.setItem(LENS_HISTORY_KEY, JSON.stringify(list.slice(0, 50)));
-  } catch {}
-}
-
-export async function getLensHistory(): Promise<LensScanRecord[]> {
-  try {
-    const raw = await AsyncStorage.getItem(LENS_HISTORY_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-// ── Deep session history ──────────────────────────────────────────────────────
-
-const DEEP_HISTORY_KEY = '@scout_deep_history';
-
-export interface DeepSessionRecord {
-  id: string;
-  docName: string;
-  firstQuestion: string;
-  createdAt: string;
-}
-
-export async function saveDeepSession(record: DeepSessionRecord): Promise<void> {
-  try {
-    const raw = await AsyncStorage.getItem(DEEP_HISTORY_KEY);
-    const list: DeepSessionRecord[] = raw ? JSON.parse(raw) : [];
-    list.unshift(record);
-    await AsyncStorage.setItem(DEEP_HISTORY_KEY, JSON.stringify(list.slice(0, 50)));
-  } catch {}
-}
-
-export async function getDeepHistory(): Promise<DeepSessionRecord[]> {
-  try {
-    const raw = await AsyncStorage.getItem(DEEP_HISTORY_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-const VOICE_HISTORY_KEY = '@scout_voice_history';
-
-export interface VoiceSessionRecord {
-  id: string;
-  title: string;
-  transcript: string;
-  summary: string;
-  createdAt: string;
-}
-
-export async function saveVoiceSession(record: VoiceSessionRecord): Promise<void> {
-  try {
-    const raw = await AsyncStorage.getItem(VOICE_HISTORY_KEY);
-    const list: VoiceSessionRecord[] = raw ? JSON.parse(raw) : [];
-    list.unshift(record);
-    await AsyncStorage.setItem(VOICE_HISTORY_KEY, JSON.stringify(list.slice(0, 50)));
-  } catch {}
-}
-
-export async function getVoiceHistory(): Promise<VoiceSessionRecord[]> {
-  try {
-    const raw = await AsyncStorage.getItem(VOICE_HISTORY_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
 

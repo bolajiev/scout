@@ -308,8 +308,7 @@ export default function MatchAIScreen() {
           modelId,
           history: [{ role: 'system', content: SYSTEM_PROMPT }, ...toolHistory],
           stream: true,
-          tools: SCOUT_TOOLS,
-            captureThinking: false,
+          captureThinking: false,
           generationParams: { ...genParams, reasoning_budget: 0 as 0 },
         });
         currentRunRef.current = run2;

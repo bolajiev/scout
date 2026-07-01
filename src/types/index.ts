@@ -1,6 +1,3 @@
-export type UseCase = 'scan' | 'chat';
-export type ModuleId = 'lens' | 'voice' | 'scribe' | 'deep' | 'quickchat' | 'aichat';
-
 export interface ModelInfo {
   id: string;
   name: string;
@@ -20,47 +17,9 @@ export interface ModelInfo {
   heavy?: boolean;
 }
 
-export interface Conversation {
-  id: string;
-  moduleId: ModuleId;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  modelId?: string;
-}
-
-export interface ChatMessage {
-  id: string;
-  conversationId: string;
-  role: 'user' | 'assistant';
-  content: string;
-  imagePath?: string;
-  thinking?: string;
-  createdAt: string;
-  artifactType?: 'md' | 'html';
-  artifactUri?: string;
-  artifactName?: string;
-}
-
 export interface DownloadedModel extends ModelInfo {
   downloadedPath: string;
   isDownloaded: true;
-}
-
-export interface ScanResult {
-  type: string;
-  text: string;
-  query: string;
-  _rawText?: string;
-}
-
-export interface HistoryItem {
-  id: string;
-  timestamp: string;
-  query: string;
-  result: ScanResult;
-  imagePath?: string;
-  modelName: string;
 }
 
 export interface InferenceLog {
