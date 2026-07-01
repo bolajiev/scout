@@ -64,7 +64,8 @@
           "defaultChannel": "scout-inference"
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-image-picker"
     ],
     "extra": {
       "eas": {
