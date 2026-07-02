@@ -12,7 +12,7 @@ import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconCamera, IconPhoto, IconStop, IconBack } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
-import { syncModelsFromDisk } from '../utils/storage';
+import { syncModelsFromDisk, toPath } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage } from '../utils/historyDb';
 import { logInference } from '../utils/auditLogger';
@@ -126,6 +126,7 @@ export default function ScoutLensScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     showRunningNotification('Scout Lens');
 
+    const genStart = Date.now();
     try {
       const run = completion({
         modelId,
@@ -134,7 +135,8 @@ export default function ScoutLensScreen() {
           {
             role: 'user',
             content: 'What football content do you see in this image?',
-            attachments: [{ path: uri }],
+            // QVAC needs a bare filesystem path — file:// URIs fail to load
+            attachments: [{ path: toPath(uri) }],
           } as any,
         ],
         stream: true,
@@ -159,7 +161,6 @@ export default function ScoutLensScreen() {
         }
       }
       if (mountedRef.current) setResult(streamed);
-      const genStart = Date.now();
       const [, stats] = await Promise.all([run.final, run.stats]);
       currentRunRef.current = null;
       clearNotification();

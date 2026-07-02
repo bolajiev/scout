@@ -148,13 +148,18 @@ export default function PredictorScreen() {
   }, [isGenerating]);
 
   const fetchFixtures = async () => {
-    const { fixtures: all, online } = await fetchAndCacheFixtures();
-    if (!mountedRef.current) return;
-    // World Cup first, then rest
-    const sorted = [...all.filter(isWorldCup), ...all.filter(f => !isWorldCup(f))];
-    setFixtures(sorted);
-    setNoInternet(!online);
-    setFixturesLoading(false);
+    try {
+      const { fixtures: all, online } = await fetchAndCacheFixtures();
+      if (!mountedRef.current) return;
+      // World Cup first, then rest
+      const sorted = [...all.filter(isWorldCup), ...all.filter(f => !isWorldCup(f))];
+      setFixtures(sorted);
+      setNoInternet(!online);
+    } catch {
+      if (mountedRef.current) setNoInternet(true);
+    } finally {
+      if (mountedRef.current) setFixturesLoading(false);
+    }
   };
 
   const retryFixtures = () => {

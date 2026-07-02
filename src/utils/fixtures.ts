@@ -198,10 +198,12 @@ export const fetchAndCacheFixtures = async (): Promise<{
       }
     }
 
-    saveFixturesToDb(merged, today);
+    // Caching is best-effort — never lose fresh network data to a DB error
+    try { saveFixturesToDb(merged, today); } catch {}
     return { fixtures: merged, fromCache: false, online: true };
   } catch {
-    const cached = loadFixturesFromDb(today);
+    let cached: Fixture[] = [];
+    try { cached = loadFixturesFromDb(today); } catch {}
     return { fixtures: cached, fromCache: true, online: false };
   }
 };

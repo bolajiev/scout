@@ -8,8 +8,8 @@ import { clearInferenceNotifications } from './src/utils/bgNotification';
 
 // Release model when app goes to background.
 // 30-second grace period so quick task-switching doesn't reload the model.
-// On full close (swipe from recents), MainActivity.onTaskRemoved kills the
-// process, so native QVAC memory is freed immediately regardless.
+// On full close, MainActivity.onDestroy kills the process when the activity
+// is finishing, so native QVAC memory is freed immediately regardless.
 let bgReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 
 AppState.addEventListener('change', (next: AppStateStatus) => {
