@@ -11,12 +11,30 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const src = path.join(root, 'qvac', 'bare-link.android.mjs');
-const dst = path.join(root, 'node_modules', 'react-native-bare-kit', 'android', 'link.mjs');
 
-if (fs.existsSync(src) && fs.existsSync(path.dirname(dst))) {
-  fs.copyFileSync(src, dst);
-  console.log('[postinstall] Applied manifest-aware bare-kit link.mjs');
-} else {
-  console.warn('[postinstall] Skipped bare-kit link.mjs patch (missing src or target)');
+const patches = [
+  {
+    name: 'manifest-aware bare-kit link.mjs',
+    src: path.join(root, 'qvac', 'bare-link.android.mjs'),
+    dst: path.join(root, 'node_modules', 'react-native-bare-kit', 'android', 'link.mjs'),
+  },
+  {
+    // The RN client does require('@qvac/sdk/worker.mobile.bundle') which the
+    // exports map points at dist/worker.mobile.bundle.js — a file the
+    // published package does NOT ship. Prebuild normally copies our generated
+    // bundle there; EAS skips prebuild, so without this the worker bundle is
+    // missing/stale in cloud builds.
+    name: 'QVAC worker.mobile.bundle (LLM-only)',
+    src: path.join(root, 'qvac', 'worker.bundle.js'),
+    dst: path.join(root, 'node_modules', '@qvac', 'sdk', 'dist', 'worker.mobile.bundle.js'),
+  },
+];
+
+for (const { name, src, dst } of patches) {
+  if (fs.existsSync(src) && fs.existsSync(path.dirname(dst))) {
+    fs.copyFileSync(src, dst);
+    console.log(`[postinstall] Applied ${name}`);
+  } else {
+    console.warn(`[postinstall] Skipped ${name} (missing src or target)`);
+  }
 }
