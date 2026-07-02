@@ -9,7 +9,7 @@ import { completion, cancel, InferenceCancelledError, type Tool } from '@qvac/sd
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconSend, IconStop, IconBall } from '../components/Icons';
+import { IconSend, IconStop, IconBall, IconBack } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams, getSettings } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
@@ -414,14 +414,14 @@ export default function MatchAIScreen() {
         style={[styles.entryBlock, anim ? { opacity: anim.op, transform: [{ translateY: anim.ty }] } : undefined]}
       >
         <View style={styles.userRow}>
-          <View style={[styles.userBubble, { backgroundColor: accent + '1a', borderColor: accent + '35' }]}>
-            <Text style={[styles.userText, { color: theme.text }]}>{entry.question}</Text>
+          <View style={[styles.userBubble, { backgroundColor: accent }]}>
+            <Text style={styles.userText}>{entry.question}</Text>
           </View>
         </View>
         {entry.thinking && renderThoughtBlock(entry.thinking, false, entry.id)}
         <View style={styles.aiRow}>
           <View style={styles.aiCol}>
-            <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={[styles.aiBubble, { backgroundColor: theme.cardAlt }]}>
               <Text style={[styles.aiText, { color: theme.text }]}>{entry.answer}</Text>
             </View>
             <View style={styles.statRow}>
@@ -522,11 +522,21 @@ export default function MatchAIScreen() {
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 14, borderBottomColor: theme.border }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 10, borderBottomColor: theme.border }]}>
         <View style={styles.headerLeft}>
-          <View style={[styles.headerDot, { backgroundColor: accent }]} />
-          <Text style={[styles.headerTitle, { color: theme.text }]}>AI Coach</Text>
-          {modelId && !modelLoading && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={styles.backBtn}
+          >
+            <IconBack size={22} color={theme.text} />
+          </TouchableOpacity>
+          <View>
+            <Text style={[styles.headerTitle, { color: theme.text }]}>AI Coach</Text>
+            <Text style={[styles.headerSub, { color: modelId && !modelLoading ? accent : theme.textSecondary }]}>
+              {modelLoading ? 'Loading model...' : noModel ? 'No model' : 'On-device · Private'}
+            </Text>
+          </View>
         </View>
         <TouchableOpacity
           onPress={() => navigation.navigate('History', { screen: 'matchai' })}
@@ -551,8 +561,8 @@ export default function MatchAIScreen() {
         {slot && (
           <View style={styles.entryBlock}>
             <View style={styles.userRow}>
-              <View style={[styles.userBubble, { backgroundColor: accent + '1a', borderColor: accent + '35' }]}>
-                <Text style={[styles.userText, { color: theme.text }]}>{slot.question}</Text>
+              <View style={[styles.userBubble, { backgroundColor: accent }]}>
+                <Text style={styles.userText}>{slot.question}</Text>
               </View>
             </View>
             {slot.toolStatus && (
@@ -563,7 +573,7 @@ export default function MatchAIScreen() {
             )}
             {slot.thought.length > 0 && renderThoughtBlock(slot.thought, slot.isThinking, slot.id)}
             <View style={styles.aiRow}>
-              <View style={[styles.aiBubble, { backgroundColor: theme.card, borderColor: accent + '45' }]}>
+              <View style={[styles.aiBubble, { backgroundColor: theme.cardAlt }]}>
                 {slot.answer.length > 0 ? (
                   <Text style={[styles.aiText, { color: theme.text }]}>{slot.answer}</Text>
                 ) : (
@@ -591,7 +601,7 @@ export default function MatchAIScreen() {
         </TouchableOpacity>
 
         <TextInput
-          style={[styles.input, { backgroundColor: theme.card, borderColor: theme.border, color: theme.text }]}
+          style={[styles.input, { backgroundColor: theme.cardAlt, color: theme.text }]}
           placeholder={modelLoading ? 'Loading model...' : 'Message AI Coach...'}
           placeholderTextColor={theme.textSecondary}
           value={input}
@@ -616,7 +626,7 @@ export default function MatchAIScreen() {
             onPress={() => send()}
             disabled={!input.trim() || !modelId || isGenerating}
           >
-            <IconSend size={17} color={theme.accentFg} />
+            <IconSend size={17} color="#fff" />
           </TouchableOpacity>
         )}
       </View>
@@ -629,12 +639,12 @@ const styles = StyleSheet.create({
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 13, borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14, paddingBottom: 11, borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-  headerDot: { width: 8, height: 8, borderRadius: 4 },
-  headerTitle: { fontSize: 18, fontWeight: '800', letterSpacing: -0.4 },
-  liveDot: { width: 5, height: 5, borderRadius: 2.5 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  backBtn: { padding: 2, marginRight: 2 },
+  headerTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.4 },
+  headerSub: { fontSize: 11, fontWeight: '500', marginTop: 1 },
   historyBtn: { fontSize: 13, fontWeight: '600' },
 
   scroll: { flex: 1 },
@@ -676,18 +686,18 @@ const styles = StyleSheet.create({
 
   userRow: { alignItems: 'flex-end' },
   userBubble: {
-    maxWidth: '82%', borderRadius: 20, borderBottomRightRadius: 5,
-    borderWidth: 1, paddingHorizontal: 15, paddingVertical: 10,
+    maxWidth: '78%', borderRadius: 20, borderBottomRightRadius: 6,
+    paddingHorizontal: 15, paddingVertical: 10,
   },
-  userText: { fontSize: 15, lineHeight: 22, fontWeight: '500' },
+  userText: { fontSize: 16, lineHeight: 22, fontWeight: '500', color: '#fff' },
 
   aiRow: { alignItems: 'flex-start' },
   aiCol: { alignItems: 'flex-start', gap: 5, maxWidth: '90%' },
   aiBubble: {
-    borderRadius: 20, borderBottomLeftRadius: 5,
-    borderWidth: 1, paddingHorizontal: 15, paddingVertical: 11, gap: 6,
+    borderRadius: 20, borderBottomLeftRadius: 6,
+    paddingHorizontal: 15, paddingVertical: 11, gap: 6,
   },
-  aiText: { fontSize: 15, lineHeight: 24 },
+  aiText: { fontSize: 16, lineHeight: 24 },
   statRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 4 },
   stat: { fontSize: 10, fontWeight: '500' },
   liveChip: {
@@ -721,12 +731,12 @@ const styles = StyleSheet.create({
   deepToggleText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
   deepDot: { width: 5, height: 5, borderRadius: 2.5 },
   input: {
-    flex: 1, borderRadius: 22, borderWidth: 1,
-    paddingHorizontal: 15, paddingTop: 10, paddingBottom: 10,
-    fontSize: 15, lineHeight: 20, maxHeight: 130,
+    flex: 1, borderRadius: 22,
+    paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11,
+    fontSize: 16, lineHeight: 21, maxHeight: 130,
   },
   sendBtn: {
-    width: 42, height: 42, borderRadius: 21,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 1,
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 2,
   },
 });

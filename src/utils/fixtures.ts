@@ -6,9 +6,17 @@ export interface Fixture {
   strAwayTeam: string;
   strLeague: string;
   strTime: string;
+  dateEvent: string | null;
   intHomeScore: string | null;
   intAwayScore: string | null;
+  strHomeTeamBadge: string | null;
+  strAwayTeamBadge: string | null;
 }
+
+// TheSportsDB badge URLs serve resized variants via a path suffix.
+// "/small" (~128px) is plenty for our 36-56px circles and loads fast.
+export const badgeUrl = (url: string | null | undefined): string | null =>
+  url ? `${url}/small` : null;
 
 export const todayISO = () => new Date().toISOString().split('T')[0];
 
@@ -23,12 +31,22 @@ const timeToMins = (t: string): number | null => {
 };
 
 export const isLive = (f: Fixture): boolean => {
+  if (f.dateEvent && f.dateEvent !== todayISO()) return false;
   const mins = timeToMins(f.strTime);
   if (mins === null) return false;
   const now = new Date();
   const nowMins = now.getUTCHours() * 60 + now.getUTCMinutes();
   const elapsed = nowMins - mins;
   return elapsed >= 0 && elapsed <= 105;
+};
+
+// Days from today to the event date (0 = today, negative = past, null = unknown)
+const dayDiff = (f: Fixture): number | null => {
+  if (!f.dateEvent) return null;
+  const d = Date.parse(f.dateEvent);
+  const t = Date.parse(todayISO());
+  if (isNaN(d) || isNaN(t)) return null;
+  return Math.round((d - t) / 86_400_000);
 };
 
 // Pick the single most relevant match to surface on the home card.
@@ -51,8 +69,9 @@ export const findClosestMatch = (fixtures: Fixture[]): Fixture | null => {
       if (!best) best = f;
       continue;
     }
-    const diff = mins - nowMins;
-    if (diff >= -105 && diff <= 0) return f; // live → immediate winner
+    const days = dayDiff(f) ?? 0;
+    const diff = days * 1440 + (mins - nowMins);
+    if (diff >= -105 && diff <= 0 && days === 0) return f; // live → immediate winner
     const score = diff > 0 ? diff : 10_000 + Math.abs(diff);
     if (score < bestScore) { bestScore = score; best = f; }
   }
@@ -81,10 +100,12 @@ const saveFixturesToDb = (fixtures: Fixture[], date: string) => {
   for (const f of fixtures) {
     db.runSync(
       `INSERT OR REPLACE INTO fixtures
-         (id_event, home_team, away_team, league, match_time, home_score, away_score, cache_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [f.idEvent, f.strHomeTeam, f.strAwayTeam, f.strLeague, f.strTime,
-       f.intHomeScore ?? null, f.intAwayScore ?? null, date],
+         (id_event, home_team, away_team, league, match_time, date_event,
+          home_score, away_score, home_badge, away_badge, cache_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [f.idEvent, f.strHomeTeam, f.strAwayTeam, f.strLeague, f.strTime, f.dateEvent ?? null,
+       f.intHomeScore ?? null, f.intAwayScore ?? null,
+       f.strHomeTeamBadge ?? null, f.strAwayTeamBadge ?? null, date],
     );
   }
 };
@@ -93,7 +114,9 @@ const loadFixturesFromDb = (date: string): Fixture[] => {
   const db = getDb();
   const rows = db.getAllSync<{
     id_event: string; home_team: string; away_team: string;
-    league: string; match_time: string; home_score: string | null; away_score: string | null;
+    league: string; match_time: string; date_event: string | null;
+    home_score: string | null; away_score: string | null;
+    home_badge: string | null; away_badge: string | null;
   }>('SELECT * FROM fixtures WHERE cache_date = ?', [date]);
 
   return rows.map(r => ({
@@ -102,8 +125,11 @@ const loadFixturesFromDb = (date: string): Fixture[] => {
     strAwayTeam: r.away_team,
     strLeague: r.league,
     strTime: r.match_time,
+    dateEvent: r.date_event,
     intHomeScore: r.home_score,
     intAwayScore: r.away_score,
+    strHomeTeamBadge: r.home_badge,
+    strAwayTeamBadge: r.away_badge,
   }));
 };
 
@@ -115,6 +141,19 @@ const loadFixturesFromDb = (date: string): Fixture[] => {
 // if the day endpoint doesn't surface them.
 const WC_LEAGUE_ID = '4429';
 
+// AbortSignal.timeout() does not exist in React Native's Hermes runtime —
+// calling it throws synchronously, which made every fetch "fail" and the app
+// permanently show the offline fallback. Manual AbortController instead.
+const fetchWithTimeout = async (url: string, ms = 8000): Promise<Response> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export const fetchAndCacheFixtures = async (): Promise<{
   fixtures: Fixture[];
   fromCache: boolean;
@@ -125,23 +164,38 @@ export const fetchAndCacheFixtures = async (): Promise<{
   try {
     // Parallel: today's soccer + WC next events
     const [dayRes, wcRes] = await Promise.allSettled([
-      fetch(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`, { signal: AbortSignal.timeout(8000) }),
-      fetch(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`, { signal: AbortSignal.timeout(8000) }),
+      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`),
+      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`),
     ]);
 
-    const dayEvents: Fixture[] = dayRes.status === 'fulfilled' && dayRes.value.ok
-      ? ((await dayRes.value.json()).events ?? [])
-      : [];
+    const dayOk = dayRes.status === 'fulfilled' && dayRes.value.ok;
+    const wcOk = wcRes.status === 'fulfilled' && wcRes.value.ok;
 
-    const wcEvents: Fixture[] = wcRes.status === 'fulfilled' && wcRes.value.ok
-      ? ((await wcRes.value.json()).events ?? [])
-      : [];
+    // Both endpoints unreachable → we are offline; don't report success with 0 fixtures
+    if (!dayOk && !wcOk) throw new Error('offline');
+
+    const dayEvents: any[] = dayOk ? ((await (dayRes as PromiseFulfilledResult<Response>).value.json()).events ?? []) : [];
+    const wcEvents: any[] = wcOk ? ((await (wcRes as PromiseFulfilledResult<Response>).value.json()).events ?? []) : [];
 
     // Merge: WC events first, deduplicated by idEvent (skip entries missing idEvent)
     const seen = new Set<string>();
     const merged: Fixture[] = [];
-    for (const f of [...wcEvents, ...dayEvents]) {
-      if (f.idEvent && !seen.has(f.idEvent)) { seen.add(f.idEvent); merged.push(f); }
+    for (const e of [...wcEvents, ...dayEvents]) {
+      if (e.idEvent && !seen.has(e.idEvent)) {
+        seen.add(e.idEvent);
+        merged.push({
+          idEvent: e.idEvent,
+          strHomeTeam: e.strHomeTeam ?? '',
+          strAwayTeam: e.strAwayTeam ?? '',
+          strLeague: e.strLeague ?? '',
+          strTime: e.strTime ?? '',
+          dateEvent: e.dateEvent ?? null,
+          intHomeScore: e.intHomeScore ?? null,
+          intAwayScore: e.intAwayScore ?? null,
+          strHomeTeamBadge: e.strHomeTeamBadge ?? null,
+          strAwayTeamBadge: e.strAwayTeamBadge ?? null,
+        });
+      }
     }
 
     saveFixturesToDb(merged, today);

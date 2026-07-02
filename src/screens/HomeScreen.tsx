@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Animated, StatusBar, Dimensions,
+  Animated, StatusBar, Dimensions, Image,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,9 +10,41 @@ import { useTheme } from '../navigation/AppNavigator';
 import { IconSettings, IconModels } from '../components/Icons';
 import {
   fetchAndCacheFixtures, findClosestMatch, isLive,
-  fmtMatchTime, teamAbbr, isWorldCup,
+  fmtMatchTime, teamAbbr, isWorldCup, badgeUrl,
   type Fixture,
 } from '../utils/fixtures';
+
+// Team badge with graceful fallback to a colored abbreviation circle
+function TeamBadge({ url, abbr, fallbackColor }: { url: string | null; abbr: string; fallbackColor: string }) {
+  const [failed, setFailed] = useState(false);
+  if (url && !failed) {
+    return (
+      <View style={tbStyles.badgeWrap}>
+        <Image
+          source={{ uri: url }}
+          style={tbStyles.badgeImg}
+          resizeMode="contain"
+          onError={() => setFailed(true)}
+        />
+      </View>
+    );
+  }
+  return (
+    <View style={[tbStyles.circle, { backgroundColor: fallbackColor }]}>
+      <Text style={tbStyles.letter}>{abbr}</Text>
+    </View>
+  );
+}
+const tbStyles = StyleSheet.create({
+  badgeWrap: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  badgeImg: { width: 30, height: 30 },
+  circle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  letter: { fontSize: 11, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
+});
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk } from '../utils/storage';
 
@@ -286,9 +318,11 @@ export default function HomeScreen() {
                 {/* Teams */}
                 <View style={styles.fixtureVis}>
                   <View style={styles.teamCol}>
-                    <View style={[styles.teamCircle, { backgroundColor: '#ef4444' }]}>
-                      <Text style={styles.teamLetter}>{teamAbbr(nextMatch.strHomeTeam)}</Text>
-                    </View>
+                    <TeamBadge
+                      url={badgeUrl(nextMatch.strHomeTeamBadge)}
+                      abbr={teamAbbr(nextMatch.strHomeTeam)}
+                      fallbackColor="#ef4444"
+                    />
                     <Text style={styles.teamName} numberOfLines={1}>{nextMatch.strHomeTeam.split(' ')[0]}</Text>
                   </View>
                   <View style={styles.vsCol}>
@@ -298,9 +332,11 @@ export default function HomeScreen() {
                     ) : null}
                   </View>
                   <View style={styles.teamCol}>
-                    <View style={[styles.teamCircle, { backgroundColor: '#3b82f6' }]}>
-                      <Text style={styles.teamLetter}>{teamAbbr(nextMatch.strAwayTeam)}</Text>
-                    </View>
+                    <TeamBadge
+                      url={badgeUrl(nextMatch.strAwayTeamBadge)}
+                      abbr={teamAbbr(nextMatch.strAwayTeam)}
+                      fallbackColor="#3b82f6"
+                    />
                     <Text style={styles.teamName} numberOfLines={1}>{nextMatch.strAwayTeam.split(' ')[0]}</Text>
                   </View>
                 </View>

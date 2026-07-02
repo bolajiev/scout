@@ -33,8 +33,11 @@ export const getDb = (): SQLite.SQLiteDatabase => {
           away_team  TEXT NOT NULL,
           league     TEXT NOT NULL,
           match_time TEXT NOT NULL,
+          date_event TEXT,
           home_score TEXT,
           away_score TEXT,
+          home_badge TEXT,
+          away_badge TEXT,
           cache_date TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS sessions (
@@ -54,6 +57,11 @@ export const getDb = (): SQLite.SQLiteDatabase => {
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
         CREATE INDEX IF NOT EXISTS idx_sessions_screen  ON sessions(screen, created_at DESC);
       `);
+      // Migrate fixtures tables created before badge/date columns existed.
+      // ALTER TABLE ADD COLUMN throws if the column is already there — ignore.
+      for (const col of ['date_event TEXT', 'home_badge TEXT', 'away_badge TEXT']) {
+        try { _db.execSync(`ALTER TABLE fixtures ADD COLUMN ${col};`); } catch {}
+      }
     } catch (e) {
       _dbFailed = true;
       throw e;

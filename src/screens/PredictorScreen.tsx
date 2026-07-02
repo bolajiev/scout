@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, TextInput,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, TextInput, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
@@ -8,11 +8,11 @@ import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconTarget, IconStop } from '../components/Icons';
+import { IconTarget, IconStop, IconBack } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
-import { fetchAndCacheFixtures, isWorldCup, fmtMatchTime as fmtTime, type Fixture } from '../utils/fixtures';
+import { fetchAndCacheFixtures, isWorldCup, fmtMatchTime as fmtTime, badgeUrl, type Fixture } from '../utils/fixtures';
 import { createSession, addMessage } from '../utils/historyDb';
 import { fetchBothTeamForms, formatFormContext, type TeamForm } from '../utils/teamStats';
 import { logInference } from '../utils/auditLogger';
@@ -286,6 +286,13 @@ export default function PredictorScreen() {
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
         <View style={styles.headerLeft}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={styles.backBtn}
+          >
+            <IconBack size={22} color={theme.text} />
+          </TouchableOpacity>
           <View style={[styles.headerIcon, { backgroundColor: accent + '22' }]}>
             <IconTarget size={14} color={accent} />
           </View>
@@ -376,9 +383,23 @@ export default function PredictorScreen() {
                     <Text style={[styles.fixtureLeague, { color: theme.textSecondary }]} numberOfLines={1}>
                       {f.strLeague}
                     </Text>
-                    <Text style={[styles.fixtureHome, { color: theme.text }]} numberOfLines={1}>{f.strHomeTeam}</Text>
+                    <View style={styles.fixtureTeamRow}>
+                      {badgeUrl(f.strHomeTeamBadge) ? (
+                        <Image source={{ uri: badgeUrl(f.strHomeTeamBadge)! }} style={styles.fixtureBadge} resizeMode="contain" />
+                      ) : (
+                        <View style={[styles.fixtureBadgeFallback, { backgroundColor: theme.cardAlt }]} />
+                      )}
+                      <Text style={[styles.fixtureHome, { color: theme.text }]} numberOfLines={1}>{f.strHomeTeam}</Text>
+                    </View>
                     <Text style={[styles.fixtureVs, { color: theme.textSecondary }]}>vs</Text>
-                    <Text style={[styles.fixtureAway, { color: theme.text }]} numberOfLines={1}>{f.strAwayTeam}</Text>
+                    <View style={styles.fixtureTeamRow}>
+                      {badgeUrl(f.strAwayTeamBadge) ? (
+                        <Image source={{ uri: badgeUrl(f.strAwayTeamBadge)! }} style={styles.fixtureBadge} resizeMode="contain" />
+                      ) : (
+                        <View style={[styles.fixtureBadgeFallback, { backgroundColor: theme.cardAlt }]} />
+                      )}
+                      <Text style={[styles.fixtureAway, { color: theme.text }]} numberOfLines={1}>{f.strAwayTeam}</Text>
+                    </View>
                     {fmtTime(f.strTime) ? (
                       <Text style={[styles.fixtureTime, { color: accent }]}>{fmtTime(f.strTime)}</Text>
                     ) : null}
@@ -596,6 +617,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  backBtn: { padding: 2, marginLeft: -6 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   headerIcon: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
@@ -622,9 +644,12 @@ const styles = StyleSheet.create({
   wcBadge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start', marginBottom: 2 },
   wcBadgeText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
   fixtureLeague: { fontSize: 9, fontWeight: '600', letterSpacing: 0.3 },
-  fixtureHome: { fontSize: 13, fontWeight: '700' },
-  fixtureVs: { fontSize: 10 },
-  fixtureAway: { fontSize: 13, fontWeight: '700' },
+  fixtureTeamRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  fixtureBadge: { width: 20, height: 20 },
+  fixtureBadgeFallback: { width: 20, height: 20, borderRadius: 10 },
+  fixtureHome: { fontSize: 13, fontWeight: '700', flex: 1 },
+  fixtureVs: { fontSize: 10, marginLeft: 26 },
+  fixtureAway: { fontSize: 13, fontWeight: '700', flex: 1 },
   fixtureTime: { fontSize: 11, fontWeight: '700', marginTop: 2 },
   noInternetCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,

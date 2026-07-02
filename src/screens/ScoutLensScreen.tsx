@@ -10,7 +10,7 @@ import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconCamera, IconPhoto, IconStop } from '../components/Icons';
+import { IconCamera, IconPhoto, IconStop, IconBack } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
@@ -198,6 +198,13 @@ export default function ScoutLensScreen() {
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
         <View style={styles.headerLeft}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={styles.backBtn}
+          >
+            <IconBack size={22} color={theme.text} />
+          </TouchableOpacity>
           <View style={[styles.headerDot, { backgroundColor: accent }]} />
           <Text style={[styles.headerTitle, { color: theme.text }]}>Scout Lens</Text>
         </View>
@@ -336,6 +343,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  backBtn: { padding: 2, marginLeft: -6 },
   headerDot: { width: 7, height: 7, borderRadius: 3.5 },
   headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   historyBtn: { fontSize: 12, fontWeight: '600' },
