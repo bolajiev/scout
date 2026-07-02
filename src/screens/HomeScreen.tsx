@@ -164,7 +164,8 @@ export default function HomeScreen() {
     return () => { mountedRef.current = false; };
   }, []);
 
-  // Refresh model status every time this tab is focused
+  // Refresh model status every time this screen is focused;
+  // also retry fixtures if we came back online since the first attempt
   useFocusEffect(useCallback(() => {
     mountedRef.current = true;
     syncModelsFromDisk().then(models => {
@@ -172,8 +173,16 @@ export default function HomeScreen() {
       setHasAnyModel(models.some(m => m.modelType === 'text'));
       setLoadedModel(llmManager.getLoadedModelId());
     }).catch(() => { setHasAnyModel(false); });
+    if (!nextMatch) {
+      fetchAndCacheFixtures().then(({ fixtures, fromCache, online }) => {
+        if (!mountedRef.current) return;
+        setNextMatch(findClosestMatch(fixtures));
+        setMatchOnline(online);
+        setMatchFromCache(fromCache);
+      }).catch(() => {});
+    }
     return () => { mountedRef.current = false; };
-  }, []));
+  }, [nextMatch]));
 
   const accent = '#22c55e';
 
@@ -210,11 +219,11 @@ export default function HomeScreen() {
             <Text style={styles.wordmark}>SCOUT</Text>
           </View>
           <View style={styles.topActions}>
-            <TouchableOpacity onPress={() => navigation.navigate('Models')} hitSlop={HIT}>
-              <IconModels size={19} color="rgba(255,255,255,0.45)" />
+            <TouchableOpacity style={styles.iconChip} onPress={() => navigation.navigate('Models')} hitSlop={HIT}>
+              <IconModels size={17} color="rgba(255,255,255,0.75)" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('Settings')} hitSlop={HIT}>
-              <IconSettings size={19} color="rgba(255,255,255,0.45)" />
+            <TouchableOpacity style={styles.iconChip} onPress={() => navigation.navigate('Settings')} hitSlop={HIT}>
+              <IconSettings size={17} color="rgba(255,255,255,0.75)" />
             </TouchableOpacity>
           </View>
         </View>
@@ -426,7 +435,12 @@ const styles = StyleSheet.create({
   wordmarkRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   wDot: { width: 7, height: 7, borderRadius: 3.5 },
   wordmark: { fontSize: 20, fontWeight: '900', color: '#fff', letterSpacing: 4 },
-  topActions: { flexDirection: 'row', gap: 20 },
+  topActions: { flexDirection: 'row', gap: 10 },
+  iconChip: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    alignItems: 'center', justifyContent: 'center',
+  },
 
   // Chips
   chipsSection: { marginTop: 20, gap: 9 },
@@ -439,7 +453,8 @@ const styles = StyleSheet.create({
   modelStrip: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     marginHorizontal: 14, marginTop: 4, marginBottom: 2,
-    borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14,
+    borderRadius: 14, paddingVertical: 11, paddingHorizontal: 15,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.08)',
   },
   modelStripLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   modelStatusDot: { width: 7, height: 7, borderRadius: 4 },
@@ -455,7 +470,8 @@ const styles = StyleSheet.create({
 
   // AI Coach card
   coachCard: {
-    backgroundColor: '#0c1f0c', borderRadius: 22, padding: 22, gap: 18, overflow: 'hidden',
+    backgroundColor: '#0c1f0c', borderRadius: 24, padding: 22, gap: 18, overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(34,197,94,0.22)',
   },
   coachTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   coachTopLeft: { gap: 6, flex: 1 },
@@ -482,7 +498,8 @@ const styles = StyleSheet.create({
 
   // Predictor card
   predictCard: {
-    flex: 1, backgroundColor: '#1a0d00', borderRadius: 22, padding: 18, gap: 10, overflow: 'hidden',
+    flex: 1, backgroundColor: '#1a0d00', borderRadius: 24, padding: 18, gap: 10, overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(249,115,22,0.22)',
   },
   predictModLabel: { fontSize: 9, fontWeight: '800', color: '#f97316', letterSpacing: 1.6 },
   predictTitle: { fontSize: 21, fontWeight: '900', color: '#fff', lineHeight: 27, letterSpacing: -0.3 },
@@ -506,16 +523,17 @@ const styles = StyleSheet.create({
   vsCol: { alignItems: 'center', gap: 2 },
   teamCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   teamLetter: { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
-  teamName: { fontSize: 9, color: 'rgba(255,255,255,0.45)', fontWeight: '600', maxWidth: 52 },
+  teamName: { fontSize: 10, color: 'rgba(255,255,255,0.55)', fontWeight: '600', maxWidth: 60 },
   vsLabel: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.35)' },
-  matchTime: { fontSize: 9, color: '#f97316', fontWeight: '700' },
+  matchTime: { fontSize: 10, color: '#f97316', fontWeight: '700' },
   offlineHint: { fontSize: 9, color: 'rgba(255,255,255,0.25)', marginTop: -2 },
 
   predictCta: { fontSize: 13, fontWeight: '800', color: '#f97316', marginTop: 2 },
 
   // Scout Lens card
   lensCard: {
-    flex: 1, backgroundColor: '#0a0e18', borderRadius: 22, padding: 18, gap: 8, overflow: 'hidden',
+    flex: 1, backgroundColor: '#0a0e18', borderRadius: 24, padding: 18, gap: 8, overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(52,211,153,0.22)',
   },
   lensModLabel: { fontSize: 9, fontWeight: '800', color: '#34d399', letterSpacing: 1.6 },
   lensBracketWrap: { marginTop: 2, marginBottom: 2 },

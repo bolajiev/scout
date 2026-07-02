@@ -14,7 +14,7 @@ import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, getGenParams, getSettings } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage } from '../utils/historyDb';
-import { formatFixtureContext } from '../utils/teamStats';
+import { formatFixtureContext, fetchTeamForm } from '../utils/teamStats';
 import { fetchAndCacheFixtures } from '../utils/fixtures';
 import { logInference } from '../utils/auditLogger';
 
@@ -294,12 +294,26 @@ export default function MatchAIScreen() {
               usedLiveData = true;
             } else if (tc.name === 'get_team_form') {
               const teamName = String(tc.arguments.team_name ?? '');
-              const { fixtures } = await fetchAndCacheFixtures();
-              const teamFix = fixtures.filter(f =>
-                f.strHomeTeam?.toLowerCase().includes(teamName.toLowerCase()) ||
-                f.strAwayTeam?.toLowerCase().includes(teamName.toLowerCase())
-              );
-              toolResult = teamFix.length > 0 ? formatFixtureContext(teamFix) : `No fixtures found for ${teamName}.`;
+              const form = await fetchTeamForm(teamName);
+              if (form && form.events.length > 0) {
+                const lines = form.events.map(e =>
+                  `${e.date} vs ${e.opponent}: ${e.score} (${e.result})${e.league ? ' — ' + e.league : ''}`
+                );
+                toolResult = [
+                  `[RECENT RESULTS — ${form.teamName} via TheSportsDB]`,
+                  `Form (most recent last): ${form.form.join(' ')}`,
+                  ...lines,
+                  '[END RESULTS]',
+                ].join('\n');
+              } else {
+                // Fall back to today's fixtures involving the team
+                const { fixtures } = await fetchAndCacheFixtures();
+                const teamFix = fixtures.filter(f =>
+                  f.strHomeTeam?.toLowerCase().includes(teamName.toLowerCase()) ||
+                  f.strAwayTeam?.toLowerCase().includes(teamName.toLowerCase())
+                );
+                toolResult = teamFix.length > 0 ? formatFixtureContext(teamFix) : `No recent data found for ${teamName}.`;
+              }
               usedLiveData = true;
             }
           } catch { toolResult = 'Unable to fetch live data.'; }

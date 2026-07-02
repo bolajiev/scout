@@ -144,7 +144,7 @@ const WC_LEAGUE_ID = '4429';
 // AbortSignal.timeout() does not exist in React Native's Hermes runtime —
 // calling it throws synchronously, which made every fetch "fail" and the app
 // permanently show the offline fallback. Manual AbortController instead.
-const fetchWithTimeout = async (url: string, ms = 8000): Promise<Response> => {
+export const fetchWithTimeout = async (url: string, ms = 8000): Promise<Response> => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {

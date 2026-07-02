@@ -1,6 +1,8 @@
 // TheSportsDB — free, no API key required.
 // Used to pull real recent match form for predictions and grounded AI answers.
 
+import { fetchWithTimeout } from './fixtures';
+
 export type FormResult = 'W' | 'D' | 'L';
 
 export interface TeamEvent {
@@ -23,9 +25,7 @@ const BASE = 'https://www.thesportsdb.com/api/v1/json/3';
 // Search for a team by name → return first matching team ID
 export const searchTeamId = async (name: string): Promise<string | null> => {
   try {
-    const res = await fetch(`${BASE}/searchteams.php?t=${encodeURIComponent(name)}`, {
-      signal: AbortSignal.timeout(6000),
-    });
+    const res = await fetchWithTimeout(`${BASE}/searchteams.php?t=${encodeURIComponent(name)}`, 6000);
     const data = await res.json();
     const teams: any[] = data.teams ?? [];
     // Prefer soccer/football teams
@@ -45,9 +45,9 @@ export const fetchTeamForm = async (teamName: string): Promise<TeamForm | null> 
   if (!teamId) return null;
 
   try {
-    const res = await fetch(`${BASE}/eventslast5.php?id=${teamId}`, {
-      signal: AbortSignal.timeout(6000),
-    });
+    // eventslast.php returns the team's most recent finished matches
+    // (eventslast5.php does not exist — it 404s)
+    const res = await fetchWithTimeout(`${BASE}/eventslast.php?id=${teamId}`, 6000);
     const data = await res.json();
     const raw: any[] = data.results ?? [];
 
