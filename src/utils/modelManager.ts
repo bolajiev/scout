@@ -54,15 +54,6 @@ class LLMManager {
     return this.pending;
   }
 
-  isLoaded(storageModelId: string): boolean {
-    return this.storageId === storageModelId && !!this.qvacId;
-  }
-
-  isPending(storageModelId: string): boolean {
-    return this.pendingId === storageModelId && !!this.pending;
-  }
-
-  getQvacId(): string | null { return this.qvacId; }
   getLoadedModelId(): string | null { return this.storageId; }
 
   async release(): Promise<void> {

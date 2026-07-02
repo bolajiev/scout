@@ -40,8 +40,4 @@ export function logsToCSV(logs: InferenceLog[]): string {
   return [headers.join(','), ...rows].join('\n');
 }
 
-export function logsToJSON(logs: InferenceLog[]): string {
-  return JSON.stringify(logs, null, 2);
-}
-
 export { getInferenceLogs };

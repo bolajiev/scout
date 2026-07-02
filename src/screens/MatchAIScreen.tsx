@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
   ScrollView, Keyboard, Animated, Dimensions,
@@ -96,6 +96,7 @@ interface Entry {
   question: string;
   answer: string;
   thinking?: string;
+  thinkingMs?: number;
   elapsed?: number;
   toks?: number;
   usedLiveData?: boolean;
@@ -235,6 +236,8 @@ export default function MatchAIScreen() {
     let answerAcc = '';
     let thoughtAcc = '';
     let lastFlush = 0;
+    let thinkStart = 0;
+    let thinkMs = 0;
 
     try {
       const gp = await getGenParams();
@@ -266,6 +269,7 @@ export default function MatchAIScreen() {
       let pass1Answer = '';
       for await (const event of run1.events) {
         if (event.type === 'thinkingDelta') {
+          if (!thinkStart) thinkStart = Date.now();
           thoughtAcc += event.text;
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 40) {
@@ -274,6 +278,7 @@ export default function MatchAIScreen() {
             scrollRef.current?.scrollToEnd({ animated: false });
           }
         } else if (event.type === 'contentDelta') {
+          if (thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
           pass1Answer += event.text;
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 40) {
@@ -373,8 +378,9 @@ export default function MatchAIScreen() {
       const elapsed = Math.round(totalMs / 100) / 10;
       if (sessionIdRef.current && answerAcc) addMessage(sessionIdRef.current, 'assistant', answerAcc);
 
+      if (thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
       if (mountedRef.current) {
-        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, elapsed, toks: finalStats?.generatedTokens, usedLiveData };
+        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, usedLiveData };
         setSlot(null);
         setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
@@ -404,23 +410,36 @@ export default function MatchAIScreen() {
     }
   }, [modelId, send]);
 
-  const renderThoughtBlock = (thought: string, isStreaming: boolean, entryId: string) => {
+  // Claude-style thinking block: streams the thought live while the model
+  // reasons, then collapses to a tappable "Thought for Xs" row.
+  const renderThoughtBlock = (thought: string, isStreaming: boolean, entryId: string, thinkingMs?: number) => {
     if (!thought) return null;
     const isOpen = isStreaming || thoughtOpen[entryId];
+    const doneLabel = thinkingMs
+      ? `Thought for ${(thinkingMs / 1000).toFixed(1)}s`
+      : 'Thought process';
     return (
       <TouchableOpacity
         activeOpacity={isStreaming ? 1 : 0.7}
         onPress={() => !isStreaming && setThoughtOpen(p => ({ ...p, [entryId]: !p[entryId] }))}
-        style={[styles.thoughtBlock, { backgroundColor: '#1a1200', borderColor: '#f59e0b33' }]}
+        style={[
+          styles.thoughtBlock,
+          isStreaming
+            ? { backgroundColor: '#1a1200', borderColor: '#f59e0b33' }
+            : { backgroundColor: 'transparent', borderColor: theme.border },
+        ]}
       >
         <View style={styles.thoughtHeader}>
           <View style={[styles.thoughtDot, { backgroundColor: isStreaming ? '#f59e0b' : '#78716c' }]} />
           <Text style={[styles.thoughtLabel, { color: isStreaming ? '#f59e0b' : '#78716c' }]}>
-            {isStreaming ? 'Thinking...' : `Deep thought  ${isOpen ? '∧' : '∨'}`}
+            {isStreaming ? 'Thinking...' : doneLabel}
           </Text>
+          {!isStreaming && (
+            <Text style={[styles.thoughtChevron, { color: '#78716c' }]}>{isOpen ? '‹' : '›'}</Text>
+          )}
         </View>
         {isOpen && (
-          <Text style={styles.thoughtText} numberOfLines={isStreaming ? undefined : 6}>
+          <Text style={styles.thoughtText} numberOfLines={isStreaming ? undefined : 10}>
             {thought}
           </Text>
         )}
@@ -440,7 +459,7 @@ export default function MatchAIScreen() {
             <Text style={styles.userText}>{entry.question}</Text>
           </View>
         </View>
-        {entry.thinking && renderThoughtBlock(entry.thinking, false, entry.id)}
+        {entry.thinking && renderThoughtBlock(entry.thinking, false, entry.id, entry.thinkingMs)}
         <View style={styles.aiRow}>
           <View style={styles.aiCol}>
             <View style={[styles.aiBubble, { backgroundColor: theme.cardAlt }]}>
@@ -464,6 +483,14 @@ export default function MatchAIScreen() {
       </Animated.View>
     );
   };
+
+  // Finished entries re-render only when the list or theme changes — NOT on
+  // every 40ms streaming flush. Markdown parsing is expensive; without this
+  // memo a long chat would re-parse every bubble on each token batch.
+  const renderedEntries = useMemo(
+    () => entries.map(renderEntry),
+    [entries, thoughtOpen, themeMode],
+  );
 
   // ── Empty state ────────────────────────────────────────────────────────────
   const renderEmpty = () => (
@@ -577,7 +604,7 @@ export default function MatchAIScreen() {
         keyboardShouldPersistTaps="handled"
       >
         {entries.length === 0 && !slot && renderEmpty()}
-        {entries.map(renderEntry)}
+        {renderedEntries}
 
         {/* Active streaming slot */}
         {slot && (
@@ -764,6 +791,7 @@ const styles = StyleSheet.create({
     borderRadius: 12, borderWidth: 1, padding: 11, marginRight: 30, gap: 6,
   },
   thoughtHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  thoughtChevron: { fontSize: 14, fontWeight: '700', marginLeft: 'auto' },
   thoughtDot: { width: 5, height: 5, borderRadius: 2.5 },
   thoughtLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
   thoughtText: { fontSize: 12, lineHeight: 18, color: '#a8a29e', fontStyle: 'italic' },

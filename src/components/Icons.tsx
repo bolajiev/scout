@@ -5,14 +5,6 @@ interface IconProps { size?: number; color?: string; strokeWidth?: number; }
 
 const sw = (p: IconProps) => p.strokeWidth ?? 1.8;
 
-// Home / pitch
-export const IconHome = ({ size = 24, color = '#fff' }: IconProps) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-    <Path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
-    <Path d="M9 22V12h6v10" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
-  </Svg>
-);
-
 // Football / soccer ball
 export const IconBall = ({ size = 24, color = '#fff' }: IconProps) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -55,15 +47,6 @@ export const IconSettings = ({ size = 24, color = '#fff' }: IconProps) => (
   </Svg>
 );
 
-// Download
-export const IconDownload = ({ size = 24, color = '#fff' }: IconProps) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-    <Path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-    <Polygon points="7 10 12 15 17 10" stroke={color} strokeWidth="1.8" strokeLinejoin="round" fill="none" />
-    <Line x1="12" y1="15" x2="12" y2="3" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-  </Svg>
-);
-
 // Back arrow
 export const IconBack = ({ size = 24, color = '#fff' }: IconProps) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -88,37 +71,10 @@ export const IconModels = ({ size = 24, color = '#fff' }: IconProps) => (
   </Svg>
 );
 
-// Info / about
-export const IconInfo = ({ size = 24, color = '#fff' }: IconProps) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-    <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth="1.8" />
-    <Line x1="12" y1="16" x2="12" y2="12" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-    <Line x1="12" y1="8" x2="12.01" y2="8" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
-  </Svg>
-);
-
 // Stop square — for cancel inference
 export const IconStop = ({ size = 24, color = '#fff' }: IconProps) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
     <Rect x="4" y="4" width="16" height="16" rx="2" stroke={color} strokeWidth="1.8" fill={color} />
-  </Svg>
-);
-
-// Trash
-export const IconTrash = ({ size = 24, color = '#fff' }: IconProps) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-    <Polygon points="3 6 5 6 21 6" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    <Path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
-    <Path d="M10 11v6M14 11v6" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-    <Path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
-  </Svg>
-);
-
-// Copy
-export const IconCopy = ({ size = 24, color = '#fff' }: IconProps) => (
-  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-    <Rect x="9" y="9" width="13" height="13" rx="2" stroke={color} strokeWidth="1.8" />
-    <Path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
   </Svg>
 );
 

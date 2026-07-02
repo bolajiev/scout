@@ -117,15 +117,22 @@ export async function syncModelsFromDisk(): Promise<DownloadedModel[]> {
   for (const model of AVAILABLE_MODELS) {
     const modelFolder = new Directory(modelsDir, model.id);
     const modelFile = new File(modelFolder, 'model.gguf');
-    // Require at least 1 MB — filters out empty files and corrupt 404 HTML responses
-    if (!modelFile.exists || modelFile.size < 1_000_000) continue;
+    // An interrupted download leaves a partial model.gguf on disk — require
+    // ~90% of the expected size so a half-file never shows as "downloaded"
+    // (and never gets handed to the native loader, which would fail to load).
+    const expectedModel = (model.sizeBytes - (model.mmprojBytes ?? 0)) * 0.9;
+    if (!modelFile.exists || modelFile.size < Math.max(expectedModel, 1_000_000)) continue;
 
     const mmprojFile = new File(modelFolder, 'mmproj.gguf');
+    const needsMmproj = !!model.projectionModelSrc;
+    const mmprojOk = mmprojFile.exists && mmprojFile.size >= (model.mmprojBytes ?? 1) * 0.9;
+    // A vision model without its projection file cannot see — treat as not downloaded
+    if (needsMmproj && !mmprojOk) continue;
 
     synced.push({
       ...model,
       modelSrc: modelFile.uri,
-      projectionModelSrc: mmprojFile.exists ? mmprojFile.uri : undefined,
+      projectionModelSrc: needsMmproj ? mmprojFile.uri : undefined,
       downloadedPath: modelFile.uri,
       isDownloaded: true,
     });
@@ -151,11 +158,6 @@ export async function saveSettings(settings: Partial<AppSettings>): Promise<void
   await AsyncStorage.setItem(KEYS.SETTINGS, JSON.stringify(updated));
 }
 
-export async function getAccelerator(): Promise<Accelerator> {
-  const settings = await getSettings();
-  return settings.accelerator;
-}
-
 export async function setAccelerator(accel: Accelerator): Promise<void> {
   await saveSettings({ accelerator: accel });
 }
@@ -169,11 +171,6 @@ export async function getGenParams(): Promise<{ temp: number; top_k: number; top
     repeat_penalty: s.repeatPenalty ?? 1.1,
     maxTokens: s.maxTokens ?? 1024,
   };
-}
-
-export async function getResponseLength(): Promise<ResponseLength> {
-  const settings = await getSettings();
-  return settings.responseLength;
 }
 
 export async function setResponseLength(length: ResponseLength): Promise<void> {
@@ -256,7 +253,6 @@ export async function setDefaultModelId(modelId: string): Promise<void> {
   await AsyncStorage.setItem('@scout_default_model', modelId);
 }
 
-
 export async function getThemeOverride(): Promise<'dark' | 'light' | null> {
   const val = await AsyncStorage.getItem('@scout_theme_override');
   if (val === 'dark' || val === 'light') return val;
@@ -265,36 +261,6 @@ export async function getThemeOverride(): Promise<'dark' | 'light' | null> {
 
 export async function setThemeOverride(mode: 'dark' | 'light'): Promise<void> {
   await AsyncStorage.setItem('@scout_theme_override', mode);
-}
-
-export async function getCustomSystemPrompt(useCase: string): Promise<string | null> {
-  try {
-    const data = await AsyncStorage.getItem(KEYS.CUSTOM_PROMPTS);
-    if (!data) return null;
-    const map = JSON.parse(data) as Record<string, string>;
-    return map[useCase] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export async function setCustomSystemPrompt(useCase: string, prompt: string): Promise<void> {
-  try {
-    const data = await AsyncStorage.getItem(KEYS.CUSTOM_PROMPTS);
-    const map = data ? (JSON.parse(data) as Record<string, string>) : {};
-    map[useCase] = prompt;
-    await AsyncStorage.setItem(KEYS.CUSTOM_PROMPTS, JSON.stringify(map));
-  } catch {}
-}
-
-export async function clearCustomSystemPrompt(useCase: string): Promise<void> {
-  try {
-    const data = await AsyncStorage.getItem(KEYS.CUSTOM_PROMPTS);
-    if (!data) return;
-    const map = JSON.parse(data) as Record<string, string>;
-    delete map[useCase];
-    await AsyncStorage.setItem(KEYS.CUSTOM_PROMPTS, JSON.stringify(map));
-  } catch {}
 }
 
 export async function clearAllData(): Promise<void> {
@@ -318,5 +284,4 @@ export async function clearAllData(): Promise<void> {
     console.warn('[storage] SQLite clear failed:', e);
   }
 }
-
 

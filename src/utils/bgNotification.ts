@@ -217,23 +217,6 @@ export async function showRunningNotification(label = 'Scout') {
   } catch {}
 }
 
-export async function showDoneNotification(label = 'Scout') {
-  try {
-    await ensureChannel();
-    await Notifications.dismissNotificationAsync(RUNNING_ID);
-    await Notifications.scheduleNotificationAsync({
-      identifier: DONE_ID,
-      content: {
-        title: `${label} finished`,
-        body: 'Your result is ready.',
-        sound: false,
-        ...(Platform.OS === 'android' ? { android: { channelId: CHANNEL_ID } } : {}),
-      },
-      trigger: null,
-    });
-  } catch {}
-}
-
 export async function clearInferenceNotifications() {
   try {
     await Notifications.dismissNotificationAsync(RUNNING_ID);

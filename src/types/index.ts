@@ -7,6 +7,7 @@ export interface ModelInfo {
   badgeColor?: string;
   size: string;
   sizeBytes: number;
+  mmprojBytes?: number; // portion of sizeBytes that is the vision projection file
   modelSrc: string;
   projectionModelSrc?: string;
   modelType: 'vision' | 'text';

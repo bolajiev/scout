@@ -1,85 +1,73 @@
 # Scout — On-Device Football AI
 
-**Tether Developers Cup 2026** · QVAC primary track + Pears secondary track
+**Tether Developers Cup 2026 · QVAC track**
 
-Scout is a fully private football AI app that runs entirely on your Android device. No cloud, no API keys, no account required. AI inference runs via the QVAC SDK on-device; live match data comes from TheSportsDB (free, no key); fan-to-fan messaging runs via Pears (Holepunch).
+Scout is a fully private football AI app for Android. Every AI feature — chat, match prediction, image recognition — runs **100% on-device through the [QVAC SDK](https://qvac.tether.io)**. No cloud AI, no API keys, no account. The only network traffic is live fixture data from TheSportsDB (free, keyless) and one-time model downloads from Hugging Face.
 
 ---
 
-## Modules
+## Features
 
-| Module | Track | What it does |
+| Feature | Engine | What it does |
 |---|---|---|
-| **Match AI** | QVAC SDK | Ask any football question — on-device LLM with tool calling fetches today's live fixtures from TheSportsDB to ground answers in real match data |
-| **Predictor** | QVAC SDK | Pick two teams, get a structured prediction: winner, score, confidence, and reasoning — all on-device |
-| **Scout Lens** | QVAC Vision | Point your camera at a jersey, badge, or scoreboard — vision model identifies it on-device |
-| **History** | SQLite | Browse and replay past Match AI, Predictor, and Scout Lens sessions |
+| **AI Coach** | QVAC LLM | Football chat with live tool calling — the model decides when to fetch today's fixtures or a team's recent results from TheSportsDB and grounds its answers in real data. Streams tokens live; in Deep mode the thinking process streams too, then collapses to a tappable "Thought for X.Xs" row. Answers render as markdown. |
+| **Predictor** | QVAC LLM | Pick a fixture (live World Cup 2026 matches with real team badges) or type any two teams. Recent form is fetched live and injected into the prompt; output is a structured scoreboard: winner, score, confidence, analysis. |
+| **Scout Lens** | QVAC Vision | Point the camera at a jersey, club badge, or scoreboard — the vision model identifies it on-device. Reasoning is disabled for scans so results come fast. |
+| **History** | SQLite | Every session (chat, prediction, scan) stored locally and replayable. |
 
 ---
 
 ## QVAC SDK Integration
 
-Scout uses `@qvac/sdk` v0.13.5 for all on-device inference.
+Scout uses `@qvac/sdk` v0.13.5 for all inference — `loadModel`, `completion`, `cancel`.
 
-### Match AI — streaming with tool calling
+### AI Coach — streaming, thinking, and tool calling
 
-Match AI runs a two-pass inference loop: Pass 1 may call the `get_fixtures` tool to fetch live data; Pass 2 streams the final answer grounded in that data.
+Two-pass loop: pass 1 may emit tool calls; results are appended as `tool` messages; pass 2 streams the grounded answer.
 
 ```ts
-import { completion, cancel } from '@qvac/sdk';
-import { SCOUT_TOOLS } from './tools';
-
-// Pass 1 — may call tools
 const run1 = completion({
   modelId,
   history: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
   stream: true,
-  captureThinking: false,
-  tools: SCOUT_TOOLS,
-  generationParams: { predict: 1024, temp: 0.7, reasoning_budget: 0 as 0 },
+  tools: SCOUT_TOOLS,                       // get_today_fixtures, get_team_form
+  captureThinking: deepMode,
+  generationParams: { ...genParams, reasoning_budget: deepMode ? -1 : 0 },
 });
 
 for await (const event of run1.events) {
-  if (event.type === 'contentDelta') streamed += event.text;
+  if (event.type === 'thinkingDelta') thought += event.text;   // streamed live
+  else if (event.type === 'contentDelta') answer += event.text;
 }
 
 const toolCalls = await run1.toolCalls;
-// execute tool calls, fetch TheSportsDB data...
-
-// Pass 2 — final answer, no further tool calls
-const run2 = completion({
-  modelId,
-  history: [...toolHistory],
-  stream: true,
-  captureThinking: false,
-  generationParams: { predict: 1024, temp: 0.7, reasoning_budget: 0 as 0 },
-});
-
-for await (const event of run2.events) {
-  if (event.type === 'contentDelta') answer += event.text;
-}
+// execute tools against TheSportsDB, push { role: 'tool', content } messages,
+// then run pass 2 for the final grounded answer
 ```
 
-### Predictor — structured output
+Streaming UI flushes are throttled to ~40ms batches, finished answers render as markdown while the live stream stays plain text, and completed bubbles are memoized — tokens never lag behind the model, even in long chats.
 
-The system prompt constrains the model to output a parseable scoreboard format:
+### Predictor — structured output with live form
+
+Real recent results are fetched from TheSportsDB and injected as `[LIVE FORM DATA]`; the system prompt constrains output to a parseable format:
 
 ```
 WINNER: Manchester City
 SCORE: 2-1
 CONFIDENCE: High
 ---
-City's high press and De Bruyne's creativity give them the edge...
+City's high press and recent 4-0 run give them the edge...
 ```
 
-### Scout Lens — vision model with multimodal projection
+In Deep mode the thinking stream renders in an amber "Reading the game..." card before the prediction appears.
+
+### Scout Lens — vision with multimodal projection
 
 ```ts
-// projectionModelSrc (mmproj) must be passed for vision models
 const modelId = await llmManager.ensure(visionModel, {
   ctx_size: 2048,
   device: 'auto',
-  projectionModelSrc: visionModel.projectionModelSrc,
+  projectionModelSrc: visionModel.projectionModelSrc,   // mmproj
 });
 
 const run = completion({
@@ -89,42 +77,45 @@ const run = completion({
     {
       role: 'user',
       content: 'What football content do you see?',
-      attachments: [{ path: imageUri }],
+      attachments: [{ path: bareFilePath }],   // bare path, not file:// URI
     },
   ],
   stream: true,
-  generationParams: { predict: 200, reasoning_budget: 0 as 0 },
+  generationParams: { predict: 200, reasoning_budget: 0 },
 });
 ```
 
-### Model management
+### Model lifecycle
 
-```ts
-import { llmManager } from './utils/modelManager';
-import { syncModelsFromDisk } from './utils/storage';
+One model resident at a time (`llmManager`): screens share the loaded model, a different model unloads the previous one first, the app auto-releases after 30s in background, and the process is killed on app close so native memory never lingers.
 
-// Scan device storage for downloaded models
-const models = await syncModelsFromDisk();
+### Custom worker bundle (APK size: ~918 MB of native libs → ~145 MB)
 
-// Load a model and keep it resident — returns modelId for completion()
-// For vision models, always pass projectionModelSrc
-const modelId = await llmManager.ensure(model, {
-  ctx_size: 4096,
-  device: 'auto',
-  projectionModelSrc: model.projectionModelSrc,
-});
-```
+The stock QVAC setup ships every inference engine (LLM, embeddings, Whisper, ffmpeg). Scout regenerates the worker with **only the llama.cpp completion plugin** (`qvac.config.json` → `bundleSdk`) and links **only the addons in `qvac/addons.manifest.json`, arm64 only**.
 
-Models stay loaded across screens. The app releases the model automatically after 30 seconds in the background (AppState listener in `App.tsx`).
+EAS Build reinstalls `node_modules`, which would silently revert these patches — so `scripts/postinstall.mjs` re-applies them after every install:
+
+1. `qvac/bare-link.android.mjs` → `react-native-bare-kit/android/link.mjs` (manifest-aware addon linker)
+2. `qvac/worker.bundle.js` → `@qvac/sdk/dist/worker.mobile.bundle.js` (LLM-only worker; the published package does not ship this file)
 
 ---
 
-## Data & Privacy
+## Live data
 
-- All AI inference runs on-device via QVAC SDK — no data sent to any AI cloud
-- Live match data: TheSportsDB free tier (`thesportsdb.com`) — no key, no auth
-- SQLite history stored locally in app-private storage
-- No account, no signup, no telemetry
+[TheSportsDB](https://www.thesportsdb.com) free endpoints, no key: today's fixtures, FIFA World Cup 2026 schedule, team search, recent results, and team badge images. Fixtures are cached in SQLite keyed by date — offline you get today's cache, never a stale day. The home card refreshes every 5 minutes, shows live scores, and rotates finished matches to the next kick-off.
+
+---
+
+## Models
+
+Downloaded in-app (resumable) to app-private storage `DocumentDirectory/scout/models/<id>/`. Partial downloads are detected by size check and never handed to the native loader.
+
+| Model | Type | Size | Used for |
+|---|---|---|---|
+| Qwen3 1.7B Q4 | Text | 1.1 GB | AI Coach, Predictor — fast, recommended |
+| MedPsy 1.7B (QVAC) | Text | 1.1 GB | Lighter-weight alternative |
+| MedPsy 4B (QVAC) | Text | 2.7 GB | Richer reasoning |
+| Gemma 4 E2B Q4 + mmproj | Vision | 3.8 GB | Scout Lens |
 
 ---
 
@@ -132,42 +123,32 @@ Models stay loaded across screens. The app releases the model automatically afte
 
 | Layer | Technology |
 |---|---|
-| Framework | Expo SDK 54, React Native (bare workflow) |
-| AI inference | QVAC SDK (`@qvac/sdk` v0.13.5) |
-| Storage | SQLite (`expo-sqlite` v16) + AsyncStorage |
-| Live data | TheSportsDB REST API (free, no key) |
+| Framework | Expo SDK 54, React Native 0.81 (bare workflow, local `android/`) |
+| AI inference | QVAC SDK on `react-native-bare-kit` (Bare runtime) |
+| Storage | SQLite (`expo-sqlite`) + AsyncStorage |
+| Live data | TheSportsDB REST (free, no key) |
 | Language | TypeScript |
-| Target | Android arm64 (minSdk 29) |
-
----
-
-## Models
-
-| Model | Type | Size | Used for |
-|---|---|---|---|
-| Qwen3 1.7B | Text | 1.1 GB | Match AI, Predictor — fast, recommended |
-| MedPsy 1.7B | Text | 1.1 GB | Match AI, Predictor — lighter weight |
-| MedPsy 4B | Text | 2.7 GB | Match AI, Predictor — richer reasoning |
-| Gemma 4 2B | Vision | 3.8 GB | Scout Lens — jersey, badge, scoreboard ID |
-
-Models are downloaded once to app-private storage (`DocumentDirectory/scout/models/<id>/`) and run fully offline. The app migrates old folder names automatically on first launch.
+| Target | Android arm64-v8a, minSdk 29, NDK 27, new architecture |
 
 ---
 
 ## Building
 
 ```bash
-npm install
-
-# Type check
+npm install                 # postinstall re-applies QVAC patches automatically
 npx tsc --noEmit --skipLibCheck
-
-# EAS build (bare workflow — uses local android/ directory)
-eas build --platform android --profile preview
+eas build --platform android --profile preview   # signed APK, local credentials
 ```
 
-The `android/` directory is gitignored but included in the EAS archive via `.easignore`. Running `expo prebuild --clean` regenerates `android/` — after which the NDK version in `android/build.gradle` must match `27.1.12297006` (Expo SDK 54 official).
+`.easignore` ships the local `android/` directory (skips server prebuild, keeps NDK 27 and manifest fixes) and excludes `android/build/` so stale caches never reach the build server. Running `expo prebuild --clean` regenerates `android/` — re-apply the NDK version and manifest fixes if you do.
 
 ---
 
-Built for the **Tether Developers Cup 2026** — QVAC primary track.
+## Privacy
+
+- AI inference never leaves the device — no data sent to any AI cloud
+- No analytics, no accounts, no telemetry
+- Camera/gallery images are processed in memory, on-device only
+- Clear All Data wipes AsyncStorage and every SQLite table
+
+Built for the **Tether Developers Cup 2026** — QVAC track.

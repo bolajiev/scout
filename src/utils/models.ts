@@ -60,24 +60,13 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
     description: 'Gemma 4 E2B by Google. Native vision support built into the architecture — identifies jerseys, club badges, and scoreboards for Scout Lens. Also strong for text analysis. Requires ~4 GB free RAM.',
     size: '3.8 GB',
     sizeBytes: 3_462_678_272 + 557_367_776,
+    mmprojBytes: 557_367_776,
     modelSrc: GEMMA4_2B_MULTIMODAL_Q4_K_M.src,
     projectionModelSrc: MMPROJ_GEMMA4_2B_MULTIMODAL_Q8_0.src,
     supports: ['vision', 'text'],
     heavy: true,
   },
 ];
-
-export function isTextModel(m: ModelInfo): boolean {
-  return m.modelType === 'text';
-}
-
-export function isVisionModel(m: ModelInfo): boolean {
-  return m.modelType === 'vision';
-}
-
-export function getModelByKey(key: string): ModelInfo | undefined {
-  return AVAILABLE_MODELS.find(m => m.id === key);
-}
 
 const HF_REGEX = /registry:\/\/hf\/([^/]+\/[^/]+)\/(resolve|blob)\/([^/]+)\/(.+)/;
 
