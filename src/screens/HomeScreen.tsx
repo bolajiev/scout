@@ -134,10 +134,29 @@ export default function HomeScreen() {
   const [hasAnyModel, setHasAnyModel] = useState<boolean | null>(null); // null = checking
   const [modelLoading, setModelLoading] = useState(false);
   const mountedRef = useRef(true);
+  const lastFixtureFetchRef = useRef(0);
+  const hasMatchRef = useRef(false);
 
   const c1 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
   const c2 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
   const c3 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
+
+  // Refetch fixtures so the card never shows a stale match: a finished game
+  // rotates to the next kick-off, live scores update, and a new day replaces
+  // yesterday's fixtures entirely.
+  const refreshFixtures = useCallback((force = false) => {
+    const stale = Date.now() - lastFixtureFetchRef.current > 3 * 60_000;
+    if (!force && !stale && hasMatchRef.current) return;
+    lastFixtureFetchRef.current = Date.now();
+    fetchAndCacheFixtures().then(({ fixtures, fromCache, online }) => {
+      if (!mountedRef.current) return;
+      const match = findClosestMatch(fixtures);
+      hasMatchRef.current = !!match;
+      setNextMatch(match);
+      setMatchOnline(online);
+      setMatchFromCache(fromCache);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -154,18 +173,16 @@ export default function HomeScreen() {
     animCard(c2, 360);
     animCard(c3, 480);
 
-    fetchAndCacheFixtures().then(({ fixtures, fromCache, online }) => {
-      if (!mountedRef.current) return;
-      setNextMatch(findClosestMatch(fixtures));
-      setMatchOnline(online);
-      setMatchFromCache(fromCache);
-    }).catch(() => {});
+    refreshFixtures(true);
+    // Home is the root screen and never unmounts — keep the match fresh
+    // while the app sits open (live score ticks, finished games rotate out)
+    const interval = setInterval(() => refreshFixtures(true), 5 * 60_000);
 
-    return () => { mountedRef.current = false; };
-  }, []);
+    return () => { mountedRef.current = false; clearInterval(interval); };
+  }, [refreshFixtures]);
 
   // Refresh model status every time this screen is focused;
-  // also retry fixtures if we came back online since the first attempt
+  // refetch fixtures when stale or missing (e.g. came back online)
   useFocusEffect(useCallback(() => {
     mountedRef.current = true;
     syncModelsFromDisk().then(models => {
@@ -173,16 +190,9 @@ export default function HomeScreen() {
       setHasAnyModel(models.some(m => m.modelType === 'text'));
       setLoadedModel(llmManager.getLoadedModelId());
     }).catch(() => { setHasAnyModel(false); });
-    if (!nextMatch) {
-      fetchAndCacheFixtures().then(({ fixtures, fromCache, online }) => {
-        if (!mountedRef.current) return;
-        setNextMatch(findClosestMatch(fixtures));
-        setMatchOnline(online);
-        setMatchFromCache(fromCache);
-      }).catch(() => {});
-    }
+    refreshFixtures();
     return () => { mountedRef.current = false; };
-  }, [nextMatch]));
+  }, [refreshFixtures]));
 
   const accent = '#22c55e';
 
@@ -339,10 +349,18 @@ export default function HomeScreen() {
                     <Text style={styles.teamName} numberOfLines={1}>{nextMatch.strHomeTeam.split(' ')[0]}</Text>
                   </View>
                   <View style={styles.vsCol}>
-                    <Text style={styles.vsLabel}>vs</Text>
-                    {fmtMatchTime(nextMatch.strTime) ? (
-                      <Text style={styles.matchTime}>{fmtMatchTime(nextMatch.strTime)}</Text>
-                    ) : null}
+                    {nextMatch.intHomeScore != null && nextMatch.intAwayScore != null ? (
+                      <Text style={styles.scoreLabel}>
+                        {nextMatch.intHomeScore}-{nextMatch.intAwayScore}
+                      </Text>
+                    ) : (
+                      <>
+                        <Text style={styles.vsLabel}>vs</Text>
+                        {fmtMatchTime(nextMatch.strTime) ? (
+                          <Text style={styles.matchTime}>{fmtMatchTime(nextMatch.strTime)}</Text>
+                        ) : null}
+                      </>
+                    )}
                   </View>
                   <View style={styles.teamCol}>
                     <TeamBadge
@@ -541,6 +559,7 @@ const styles = StyleSheet.create({
   teamLetter: { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
   teamName: { fontSize: 10, color: 'rgba(255,255,255,0.55)', fontWeight: '600', maxWidth: 60 },
   vsLabel: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.35)' },
+  scoreLabel: { fontSize: 16, fontWeight: '900', color: '#fff', letterSpacing: 0.5 },
   matchTime: { fontSize: 10, color: '#f97316', fontWeight: '700' },
   offlineHint: { fontSize: 9, color: 'rgba(255,255,255,0.25)', marginTop: -2 },
 
