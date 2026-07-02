@@ -277,6 +277,10 @@ export default function HomeScreen() {
         {/* ── AI COACH CARD ─────────────────────────────────────────── */}
         <Animated.View style={[styles.fullCardWrap, { opacity: c1.op, transform: [{ translateY: c1.ty }] }]}>
           <TouchableOpacity style={styles.coachCard} onPress={() => go('MatchAI')} activeOpacity={0.85}>
+            {/* Pitch markings — decorative center circle + halfway line */}
+            <View pointerEvents="none" style={styles.pitchCircleOuter} />
+            <View pointerEvents="none" style={styles.pitchCircleInner} />
+            <View pointerEvents="none" style={styles.pitchLine} />
             <View style={styles.coachTop}>
               <View style={styles.coachTopLeft}>
                 <Text style={styles.coachModLabel}>AI COACH</Text>
@@ -472,6 +476,18 @@ const styles = StyleSheet.create({
   coachCard: {
     backgroundColor: '#0c1f0c', borderRadius: 24, padding: 22, gap: 18, overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(34,197,94,0.22)',
+  },
+  pitchCircleOuter: {
+    position: 'absolute', right: -70, bottom: -70, width: 200, height: 200,
+    borderRadius: 100, borderWidth: 1.5, borderColor: 'rgba(34,197,94,0.10)',
+  },
+  pitchCircleInner: {
+    position: 'absolute', right: -25, bottom: -25, width: 110, height: 110,
+    borderRadius: 55, borderWidth: 1.5, borderColor: 'rgba(34,197,94,0.14)',
+  },
+  pitchLine: {
+    position: 'absolute', right: 30, top: 0, bottom: 0, width: 1.5,
+    backgroundColor: 'rgba(34,197,94,0.07)',
   },
   coachTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   coachTopLeft: { gap: 6, flex: 1 },

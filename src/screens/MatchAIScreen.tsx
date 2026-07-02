@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { completion, cancel, InferenceCancelledError, type Tool } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
+import Markdown from 'react-native-markdown-display';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconSend, IconStop, IconBall, IconBack } from '../components/Icons';
@@ -21,11 +22,18 @@ import { logInference } from '../utils/auditLogger';
 const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_W = (SCREEN_W - 48) / 2;
 
-const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy.
+const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. You talk like a sharp, friendly coach: confident, concrete, never vague.
 
-You have tools to fetch live football data from TheSportsDB. Use get_today_fixtures when the user asks about today's matches, games, fixtures, or live scores. Use get_team_form when asked about a specific team's recent results or form.
+TOOLS — follow these rules exactly:
+- get_today_fixtures: call ONLY when the user asks about today's matches, fixtures, schedules, kick-off times, or live scores.
+- get_team_form: call ONLY when the user asks about one specific team's recent results, form, or how they have been playing lately.
+- NEVER call a tool for tactics, rules, history, players, or opinion questions — answer those directly from your knowledge.
+- Call at most one tool per question. If a tool returns no data, say so honestly and answer from knowledge.
 
-For tactical, historical, or general football questions, rely on your training knowledge. Always respond in English.`;
+STYLE:
+- Use short paragraphs. Use **bold** for team names, players, and key terms. Use bullet lists for comparisons or steps.
+- Football language welcome: kick-off, final third, low block, between the lines.
+- Always respond in English.`;
 
 const SCOUT_TOOLS: Tool[] = [
   {
@@ -78,9 +86,9 @@ const rotateSuggestions = (offset: number): string[] =>
 
 const getGreeting = () => {
   const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 17) return 'Good afternoon';
-  return 'Good evening';
+  if (h < 12) return 'Morning, coach';
+  if (h < 17) return 'Afternoon, coach';
+  return 'Evening, coach';
 };
 
 interface Entry {
@@ -436,7 +444,7 @@ export default function MatchAIScreen() {
         <View style={styles.aiRow}>
           <View style={styles.aiCol}>
             <View style={[styles.aiBubble, { backgroundColor: theme.cardAlt }]}>
-              <Text style={[styles.aiText, { color: theme.text }]}>{entry.answer}</Text>
+              <Markdown style={mdStyles(theme)}>{entry.answer}</Markdown>
             </View>
             <View style={styles.statRow}>
               {entry.usedLiveData && (
@@ -616,7 +624,7 @@ export default function MatchAIScreen() {
 
         <TextInput
           style={[styles.input, { backgroundColor: theme.cardAlt, color: theme.text }]}
-          placeholder={modelLoading ? 'Loading model...' : 'Message AI Coach...'}
+          placeholder={modelLoading ? 'Loading model...' : 'Tactics, players, today\'s matches...'}
           placeholderTextColor={theme.textSecondary}
           value={input}
           onChangeText={setInput}
@@ -647,6 +655,33 @@ export default function MatchAIScreen() {
     </View>
   );
 }
+
+// Markdown styling for finished AI answers — matches the bubble typography.
+// Streaming text stays plain <Text> for performance; markdown renders on completion.
+const mdStyles = (theme: ReturnType<typeof getTheme>) => ({
+  body: { color: theme.text, fontSize: 16, lineHeight: 24 },
+  paragraph: { marginTop: 0, marginBottom: 8 },
+  strong: { fontWeight: '700' as const },
+  bullet_list: { marginBottom: 8 },
+  ordered_list: { marginBottom: 8 },
+  list_item: { marginBottom: 3 },
+  heading1: { fontSize: 18, fontWeight: '800' as const, marginBottom: 6, color: theme.text },
+  heading2: { fontSize: 17, fontWeight: '700' as const, marginBottom: 5, color: theme.text },
+  heading3: { fontSize: 16, fontWeight: '700' as const, marginBottom: 4, color: theme.text },
+  code_inline: {
+    backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 4,
+    paddingHorizontal: 4, fontSize: 14, color: theme.text,
+  },
+  fence: {
+    backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, padding: 10,
+    borderWidth: 0, fontSize: 13, color: theme.text, marginBottom: 8,
+  },
+  blockquote: {
+    backgroundColor: 'rgba(255,255,255,0.05)', borderLeftWidth: 3,
+    borderLeftColor: theme.accent, paddingLeft: 10, marginBottom: 8,
+  },
+  hr: { backgroundColor: theme.border, marginVertical: 8 },
+});
 
 const styles = StyleSheet.create({
   root: { flex: 1 },

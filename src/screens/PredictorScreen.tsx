@@ -43,6 +43,7 @@ export default function PredictorScreen() {
   const [teamB, setTeamB] = useState('');
   const [context, setContext] = useState('');
   const [prediction, setPrediction] = useState('');
+  const [thought, setThought] = useState('');
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [fixturesLoading, setFixturesLoading] = useState(true);
   const [noInternet, setNoInternet] = useState(false);
@@ -191,6 +192,7 @@ export default function PredictorScreen() {
   const predict = async () => {
     if (!teamA.trim() || !teamB.trim() || isGenerating || !modelId) return;
     setPrediction('');
+    setThought('');
     setParsed(null);
     setElapsed(null);
     setIsGenerating(true);
@@ -212,7 +214,7 @@ export default function PredictorScreen() {
           { role: 'user', content: prompt },
         ],
         stream: true,
-        captureThinking: false,
+        captureThinking: thinkingOn,
         generationParams: {
           predict: 300,
           temp: gp.temp,
@@ -229,9 +231,17 @@ export default function PredictorScreen() {
       showRunningNotification('Predictor');
 
       let streamed = '';
+      let thoughtAcc = '';
       let lastFlush = 0;
       for await (const event of run.events) {
-        if (event.type === 'contentDelta') {
+        if (event.type === 'thinkingDelta') {
+          thoughtAcc += event.text;
+          const now = Date.now();
+          if (mountedRef.current && now - lastFlush > 50) {
+            lastFlush = now;
+            setThought(thoughtAcc);
+          }
+        } else if (event.type === 'contentDelta') {
           streamed += event.text;
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 50) {
@@ -534,6 +544,17 @@ export default function PredictorScreen() {
           </Text>
         </View>
 
+        {/* Deep-mode thinking stream */}
+        {isGenerating && thinkingOn && thought.length > 0 && prediction.length === 0 && (
+          <View style={[styles.resultCard, { backgroundColor: '#1a1200', borderColor: '#f59e0b33' }]}>
+            <View style={[styles.resultBar, { backgroundColor: '#f59e0b' }]} />
+            <View style={styles.resultContent}>
+              <Text style={[styles.resultLabel, { color: '#f59e0b' }]}>READING THE GAME...</Text>
+              <Text style={styles.thoughtText} numberOfLines={8}>{thought}</Text>
+            </View>
+          </View>
+        )}
+
         {/* Streaming result (plain) */}
         {isGenerating && prediction.length > 0 && (
           <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: accent + '50' }]}>
@@ -708,6 +729,7 @@ const styles = StyleSheet.create({
   resultContent: { flex: 1, padding: 16, gap: 8 },
   resultLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
   resultText: { fontSize: 15, lineHeight: 24 },
+  thoughtText: { fontSize: 12, lineHeight: 18, color: '#a8a29e', fontStyle: 'italic' },
   stat: { fontSize: 10 },
   // Scoreboard
   scoreboard: { borderRadius: 16, borderWidth: 1, marginBottom: 10, overflow: 'hidden' },
