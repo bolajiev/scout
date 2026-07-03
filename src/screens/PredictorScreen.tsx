@@ -567,6 +567,24 @@ export default function PredictorScreen() {
           </Text>
         </View>
 
+        {/* Immediate feedback — visible from the instant Predict is pressed
+            until the first token arrives, so the wait never looks frozen */}
+        {isGenerating && thought.length === 0 && prediction.length === 0 && (
+          <Animated.View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: theme.border, opacity: pulsAnim }]}>
+            <View style={[styles.resultBar, { backgroundColor: accent }]} />
+            <View style={styles.resultContent}>
+              <Text style={[styles.resultLabel, { color: accent }]}>
+                {thinkingOn ? 'DEEP ANALYSIS STARTING...' : 'ANALYZING THE MATCHUP...'}
+              </Text>
+              <Text style={[styles.resultText, { color: theme.textSecondary }]}>
+                {formA || formB
+                  ? 'Weighing live form, tactical matchup, and squad quality.'
+                  : 'Weighing tactical matchup, squad quality, and history.'}
+              </Text>
+            </View>
+          </Animated.View>
+        )}
+
         {/* Deep-mode thinking stream */}
         {isGenerating && thinkingOn && thought.length > 0 && prediction.length === 0 && (
           <View style={[styles.resultCard, { backgroundColor: '#1a1200', borderColor: '#f59e0b33' }]}>

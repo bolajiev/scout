@@ -420,7 +420,9 @@ export default function MatchAIScreen() {
   // Claude-style thinking block: streams the thought live while the model
   // reasons, then collapses to a tappable "Thought for Xs" row.
   const renderThoughtBlock = (thought: string, isStreaming: boolean, entryId: string, thinkingMs?: number) => {
-    if (!thought) return null;
+    // While streaming, render even before the first thinking token arrives —
+    // the amber "Thinking..." header is the user's sign that work is happening
+    if (!thought && !isStreaming) return null;
     const isOpen = isStreaming || thoughtOpen[entryId];
     const doneLabel = thinkingMs
       ? `Thought for ${(thinkingMs / 1000).toFixed(1)}s`
@@ -445,7 +447,7 @@ export default function MatchAIScreen() {
             <Text style={[styles.thoughtChevron, { color: '#78716c' }]}>{isOpen ? '‹' : '›'}</Text>
           )}
         </View>
-        {isOpen && (
+        {isOpen && thought.length > 0 && (
           <Text style={styles.thoughtText} numberOfLines={isStreaming ? undefined : 10}>
             {thought}
           </Text>
@@ -627,7 +629,7 @@ export default function MatchAIScreen() {
                 <Text style={[styles.liveChipText, { color: '#22c55e' }]}>{slot.toolStatus}</Text>
               </View>
             )}
-            {slot.thought.length > 0 && renderThoughtBlock(slot.thought, slot.isThinking, slot.id)}
+            {(slot.thought.length > 0 || slot.isThinking) && renderThoughtBlock(slot.thought, slot.isThinking, slot.id)}
             <View style={styles.aiRow}>
               <View style={[styles.aiBubble, { backgroundColor: theme.cardAlt }]}>
                 {slot.answer.length > 0 ? (
