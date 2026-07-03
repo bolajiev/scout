@@ -174,27 +174,30 @@ export const fetchAndCacheFixtures = async (): Promise<{
   online: boolean;
 }> => {
   const today = todayISO();
+  const plusDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().split('T')[0];
 
   try {
-    // Parallel: today's soccer + WC next events
-    const [dayRes, wcRes] = await Promise.allSettled([
-      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`),
+    // Parallel: WC next events + today's soccer + the next two days, so the
+    // rail always has upcoming matches even when today is sparse
+    const results = await Promise.allSettled([
       fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`),
+      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`),
+      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(1)}&s=Soccer`),
+      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(2)}&s=Soccer`),
     ]);
 
-    const dayOk = dayRes.status === 'fulfilled' && dayRes.value.ok;
-    const wcOk = wcRes.status === 'fulfilled' && wcRes.value.ok;
+    const oks = results.map(r => r.status === 'fulfilled' && r.value.ok);
+    // Every endpoint unreachable → we are offline; don't report success with 0 fixtures
+    if (!oks.some(Boolean)) throw new Error('offline');
 
-    // Both endpoints unreachable → we are offline; don't report success with 0 fixtures
-    if (!dayOk && !wcOk) throw new Error('offline');
-
-    const dayEvents: any[] = dayOk ? ((await (dayRes as PromiseFulfilledResult<Response>).value.json()).events ?? []) : [];
-    const wcEvents: any[] = wcOk ? ((await (wcRes as PromiseFulfilledResult<Response>).value.json()).events ?? []) : [];
+    const eventLists: any[][] = await Promise.all(results.map(async (r, i) =>
+      oks[i] ? (((await (r as PromiseFulfilledResult<Response>).value.json()).events) ?? []) : []
+    ));
 
     // Merge: WC events first, deduplicated by idEvent (skip entries missing idEvent)
     const seen = new Set<string>();
     const merged: Fixture[] = [];
-    for (const e of [...wcEvents, ...dayEvents]) {
+    for (const e of eventLists.flat()) {
       if (e.idEvent && !seen.has(e.idEvent)) {
         seen.add(e.idEvent);
         merged.push({

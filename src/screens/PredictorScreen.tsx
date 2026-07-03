@@ -158,13 +158,10 @@ export default function PredictorScreen() {
     try {
       const { fixtures: all, online } = await fetchAndCacheFixtures();
       if (!mountedRef.current) return;
-      // The rail is branded FIFA World Cup 2026 — show only WC matches when
-      // any exist. Other leagues appear only as a fallback on non-WC days.
-      // Order: all live matches first (with scores), then upcoming by
-      // kick-off, finished games last.
-      const wc = all.filter(isWorldCup);
-      const pool = wc.length > 0 ? wc : all;
-      setFixtures([...pool].sort((a, b) => fixtureOrder(a) - fixtureOrder(b)));
+      // Full matchday rail: all live matches first (with scores), then
+      // upcoming by kick-off across the next days, finished games last.
+      // WC cards carry their own WC 2026 badge; the header adapts.
+      setFixtures([...all].sort((a, b) => fixtureOrder(a) - fixtureOrder(b)).slice(0, 14));
       setNoInternet(!online);
     } catch {
       if (mountedRef.current) setNoInternet(true);
@@ -359,10 +356,10 @@ export default function PredictorScreen() {
           <View style={styles.fixturesHeader}>
             <View>
               <Text style={[styles.fixturesSectionLabel, { color: accent }]}>
-                {fixtures.some(isWorldCup) ? 'FIFA WORLD CUP 2026' : "TODAY'S FOOTBALL"}
+                {fixtures.some(isLive) ? 'MATCHDAY LIVE' : fixtures.some(isWorldCup) ? 'FIFA WORLD CUP 2026' : 'MATCHDAY'}
               </Text>
               <Text style={[styles.fixturesTodayLabel, { color: theme.textSecondary }]}>
-                {fixtures.some(isWorldCup) ? 'Today & upcoming' : "Today's matches"}
+                Live scores · today & upcoming
               </Text>
             </View>
             <View style={[styles.apiDisclosure, { backgroundColor: theme.card, borderColor: theme.border }]}>

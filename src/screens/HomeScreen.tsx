@@ -1,10 +1,11 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Animated, StatusBar, Dimensions, Image,
+  Animated, StatusBar, Dimensions, Image, Alert,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Device from 'expo-device';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconSettings, IconModels } from '../components/Icons';
@@ -136,6 +137,7 @@ export default function HomeScreen() {
   const [hasAnyModel, setHasAnyModel] = useState<boolean | null>(null); // null = checking
   const [readyModelName, setReadyModelName] = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(false);
+  const [loadPct, setLoadPct] = useState(0);
   const mountedRef = useRef(true);
   const lastFixtureFetchRef = useRef(0);
   const hasMatchRef = useRef(false);
@@ -210,17 +212,45 @@ export default function HomeScreen() {
   const go = (tab: string, prefill?: string) =>
     navigation.navigate(tab, prefill ? { prefill } : undefined);
 
+  const doQuickLoad = async (model: import('../types').DownloadedModel) => {
+    setModelLoading(true);
+    setLoadPct(0);
+    try {
+      await llmManager.ensure(model, {
+        // Vision models get the smaller context — a 4096 KV cache on a
+        // 3.5 GB model adds hundreds of MB of RAM pressure
+        ctx_size: model.modelType === 'vision' ? 2048 : 4096,
+        device: 'auto',
+        tools: model.modelType === 'text',
+        projectionModelSrc: model.projectionModelSrc,
+      }, pct => { if (mountedRef.current) setLoadPct(Math.round(pct)); });
+      setLoadedModel(llmManager.getLoadedModelId());
+    } catch {
+      Alert.alert('Load Failed', 'Could not load the model. Close other apps to free memory and try again.');
+    }
+    setModelLoading(false);
+  };
+
   const quickLoad = async () => {
     if (modelLoading) return;
-    setModelLoading(true);
     try {
       const models = await syncModelsFromDisk();
       const text = pickTextCapable(models);
       if (!text) { navigation.navigate('Models'); return; }
-      await llmManager.ensure(text, { ctx_size: 4096, device: 'auto', tools: text.modelType === 'text', projectionModelSrc: text.projectionModelSrc });
-      setLoadedModel(llmManager.getLoadedModelId());
+      const totalMem = Device.totalMemory ?? 0;
+      if (text.heavy && totalMem > 0 && totalMem < 5.5e9) {
+        Alert.alert(
+          'This model may be too big',
+          `${text.name} needs about 4 GB of free RAM. This device has ${(totalMem / 1e9).toFixed(1)} GB total, so loading can crash the app.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Load Anyway', style: 'destructive', onPress: () => doQuickLoad(text) },
+          ],
+        );
+        return;
+      }
+      await doQuickLoad(text);
     } catch {}
-    setModelLoading(false);
   };
 
   const quickStop = async () => {
@@ -230,28 +260,28 @@ export default function HomeScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={themeMode === 'dark' ? 'light-content' : 'dark-content'} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 36 }}>
 
         {/* ── TOP BAR ──────────────────────────────────────────────── */}
         <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
           <View style={styles.wordmarkRow}>
             <View style={[styles.wDot, { backgroundColor: accent }]} />
-            <Text style={styles.wordmark}>SCOUT</Text>
+            <Text style={[styles.wordmark, { color: theme.text }]}>SCOUT</Text>
           </View>
           <View style={styles.topActions}>
-            <TouchableOpacity style={styles.iconChip} onPress={() => navigation.navigate('Models')} hitSlop={HIT}>
-              <IconModels size={17} color="rgba(255,255,255,0.75)" />
+            <TouchableOpacity style={[styles.iconChip, { backgroundColor: theme.cardAlt }]} onPress={() => navigation.navigate('Models')} hitSlop={HIT}>
+              <IconModels size={17} color={theme.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.iconChip} onPress={() => navigation.navigate('Settings')} hitSlop={HIT}>
-              <IconSettings size={17} color="rgba(255,255,255,0.75)" />
+            <TouchableOpacity style={[styles.iconChip, { backgroundColor: theme.cardAlt }]} onPress={() => navigation.navigate('Settings')} hitSlop={HIT}>
+              <IconSettings size={17} color={theme.textSecondary} />
             </TouchableOpacity>
           </View>
         </View>
 
         {/* ── MODEL STATUS STRIP ───────────────────────────────────── */}
         {hasAnyModel !== null && (
-          <View style={[styles.modelStrip, { backgroundColor: theme.card }]}>
+          <View style={[styles.modelStrip, { backgroundColor: theme.card, borderColor: theme.border }]}>
             {loadedModel ? (
               <>
                 <View style={styles.modelStripLeft}>
@@ -278,7 +308,7 @@ export default function HomeScreen() {
                   disabled={modelLoading}
                 >
                   <Text style={[styles.modelStripBtnText, { color: accent }]}>
-                    {modelLoading ? 'Loading...' : 'Load Model'}
+                    {modelLoading ? (loadPct > 0 ? `Loading ${loadPct}%` : 'Loading...') : 'Load Model'}
                   </Text>
                 </TouchableOpacity>
               </>
@@ -473,11 +503,10 @@ const styles = StyleSheet.create({
   },
   wordmarkRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   wDot: { width: 7, height: 7, borderRadius: 3.5 },
-  wordmark: { fontSize: 20, fontWeight: '900', color: '#fff', letterSpacing: 4 },
+  wordmark: { fontSize: 20, fontWeight: '900', letterSpacing: 4 },
   topActions: { flexDirection: 'row', gap: 10 },
   iconChip: {
     width: 34, height: 34, borderRadius: 17,
-    backgroundColor: 'rgba(255,255,255,0.07)',
     alignItems: 'center', justifyContent: 'center',
   },
 
@@ -493,7 +522,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     marginHorizontal: 14, marginTop: 4, marginBottom: 2,
     borderRadius: 14, paddingVertical: 11, paddingHorizontal: 15,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.08)',
+    borderWidth: StyleSheet.hairlineWidth,
   },
   modelStripLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   modelStatusDot: { width: 7, height: 7, borderRadius: 4 },
