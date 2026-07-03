@@ -40,6 +40,10 @@ export const isLive = (f: Fixture): boolean => {
   return elapsed >= 0 && elapsed <= 105;
 };
 
+// Scores present and the match is no longer running → final result
+export const isFinished = (f: Fixture): boolean =>
+  f.intHomeScore != null && f.intAwayScore != null && !isLive(f);
+
 // Days from today to the event date (0 = today, negative = past, null = unknown)
 const dayDiff = (f: Fixture): number | null => {
   if (!f.dateEvent) return null;
@@ -47,6 +51,16 @@ const dayDiff = (f: Fixture): number | null => {
   const t = Date.parse(todayISO());
   if (isNaN(d) || isNaN(t)) return null;
   return Math.round((d - t) / 86_400_000);
+};
+
+// Rail ordering: live matches first (all of them), then upcoming by
+// kick-off (today before future days), finished matches last
+export const fixtureOrder = (f: Fixture): number => {
+  const mins = timeToMins(f.strTime) ?? 0;
+  const key = (dayDiff(f) ?? 0) * 1440 + mins;
+  if (isLive(f)) return -1_000_000 + key;
+  if (isFinished(f)) return 1_000_000 + key;
+  return key;
 };
 
 // Pick the single most relevant match to surface on the home card.

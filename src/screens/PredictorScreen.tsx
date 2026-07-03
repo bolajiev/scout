@@ -13,7 +13,7 @@ import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
-import { fetchAndCacheFixtures, isWorldCup, fmtMatchTime as fmtTime, badgeUrl, todayISO, type Fixture } from '../utils/fixtures';
+import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, todayISO, type Fixture } from '../utils/fixtures';
 import { createSession, addMessage } from '../utils/historyDb';
 import { fetchBothTeamForms, formatFormContext, type TeamForm } from '../utils/teamStats';
 import { logInference } from '../utils/auditLogger';
@@ -79,8 +79,12 @@ export default function PredictorScreen() {
     mountedRef.current = true;
     loadModel();
     fetchFixtures();
+    // Live score ticker — refreshes the rail every 60s so simultaneous
+    // live matches all update while the screen is open
+    const ticker = setInterval(fetchFixtures, 60_000);
     return () => {
       mountedRef.current = false;
+      clearInterval(ticker);
       clearNotification();
       loadLoop.current?.stop();
       if (formDebounceRef.current) clearTimeout(formDebounceRef.current);
@@ -156,8 +160,11 @@ export default function PredictorScreen() {
       if (!mountedRef.current) return;
       // The rail is branded FIFA World Cup 2026 — show only WC matches when
       // any exist. Other leagues appear only as a fallback on non-WC days.
+      // Order: all live matches first (with scores), then upcoming by
+      // kick-off, finished games last.
       const wc = all.filter(isWorldCup);
-      setFixtures(wc.length > 0 ? wc : all);
+      const pool = wc.length > 0 ? wc : all;
+      setFixtures([...pool].sort((a, b) => fixtureOrder(a) - fixtureOrder(b)));
       setNoInternet(!online);
     } catch {
       if (mountedRef.current) setNoInternet(true);
@@ -420,7 +427,19 @@ export default function PredictorScreen() {
                       )}
                       <Text style={[styles.fixtureHome, { color: theme.text }]} numberOfLines={1}>{f.strHomeTeam}</Text>
                     </View>
-                    <Text style={[styles.fixtureVs, { color: theme.textSecondary }]}>vs</Text>
+                    {f.intHomeScore != null && f.intAwayScore != null ? (
+                      <View style={styles.fixtureScoreRow}>
+                        {isLive(f) && <View style={styles.fixtureLiveDot} />}
+                        <Text style={[styles.fixtureScore, { color: isLive(f) ? '#ef4444' : theme.text }]}>
+                          {f.intHomeScore}-{f.intAwayScore}
+                        </Text>
+                        <Text style={[styles.fixtureStatus, { color: isLive(f) ? '#ef4444' : theme.textSecondary }]}>
+                          {isLive(f) ? 'LIVE' : 'FT'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={[styles.fixtureVs, { color: theme.textSecondary }]}>vs</Text>
+                    )}
                     <View style={styles.fixtureTeamRow}>
                       {badgeUrl(f.strAwayTeamBadge) ? (
                         <Image source={{ uri: badgeUrl(f.strAwayTeamBadge)! }} style={styles.fixtureBadge} resizeMode="contain" />
@@ -429,7 +448,7 @@ export default function PredictorScreen() {
                       )}
                       <Text style={[styles.fixtureAway, { color: theme.text }]} numberOfLines={1}>{f.strAwayTeam}</Text>
                     </View>
-                    {fmtTime(f.strTime) ? (
+                    {!isLive(f) && !isFinished(f) && fmtTime(f.strTime) ? (
                       <Text style={[styles.fixtureTime, { color: accent }]}>
                         {f.dateEvent && f.dateEvent !== todayISO()
                           ? `${new Date(f.dateEvent).toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${fmtTime(f.strTime)}`
@@ -730,6 +749,10 @@ const styles = StyleSheet.create({
   fixtureBadgeFallback: { width: 20, height: 20, borderRadius: 10 },
   fixtureHome: { fontSize: 13, fontWeight: '700', flex: 1 },
   fixtureVs: { fontSize: 10, marginLeft: 26 },
+  fixtureScoreRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginLeft: 26 },
+  fixtureLiveDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#ef4444' },
+  fixtureScore: { fontSize: 14, fontWeight: '900', letterSpacing: 0.3 },
+  fixtureStatus: { fontSize: 8, fontWeight: '800', letterSpacing: 0.8 },
   fixtureAway: { fontSize: 13, fontWeight: '700', flex: 1 },
   fixtureTime: { fontSize: 11, fontWeight: '700', marginTop: 2 },
   noInternetCard: {

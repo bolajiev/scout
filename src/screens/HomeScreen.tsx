@@ -129,6 +129,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
 
   const [nextMatch, setNextMatch] = useState<Fixture | null>(null);
+  const [liveCount, setLiveCount] = useState(0);
   const [matchOnline, setMatchOnline] = useState(true);
   const [matchFromCache, setMatchFromCache] = useState(false);
   const [loadedModel, setLoadedModel] = useState<string | null>(null);
@@ -138,6 +139,7 @@ export default function HomeScreen() {
   const mountedRef = useRef(true);
   const lastFixtureFetchRef = useRef(0);
   const hasMatchRef = useRef(false);
+  const liveCountRef = useRef(0);
 
   const c1 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
   const c2 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
@@ -154,7 +156,10 @@ export default function HomeScreen() {
       if (!mountedRef.current) return;
       const match = findClosestMatch(fixtures);
       hasMatchRef.current = !!match;
+      const lc = fixtures.filter(isLive).length;
+      liveCountRef.current = lc;
       setNextMatch(match);
+      setLiveCount(lc);
       setMatchOnline(online);
       setMatchFromCache(fromCache);
     }).catch(() => {});
@@ -177,8 +182,9 @@ export default function HomeScreen() {
 
     refreshFixtures(true);
     // Home is the root screen and never unmounts — keep the match fresh
-    // while the app sits open (live score ticks, finished games rotate out)
-    const interval = setInterval(() => refreshFixtures(true), 5 * 60_000);
+    // while the app sits open. Ticks every minute during live matches so
+    // the score updates; otherwise refetches only when >3 min stale.
+    const interval = setInterval(() => refreshFixtures(liveCountRef.current > 0), 60_000);
 
     return () => { mountedRef.current = false; clearInterval(interval); };
   }, [refreshFixtures]);
@@ -335,7 +341,9 @@ export default function HomeScreen() {
                   {isLive(nextMatch) ? (
                     <View style={styles.liveBadge}>
                       <View style={styles.liveDot} />
-                      <Text style={styles.liveBadgeText}>LIVE</Text>
+                      <Text style={styles.liveBadgeText}>
+                        {liveCount > 1 ? `LIVE · ${liveCount} MATCHES` : 'LIVE'}
+                      </Text>
                     </View>
                   ) : isWorldCup(nextMatch) ? (
                     <Text style={styles.wcLabel}>WC 2026</Text>
