@@ -133,6 +133,7 @@ export default function HomeScreen() {
   const [matchFromCache, setMatchFromCache] = useState(false);
   const [loadedModel, setLoadedModel] = useState<string | null>(null);
   const [hasAnyModel, setHasAnyModel] = useState<boolean | null>(null); // null = checking
+  const [readyModelName, setReadyModelName] = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(false);
   const mountedRef = useRef(true);
   const lastFixtureFetchRef = useRef(0);
@@ -188,8 +189,11 @@ export default function HomeScreen() {
     mountedRef.current = true;
     syncModelsFromDisk().then(models => {
       if (!mountedRef.current) return;
-      setHasAnyModel(!!pickTextCapable(models));
-      setLoadedModel(llmManager.getLoadedModelId());
+      const pick = pickTextCapable(models);
+      setHasAnyModel(!!pick);
+      const lid = llmManager.getLoadedModelId();
+      setLoadedModel(lid);
+      setReadyModelName(models.find(m => m.id === lid)?.name ?? pick?.name ?? null);
     }).catch(() => { setHasAnyModel(false); });
     refreshFixtures();
     return () => { mountedRef.current = false; };
@@ -246,7 +250,9 @@ export default function HomeScreen() {
               <>
                 <View style={styles.modelStripLeft}>
                   <View style={[styles.modelStatusDot, { backgroundColor: accent }]} />
-                  <Text style={[styles.modelStatusText, { color: accent }]}>AI Ready</Text>
+                  <Text style={[styles.modelStatusText, { color: accent }]} numberOfLines={1}>
+                    {readyModelName ? `${readyModelName} running` : 'AI Ready'}
+                  </Text>
                 </View>
                 <TouchableOpacity onPress={quickStop} style={[styles.modelStripBtn, { borderColor: '#ef444440' }]}>
                   <Text style={[styles.modelStripBtnText, { color: '#ef4444' }]}>Stop</Text>
@@ -256,7 +262,9 @@ export default function HomeScreen() {
               <>
                 <View style={styles.modelStripLeft}>
                   <View style={[styles.modelStatusDot, { backgroundColor: theme.border }]} />
-                  <Text style={[styles.modelStatusText, { color: theme.textSecondary }]}>Model not loaded</Text>
+                  <Text style={[styles.modelStatusText, { color: theme.textSecondary }]} numberOfLines={1}>
+                    {readyModelName ? `${readyModelName} ready` : 'Model not loaded'}
+                  </Text>
                 </View>
                 <TouchableOpacity
                   onPress={quickLoad}
@@ -264,7 +272,7 @@ export default function HomeScreen() {
                   disabled={modelLoading}
                 >
                   <Text style={[styles.modelStripBtnText, { color: accent }]}>
-                    {modelLoading ? 'Loading...' : 'Start'}
+                    {modelLoading ? 'Loading...' : 'Load Model'}
                   </Text>
                 </TouchableOpacity>
               </>
