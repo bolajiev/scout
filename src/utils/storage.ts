@@ -164,12 +164,15 @@ export async function setAccelerator(accel: Accelerator): Promise<void> {
 
 export async function getGenParams(): Promise<{ temp: number; top_k: number; top_p: number; repeat_penalty: number; maxTokens: number }> {
   const s = await getSettings();
+  // Response length caps generation — the single biggest speed lever on
+  // CPU inference (at ~5 tok/s, 1024 tokens is 3+ minutes; 384 is ~75s)
+  const lengthCap = s.responseLength === 'short' ? 384 : s.responseLength === 'detailed' ? 1536 : 768;
   return {
     temp: s.temperature ?? 0.7,
     top_k: s.topK ?? 20,
     top_p: s.topP ?? 0.9,
     repeat_penalty: s.repeatPenalty ?? 1.1,
-    maxTokens: s.maxTokens ?? 1024,
+    maxTokens: Math.min(s.maxTokens ?? 1024, lengthCap),
   };
 }
 

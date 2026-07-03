@@ -30,7 +30,9 @@ export default function ScoutLensScreen() {
 
   const [imagePath, setImagePath] = useState<string | null>(null);
   const [question, setQuestion] = useState('');
-  const [result, setResult] = useState('');
+  const [result, setResult] = useState('');      // streaming buffer for the in-flight answer
+  const [turns, setTurns] = useState<{ q: string; a: string }[]>([]);
+  const sessionDbRef = useRef<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [modelId, setModelId] = useState<string | null>(null);
   const [noModel, setNoModel] = useState(false);
@@ -103,7 +105,9 @@ export default function ScoutLensScreen() {
       const uri = res.assets[0].uri;
       setImagePath(uri);
       setResult('');
-      await analyse(uri);
+      setTurns([]);
+      sessionDbRef.current = null;
+      await runVision(question.trim() || 'What football content do you see in this image?', uri);
     } catch {}
   };
 
@@ -120,32 +124,53 @@ export default function ScoutLensScreen() {
       const uri = res.assets[0].uri;
       setImagePath(uri);
       setResult('');
-      await analyse(uri);
+      setTurns([]);
+      sessionDbRef.current = null;
+      await runVision(question.trim() || 'What football content do you see in this image?', uri);
     } catch {}
   };
 
-  const analyse = async (uri: string) => {
-    if (!modelId || isAnalyzing) return;
+  const askFollowUp = () => {
+    const q = question.trim();
+    if (!q || !imagePath || isAnalyzing) return;
+    setQuestion('');
+    runVision(q);
+  };
+
+  // One vision conversation per image: the first turn carries the image
+  // attachment, follow-up questions reuse the same conversation history.
+  const runVision = async (userQ: string, freshUri?: string) => {
+    const uri = freshUri ?? imagePath;
+    if (!uri || !modelId || isAnalyzing) return;
+    const baseTurns = freshUri ? [] : turns;
     setIsAnalyzing(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     showRunningNotification('Scout Lens');
+
+    const history: any[] = [{ role: 'system', content: VISION_PROMPT }];
+    baseTurns.forEach((t, i) => {
+      history.push(
+        i === 0
+          // QVAC needs a bare filesystem path — file:// URIs fail to load
+          ? { role: 'user', content: t.q, attachments: [{ path: toPath(uri) }] }
+          : { role: 'user', content: t.q },
+      );
+      history.push({ role: 'assistant', content: t.a });
+    });
+    history.push(
+      baseTurns.length === 0
+        ? { role: 'user', content: userQ, attachments: [{ path: toPath(uri) }] }
+        : { role: 'user', content: userQ },
+    );
 
     const genStart = Date.now();
     try {
       const run = completion({
         modelId,
-        history: [
-          { role: 'system', content: VISION_PROMPT },
-          {
-            role: 'user',
-            content: question.trim() || 'What football content do you see in this image?',
-            // QVAC needs a bare filesystem path — file:// URIs fail to load
-            attachments: [{ path: toPath(uri) }],
-          } as any,
-        ],
+        history,
         stream: true,
         captureThinking: false,
-        generationParams: { predict: 200, reasoning_budget: 0 as 0 },
+        generationParams: { predict: 220, reasoning_budget: 0 as 0 },
       });
       currentRunRef.current = run;
       registerInferenceCancel(() => {
@@ -164,7 +189,6 @@ export default function ScoutLensScreen() {
           }
         }
       }
-      if (mountedRef.current) setResult(streamed);
       const [, stats] = await Promise.all([run.final, run.stats]);
       currentRunRef.current = null;
       clearNotification();
@@ -172,18 +196,24 @@ export default function ScoutLensScreen() {
       const totalMs = Date.now() - genStart;
       logInference('scoutlens', modelNameRef.current, stats?.timeToFirstToken ?? 0, totalMs, stats?.generatedTokens ?? 0).catch(() => {});
 
-      // Save scan result to SQLite history
+      // Save to SQLite history: one session per image, follow-ups append
       if (streamed) {
         try {
-          const sessionId = createSession('scoutlens', question.trim() || 'Scan — ' + new Date().toLocaleTimeString());
-          addMessage(sessionId, 'user', `[image] ${uri}`);
-          addMessage(sessionId, 'assistant', streamed);
+          if (!sessionDbRef.current) {
+            sessionDbRef.current = createSession('scoutlens', userQ.length < 60 && !userQ.startsWith('What football') ? userQ : 'Scan — ' + new Date().toLocaleTimeString());
+            addMessage(sessionDbRef.current, 'user', `[image] ${uri}`);
+          } else {
+            addMessage(sessionDbRef.current, 'user', userQ);
+          }
+          addMessage(sessionDbRef.current, 'assistant', streamed);
         } catch (e) {
           console.warn('[ScoutLens] DB write:', e);
         }
       }
 
       if (mountedRef.current) {
+        setTurns([...baseTurns, { q: userQ, a: streamed }]);
+        setResult('');
         setIsAnalyzing(false);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -191,7 +221,10 @@ export default function ScoutLensScreen() {
       currentRunRef.current = null;
       clearNotification();
       if (mountedRef.current) {
-        if (!(err instanceof InferenceCancelledError)) setResult('Could not analyse image. Try again.');
+        if (!(err instanceof InferenceCancelledError)) {
+          setTurns([...baseTurns, { q: userQ, a: 'Could not analyse the image. Try again.' }]);
+        }
+        setResult('');
         setIsAnalyzing(false);
       }
     }
@@ -308,33 +341,51 @@ export default function ScoutLensScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Optional question about the image */}
-        <TextInput
-          style={[styles.questionInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.text }]}
-          placeholder="Ask about the image (optional) — e.g. which club is this?"
-          placeholderTextColor={theme.textSecondary}
-          value={question}
-          onChangeText={setQuestion}
-          editable={!isAnalyzing}
-          returnKeyType="done"
-        />
+        {/* Question / follow-up input — conversation continues on one image */}
+        <View style={styles.askRow}>
+          <TextInput
+            style={[styles.questionInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.text }]}
+            placeholder={turns.length > 0 ? 'Ask a follow-up about this image...' : 'Ask about the image (optional)'}
+            placeholderTextColor={theme.textSecondary}
+            value={question}
+            onChangeText={setQuestion}
+            editable={!isAnalyzing}
+            returnKeyType="send"
+            onSubmitEditing={askFollowUp}
+          />
+          {turns.length > 0 && (
+            <TouchableOpacity
+              style={[styles.askBtn, { backgroundColor: accent, opacity: question.trim() && !isAnalyzing ? 1 : 0.35 }]}
+              onPress={askFollowUp}
+              disabled={!question.trim() || isAnalyzing}
+            >
+              <Text style={styles.askBtnText}>Ask</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
-        {/* Result */}
-        {isAnalyzing && !result && (
-          <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.resultText, { color: theme.textSecondary }]}>Analysing...</Text>
-          </View>
-        )}
-
-        {result.length > 0 && (
-          <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: accent + '40' }]}>
+        {/* Finished turns — Q&A stack for this image */}
+        {turns.map((t, i) => (
+          <View key={i} style={[styles.resultCard, { backgroundColor: theme.card, borderColor: accent + '40' }]}>
             <View style={[styles.resultBar, { backgroundColor: accent }]} />
             <View style={styles.resultContent}>
-              <Text style={[styles.resultLabel, { color: accent }]}>Scout Lens</Text>
-              <Text selectable style={[styles.resultText, { color: theme.text }]}>{result}</Text>
-              {!isAnalyzing && (
-                <Text style={[styles.resultNote, { color: theme.textSecondary }]}>On-device · no internet</Text>
-              )}
+              <Text style={[styles.resultLabel, { color: accent }]} numberOfLines={2}>
+                {t.q.startsWith('What football') ? 'Scout Lens' : t.q}
+              </Text>
+              <Text selectable style={[styles.resultText, { color: theme.text }]}>{t.a}</Text>
+              <Text style={[styles.resultNote, { color: theme.textSecondary }]}>On-device · no internet</Text>
+            </View>
+          </View>
+        ))}
+
+        {/* In-flight answer */}
+        {isAnalyzing && (
+          <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={[styles.resultBar, { backgroundColor: accent }]} />
+            <View style={styles.resultContent}>
+              <Text style={[styles.resultText, { color: result ? theme.text : theme.textSecondary }]}>
+                {result || 'Analysing...'}
+              </Text>
             </View>
           </View>
         )}
@@ -368,10 +419,13 @@ const styles = StyleSheet.create({
   historyBtn: { fontSize: 12, fontWeight: '600' },
   content: { padding: 16, gap: 14 },
   noModelCard: { borderRadius: 10, borderWidth: 1, padding: 14 },
+  askRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   questionInput: {
-    borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 11,
+    flex: 1, borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 11,
     fontSize: 14, lineHeight: 19,
   },
+  askBtn: { borderRadius: 12, paddingHorizontal: 18, paddingVertical: 12 },
+  askBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },
   noModelText: { fontSize: 13, textAlign: 'center' },
   pickerArea: {
     borderRadius: 18, borderWidth: 1.5,

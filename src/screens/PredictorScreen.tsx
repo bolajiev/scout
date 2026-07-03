@@ -16,7 +16,8 @@ import { pickTextCapable } from '../utils/models';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, todayISO, type Fixture } from '../utils/fixtures';
-import { createSession, addMessage } from '../utils/historyDb';
+import { createSession, addMessage, addPrediction } from '../utils/historyDb';
+import { settlePendingPredictions, getPredictionRecord } from '../utils/predictionTracker';
 import { fetchBothTeamForms, formatFormContext, type TeamForm } from '../utils/teamStats';
 import { logInference } from '../utils/auditLogger';
 
@@ -62,6 +63,7 @@ export default function PredictorScreen() {
   const [formA, setFormA] = useState<TeamForm | null>(null);
   const [formB, setFormB] = useState<TeamForm | null>(null);
   const [formLoading, setFormLoading] = useState(false);
+  const [record, setRecord] = useState<{ hits: number; misses: number; pending: number } | null>(null);
 
   const currentRunRef  = useRef<any>(null);
   const mountedRef     = useRef(true);
@@ -81,6 +83,15 @@ export default function PredictorScreen() {
     mountedRef.current = true;
     loadModel();
     fetchFixtures();
+    // Accountability: settle old predictions against real results, then
+    // surface the running record
+    (async () => {
+      try { setRecord(getPredictionRecord()); } catch {}
+      await settlePendingPredictions();
+      if (mountedRef.current) {
+        try { setRecord(getPredictionRecord()); } catch {}
+      }
+    })();
     // Live score ticker — refreshes the rail every 60s so simultaneous
     // live matches all update while the screen is open
     const ticker = setInterval(fetchFixtures, 60_000);
@@ -307,7 +318,15 @@ export default function PredictorScreen() {
 
       if (mountedRef.current) {
         setElapsed(Math.round((Date.now() - genStart) / 100) / 10);
-        setParsed(parsePrediction(streamed));
+        const p = parsePrediction(streamed);
+        setParsed(p);
+        // Record the call for the accountability track record
+        if (p.winner) {
+          try {
+            addPrediction(teamA.trim(), teamB.trim(), p.winner, p.score, p.confidence);
+            setRecord(getPredictionRecord());
+          } catch {}
+        }
         setIsGenerating(false);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -345,6 +364,13 @@ export default function PredictorScreen() {
             <IconTarget size={14} color={accent} />
           </View>
           <Text style={[styles.headerTitle, { color: theme.text }]}>Predictor</Text>
+          {record && record.hits + record.misses > 0 && (
+            <View style={[styles.recordChip, { backgroundColor: accent + '16', borderColor: accent + '40' }]}>
+              <Text style={[styles.recordChipText, { color: accent }]}>
+                {record.hits}W · {record.misses}L
+              </Text>
+            </View>
+          )}
           {modelId && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
         </View>
         <View style={styles.headerActions}>
@@ -775,6 +801,8 @@ const styles = StyleSheet.create({
   headerIcon: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   liveDot: { width: 6, height: 6, borderRadius: 3 },
+  recordChip: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
+  recordChipText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
   thinkBtn: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4 },
   thinkBtnText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   historyBtn: { fontSize: 12, fontWeight: '600' },

@@ -56,6 +56,17 @@ export const getDb = (): SQLite.SQLiteDatabase => {
         );
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
         CREATE INDEX IF NOT EXISTS idx_sessions_screen  ON sessions(screen, created_at DESC);
+        CREATE TABLE IF NOT EXISTS predictions (
+          id               TEXT PRIMARY KEY,
+          team_a           TEXT NOT NULL,
+          team_b           TEXT NOT NULL,
+          predicted_winner TEXT NOT NULL,
+          predicted_score  TEXT,
+          confidence       TEXT,
+          created_at       INTEGER NOT NULL,
+          actual_score     TEXT,
+          outcome          TEXT
+        );
       `);
       // Migrate fixtures tables created before badge/date columns existed.
       // ALTER TABLE ADD COLUMN throws if the column is already there — ignore.
@@ -135,4 +146,62 @@ export const updateLastAssistantMessage = (sessionId: string, content: string): 
      ORDER BY created_at DESC LIMIT 1`,
     [content, sessionId],
   );
+};
+
+// ── Prediction record (accountability) ───────────────────────────────────────
+
+export interface PredictionRow {
+  id: string;
+  teamA: string;
+  teamB: string;
+  predictedWinner: string;
+  predictedScore: string | null;
+  confidence: string | null;
+  createdAt: number;
+  actualScore: string | null;
+  outcome: 'hit' | 'miss' | null;
+}
+
+export const addPrediction = (
+  teamA: string, teamB: string,
+  predictedWinner: string, predictedScore: string, confidence: string,
+): void => {
+  getDb().runSync(
+    `INSERT INTO predictions (id, team_a, team_b, predicted_winner, predicted_score, confidence, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [uid(), teamA, teamB, predictedWinner, predictedScore || null, confidence || null, Date.now()],
+  );
+};
+
+export const getPendingPredictions = (limit = 3): PredictionRow[] =>
+  getDb()
+    .getAllSync<any>(
+      `SELECT * FROM predictions WHERE outcome IS NULL ORDER BY created_at ASC LIMIT ?`,
+      [limit],
+    )
+    .map(r => ({
+      id: r.id, teamA: r.team_a, teamB: r.team_b,
+      predictedWinner: r.predicted_winner, predictedScore: r.predicted_score,
+      confidence: r.confidence, createdAt: r.created_at,
+      actualScore: r.actual_score, outcome: r.outcome,
+    }));
+
+export const settlePrediction = (id: string, actualScore: string, outcome: 'hit' | 'miss'): void => {
+  getDb().runSync(
+    'UPDATE predictions SET actual_score = ?, outcome = ? WHERE id = ?',
+    [actualScore, outcome, id],
+  );
+};
+
+export const getPredictionRecord = (): { hits: number; misses: number; pending: number } => {
+  const rows = getDb().getAllSync<{ outcome: string | null; n: number }>(
+    'SELECT outcome, COUNT(*) as n FROM predictions GROUP BY outcome',
+  );
+  let hits = 0, misses = 0, pending = 0;
+  for (const r of rows) {
+    if (r.outcome === 'hit') hits = r.n;
+    else if (r.outcome === 'miss') misses = r.n;
+    else pending = r.n;
+  }
+  return { hits, misses, pending };
 };

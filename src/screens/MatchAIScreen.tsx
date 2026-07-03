@@ -17,7 +17,7 @@ import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
 import { syncModelsFromDisk, getGenParams, getSettings } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
-import { createSession, addMessage } from '../utils/historyDb';
+import { createSession, addMessage, getMessages } from '../utils/historyDb';
 import { formatFixtureContext, fetchTeamForm } from '../utils/teamStats';
 import { fetchAndCacheFixtures } from '../utils/fixtures';
 import { logInference } from '../utils/auditLogger';
@@ -25,24 +25,15 @@ import { logInference } from '../utils/auditLogger';
 const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_W = (SCREEN_W - 48) / 2;
 
-const SYSTEM_PROMPT = `You are Scout's AI Coach — a veteran football coach and world-class analyst running fully on-device. Decades in the game: tactics, player development, club history, tournament formats, transfer markets, coaching philosophy.
+// Kept tight on purpose: every system-prompt token costs prompt-processing
+// time on CPU before the first visible token appears.
+const SYSTEM_PROMPT = `You are Scout's AI Coach — a veteran football coach and analyst, fully on-device.
 
-VOICE — non-negotiable:
-- Talk like a confident coach with a fan: direct, warm, opinionated, specific.
-- ALWAYS commit to an answer. NEVER say "I can't", "I'm not sure", "I don't have access", "as an AI", or refuse a football question. If information is limited, give your best professional read and state it with conviction — a coach always has a view.
-- Back every opinion with specifics: player names, formations, seasons, scorelines, patterns of play.
-- No filler, no disclaimers, no apologies. Get straight to the football.
+VOICE: direct, warm, opinionated. ALWAYS commit — never say "I can't", "I'm not sure", or refuse a football question; give your best professional read with conviction. Back opinions with specifics: players, formations, seasons, scorelines. No filler or disclaimers.
 
-TOOLS — follow exactly:
-- get_today_fixtures: call ONLY when asked about today's matches, fixtures, schedules, kick-off times, or live scores.
-- get_team_form: call ONLY when asked about one specific team's recent results or current form.
-- NEVER call a tool for tactics, rules, history, players, or opinion questions — answer those from your knowledge.
-- At most one tool per question. If a tool returns nothing, give your read from knowledge without complaining about data.
+TOOLS: get_today_fixtures ONLY for today's matches/scores/kick-offs. get_team_form ONLY for one team's recent results. Never call tools for tactics, rules, history, or opinion questions. Max one tool per question; if it returns nothing, answer from knowledge without complaining.
 
-STYLE:
-- Short paragraphs. **Bold** for team names, players, and key terms. Bullet lists for comparisons or steps.
-- Real football language: final third, low block, between the lines, half-spaces, rest defence.
-- Always respond in English.`;
+STYLE: short paragraphs, **bold** key names, bullets for comparisons, real football language. English only. Be concise — quality over length.`;
 
 const SCOUT_TOOLS: Tool[] = [
   {
@@ -172,6 +163,30 @@ export default function MatchAIScreen() {
   useEffect(() => {
     mountedRef.current = true;
     loadModel();
+    // Resume a past conversation from History: restore its messages as
+    // finished entries and keep writing into the same session
+    const resumeId: string | undefined = route.params?.resumeSessionId;
+    if (resumeId) {
+      try {
+        const msgs = getMessages(resumeId);
+        const restored: Entry[] = [];
+        for (let i = 0; i < msgs.length; i++) {
+          if (msgs[i].role === 'user') {
+            const next = msgs[i + 1];
+            restored.push({
+              id: `r-${msgs[i].id}`,
+              question: msgs[i].content,
+              answer: next?.role === 'assistant' ? next.content : '',
+            });
+          }
+        }
+        if (restored.length > 0) {
+          setEntries(restored);
+          sessionIdRef.current = resumeId;
+          setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 120);
+        }
+      } catch {}
+    }
     // Sync Deep Reasoning default from global settings
     getSettings().then(s => {
       if (mountedRef.current) setThinkingOn(s.deepReasoning ?? false);
@@ -250,7 +265,9 @@ export default function MatchAIScreen() {
       addMessage(sessionIdRef.current, 'user', q);
     } catch {}
 
-    const history: { role: 'user' | 'assistant' | 'tool'; content: string }[] = entries.map(e => [
+    // Only the last 5 exchanges go to the model — prompt processing on CPU
+    // scales with context, so unbounded history makes every reply slower
+    const history: { role: 'user' | 'assistant' | 'tool'; content: string }[] = entries.slice(-5).map(e => [
       { role: 'user' as const, content: e.question },
       { role: 'assistant' as const, content: e.answer },
     ]).flat();
