@@ -211,7 +211,7 @@ export default function HomeScreen() {
       const models = await syncModelsFromDisk();
       const text = pickTextCapable(models);
       if (!text) { navigation.navigate('Models'); return; }
-      await llmManager.ensure(text, { ctx_size: 4096, device: 'auto', tools: true, projectionModelSrc: text.projectionModelSrc });
+      await llmManager.ensure(text, { ctx_size: 4096, device: 'auto', tools: text.modelType === 'text', projectionModelSrc: text.projectionModelSrc });
       setLoadedModel(llmManager.getLoadedModelId());
     } catch {}
     setModelLoading(false);

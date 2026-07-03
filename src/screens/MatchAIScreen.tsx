@@ -149,6 +149,7 @@ export default function MatchAIScreen() {
   const entryAnimsRef    = useRef<Record<string, { ty: Animated.Value; op: Animated.Value }>>({});
   const slotRef          = useRef<typeof slot>(null);
   const modelNameRef     = useRef<string>('');
+  const toolsEnabledRef  = useRef(false);
 
   useEffect(() => { slotRef.current = slot; }, [slot]);
 
@@ -189,8 +190,12 @@ export default function MatchAIScreen() {
         if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
         return;
       }
-      const mid = await llmManager.ensure(model, { ctx_size: 4096, device: 'auto', tools: true, projectionModelSrc: model.projectionModelSrc });
+      // Tool calling only for true text models — a multimodal fallback like
+      // Gemma has a chat template without reliable tool-call support
+      const supportsTools = model.modelType === 'text';
+      const mid = await llmManager.ensure(model, { ctx_size: 4096, device: 'auto', tools: supportsTools, projectionModelSrc: model.projectionModelSrc });
       modelNameRef.current = model.name;
+      toolsEnabledRef.current = supportsTools;
       if (mountedRef.current) {
         setModelId(mid);
         setModelLoading(false);
@@ -263,7 +268,7 @@ export default function MatchAIScreen() {
         modelId,
         history: [{ role: 'system', content: SYSTEM_PROMPT }, ...history],
         stream: true,
-        tools: SCOUT_TOOLS,
+        tools: toolsEnabledRef.current ? SCOUT_TOOLS : undefined,
         captureThinking: thinkingOn,
         generationParams: genParams,
       });
@@ -296,7 +301,7 @@ export default function MatchAIScreen() {
         }
       }
 
-      const toolCalls = await run1.toolCalls;
+      const toolCalls = (await run1.toolCalls) ?? [];
       let finalStats = await run1.stats;
 
       if (toolCalls.length > 0 && mountedRef.current) {
