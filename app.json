@@ -49,12 +49,6 @@
         }
       ],
       "@qvac/sdk/expo-plugin",
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Scout needs camera access to scan player cards and match content."
-        }
-      ],
       "expo-document-picker",
       [
         "expo-notifications",

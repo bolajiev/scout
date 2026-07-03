@@ -205,15 +205,15 @@ export default function SettingsScreen() {
 
           <Divider />
 
-          {/* Accelerator */}
+          {/* Engine — CPU only; GPU backends are not shipped (unstable on
+              many Android devices and 110 MB of APK weight) */}
           <View style={styles.cardRow}>
             <View style={styles.behaviorLeft}>
-              <Text style={[styles.rowLabel, { color: theme.text }]}>Accelerator</Text>
-              <Text style={[styles.rowHint, { color: theme.textSecondary }]}>GPU is faster on supported devices</Text>
+              <Text style={[styles.rowLabel, { color: theme.text }]}>Engine</Text>
+              <Text style={[styles.rowHint, { color: theme.textSecondary }]}>Optimized CPU inference — runs on every device</Text>
             </View>
             <View style={styles.optionsRow}>
-              <OptionBtn label="CPU" selected={accelerator === 'cpu'} onPress={() => { setAccelState('cpu'); setAccelerator('cpu'); }} />
-              <OptionBtn label="GPU" selected={accelerator === 'gpu'} onPress={() => { setAccelState('gpu'); setAccelerator('gpu'); }} />
+              <OptionBtn label="CPU" selected onPress={() => {}} />
             </View>
           </View>
 
