@@ -29,8 +29,10 @@ Always respond in EXACTLY this format, no deviation:
 WINNER: [team name or Draw]
 SCORE: [e.g. 2-1]
 CONFIDENCE: [Low/Medium/High]
+KEY HOME: [home team's most dangerous player — why he decides this match, one short clause]
+KEY AWAY: [away team's most dangerous player — why he decides this match, one short clause]
 ---
-[2-4 sentences of sharp reasoning. Name key players, tactical matchups, or form patterns. If live form data was provided, reference it directly. Write like a pundit making a call, not a bot citing caveats.]
+[2-4 sentences of sharp reasoning: the tactical matchup, where the game is won and lost, and the form pattern behind your call. If live form data was provided, reference it directly. Write like a pundit making a call, not a bot citing caveats.]
 
 Do not add anything before WINNER or after the analysis. Always respond in English.`;
 
@@ -48,7 +50,7 @@ export default function PredictorScreen() {
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [fixturesLoading, setFixturesLoading] = useState(true);
   const [noInternet, setNoInternet] = useState(false);
-  const [parsed, setParsed] = useState<{ winner: string; score: string; confidence: string; analysis: string } | null>(null);
+  const [parsed, setParsed] = useState<{ winner: string; score: string; confidence: string; keyHome: string; keyAway: string; analysis: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [modelId, setModelId] = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
@@ -190,12 +192,16 @@ export default function PredictorScreen() {
 
   const parsePrediction = (text: string) => {
     const lines = text.split('\n').map(l => l.trim());
-    const winner = lines.find(l => l.startsWith('WINNER:'))?.replace('WINNER:', '').trim() ?? '';
-    const score = lines.find(l => l.startsWith('SCORE:'))?.replace('SCORE:', '').trim() ?? '';
-    const confidence = lines.find(l => l.startsWith('CONFIDENCE:'))?.replace('CONFIDENCE:', '').trim() ?? '';
+    const field = (prefix: string) =>
+      lines.find(l => l.startsWith(prefix))?.replace(prefix, '').trim() ?? '';
+    const winner = field('WINNER:');
+    const score = field('SCORE:');
+    const confidence = field('CONFIDENCE:');
+    const keyHome = field('KEY HOME:');
+    const keyAway = field('KEY AWAY:');
     const sepIdx = lines.indexOf('---');
     const analysis = sepIdx >= 0 ? lines.slice(sepIdx + 1).join('\n').trim() : text;
-    return { winner, score, confidence, analysis };
+    return { winner, score, confidence, keyHome, keyAway, analysis };
   };
 
   const predict = async () => {
@@ -225,7 +231,7 @@ export default function PredictorScreen() {
         stream: true,
         captureThinking: thinkingOn,
         generationParams: {
-          predict: 300,
+          predict: 380,
           temp: gp.temp,
           top_k: gp.top_k,
           top_p: gp.top_p,
@@ -628,6 +634,25 @@ export default function PredictorScreen() {
               </View>
             </View>
 
+            {/* Players to watch */}
+            {(parsed.keyHome || parsed.keyAway) && (
+              <View style={[styles.keyPlayersCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                <Text style={[styles.resultLabel, { color: accent }]}>PLAYERS TO WATCH</Text>
+                {parsed.keyHome ? (
+                  <View style={styles.keyPlayerRow}>
+                    <View style={[styles.keyPlayerDot, { backgroundColor: '#ef4444' }]} />
+                    <Text style={[styles.keyPlayerText, { color: theme.text }]}>{parsed.keyHome}</Text>
+                  </View>
+                ) : null}
+                {parsed.keyAway ? (
+                  <View style={styles.keyPlayerRow}>
+                    <View style={[styles.keyPlayerDot, { backgroundColor: '#3b82f6' }]} />
+                    <Text style={[styles.keyPlayerText, { color: theme.text }]}>{parsed.keyAway}</Text>
+                  </View>
+                ) : null}
+              </View>
+            )}
+
             {/* Analysis */}
             {parsed.analysis ? (
               <View style={[styles.analysisCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -767,4 +792,8 @@ const styles = StyleSheet.create({
   scoreText: { fontSize: 32, fontWeight: '900', letterSpacing: -1 },
   scoreVs: { fontSize: 14, fontWeight: '700' },
   analysisCard: { borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden' },
+  keyPlayersCard: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 9, marginBottom: 10 },
+  keyPlayerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  keyPlayerDot: { width: 7, height: 7, borderRadius: 3.5, marginTop: 5 },
+  keyPlayerText: { flex: 1, fontSize: 13, lineHeight: 19 },
 });
