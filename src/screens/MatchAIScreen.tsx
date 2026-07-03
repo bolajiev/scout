@@ -2,7 +2,9 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
   ScrollView, Keyboard, Animated, Dimensions,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { completion, cancel, InferenceCancelledError, type Tool } from '@qvac/sdk';
@@ -150,6 +152,17 @@ export default function MatchAIScreen() {
   const slotRef          = useRef<typeof slot>(null);
   const modelNameRef     = useRef<string>('');
   const toolsEnabledRef  = useRef(false);
+  const lastScrollRef    = useRef(0);
+
+  // Streaming fires ~25 flushes/sec — scrolling on each one janks the UI
+  // while llama.cpp is already saturating the CPU. Cap scrolls to 4/sec.
+  const throttledScroll = () => {
+    const now = Date.now();
+    if (now - lastScrollRef.current > 250) {
+      lastScrollRef.current = now;
+      scrollRef.current?.scrollToEnd({ animated: false });
+    }
+  };
 
   useEffect(() => { slotRef.current = slot; }, [slot]);
 
@@ -287,7 +300,7 @@ export default function MatchAIScreen() {
           if (mountedRef.current && now - lastFlush > 40) {
             lastFlush = now;
             setSlot(s => s ? { ...s, thought: thoughtAcc, isThinking: true } : s);
-            scrollRef.current?.scrollToEnd({ animated: false });
+            throttledScroll();
           }
         } else if (event.type === 'contentDelta') {
           if (thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
@@ -296,7 +309,7 @@ export default function MatchAIScreen() {
           if (mountedRef.current && now - lastFlush > 40) {
             lastFlush = now;
             setSlot(s => s ? { ...s, answer: pass1Answer, isThinking: false } : s);
-            scrollRef.current?.scrollToEnd({ animated: false });
+            throttledScroll();
           }
         }
       }
@@ -367,7 +380,7 @@ export default function MatchAIScreen() {
             if (mountedRef.current && now - lastFlush > 40) {
               lastFlush = now;
               setSlot(s => s ? { ...s, answer: answerAcc } : s);
-              scrollRef.current?.scrollToEnd({ animated: false });
+              throttledScroll();
             }
           }
         }
@@ -378,7 +391,7 @@ export default function MatchAIScreen() {
 
       if (mountedRef.current) {
         setSlot(s => s ? { ...s, answer: answerAcc, thought: thoughtAcc, isThinking: false } : s);
-        scrollRef.current?.scrollToEnd({ animated: false });
+        throttledScroll();
       }
 
       currentRunRef.current = null;
@@ -491,6 +504,15 @@ export default function MatchAIScreen() {
                   {entry.elapsed}s{entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''} · on-device
                 </Text>
               )}
+              <TouchableOpacity
+                onPress={() => {
+                  Clipboard.setStringAsync(entry.answer).catch(() => {});
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={[styles.copyBtn, { color: theme.textSecondary }]}>Copy</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -583,7 +605,12 @@ export default function MatchAIScreen() {
   );
 
   return (
-    <View style={[styles.root, { backgroundColor: theme.background }]}>
+    <KeyboardAvoidingView
+      style={[styles.root, { backgroundColor: theme.background }]}
+      // Android 15 + edge-to-edge ignores adjustResize — the keyboard must
+      // be handled in JS or it covers the input bar
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 10, borderBottomColor: theme.border }]}>
         <View style={styles.headerLeft}>
@@ -602,7 +629,7 @@ export default function MatchAIScreen() {
           </View>
         </View>
         <TouchableOpacity
-          onPress={() => navigation.navigate('History', { screen: 'matchai' })}
+          onPress={() => navigation.navigate('History', { tab: 'matchai' })}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
           <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
@@ -693,7 +720,7 @@ export default function MatchAIScreen() {
           </TouchableOpacity>
         )}
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -790,6 +817,7 @@ const styles = StyleSheet.create({
   aiText: { fontSize: 16, lineHeight: 24 },
   statRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 4 },
   stat: { fontSize: 10, fontWeight: '500' },
+  copyBtn: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
   liveChip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4,

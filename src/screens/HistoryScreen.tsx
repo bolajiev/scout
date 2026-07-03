@@ -45,7 +45,7 @@ export default function HistoryScreen() {
   const insets = useSafeAreaInsets();
   const accent = theme.accent;
 
-  const [tab, setTab] = useState<ScreenType>(route.params?.screen ?? 'matchai');
+  const [tab, setTab] = useState<ScreenType>(route.params?.tab ?? 'matchai');
   const [sessions, setSessions] = useState<Session[]>([]);
   const [counts, setCounts] = useState<Record<ScreenType, number>>({ matchai: 0, predictor: 0, scoutlens: 0 });
   const [expanded, setExpanded] = useState<string | null>(null);

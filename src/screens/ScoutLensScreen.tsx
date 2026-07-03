@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, Animated,
+  TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -28,6 +29,7 @@ export default function ScoutLensScreen() {
   const insets = useSafeAreaInsets();
 
   const [imagePath, setImagePath] = useState<string | null>(null);
+  const [question, setQuestion] = useState('');
   const [result, setResult] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [modelId, setModelId] = useState<string | null>(null);
@@ -136,7 +138,7 @@ export default function ScoutLensScreen() {
           { role: 'system', content: VISION_PROMPT },
           {
             role: 'user',
-            content: 'What football content do you see in this image?',
+            content: question.trim() || 'What football content do you see in this image?',
             // QVAC needs a bare filesystem path — file:// URIs fail to load
             attachments: [{ path: toPath(uri) }],
           } as any,
@@ -173,7 +175,7 @@ export default function ScoutLensScreen() {
       // Save scan result to SQLite history
       if (streamed) {
         try {
-          const sessionId = createSession('scoutlens', 'Scan — ' + new Date().toLocaleTimeString());
+          const sessionId = createSession('scoutlens', question.trim() || 'Scan — ' + new Date().toLocaleTimeString());
           addMessage(sessionId, 'user', `[image] ${uri}`);
           addMessage(sessionId, 'assistant', streamed);
         } catch (e) {
@@ -198,7 +200,10 @@ export default function ScoutLensScreen() {
   const accent = theme.accent;
 
   return (
-    <View style={[styles.root, { backgroundColor: theme.background }]}>
+    <KeyboardAvoidingView
+      style={[styles.root, { backgroundColor: theme.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
         <View style={styles.headerLeft}>
           <TouchableOpacity
@@ -212,7 +217,7 @@ export default function ScoutLensScreen() {
           <Text style={[styles.headerTitle, { color: theme.text }]}>Scout Lens</Text>
         </View>
         <TouchableOpacity
-          onPress={() => navigation.navigate('History', { screen: 'scoutlens' })}
+          onPress={() => navigation.navigate('History', { tab: 'scoutlens' })}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
           <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
@@ -303,6 +308,17 @@ export default function ScoutLensScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Optional question about the image */}
+        <TextInput
+          style={[styles.questionInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.text }]}
+          placeholder="Ask about the image (optional) — e.g. which club is this?"
+          placeholderTextColor={theme.textSecondary}
+          value={question}
+          onChangeText={setQuestion}
+          editable={!isAnalyzing}
+          returnKeyType="done"
+        />
+
         {/* Result */}
         {isAnalyzing && !result && (
           <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -315,7 +331,7 @@ export default function ScoutLensScreen() {
             <View style={[styles.resultBar, { backgroundColor: accent }]} />
             <View style={styles.resultContent}>
               <Text style={[styles.resultLabel, { color: accent }]}>Scout Lens</Text>
-              <Text style={[styles.resultText, { color: theme.text }]}>{result}</Text>
+              <Text selectable style={[styles.resultText, { color: theme.text }]}>{result}</Text>
               {!isAnalyzing && (
                 <Text style={[styles.resultNote, { color: theme.textSecondary }]}>On-device · no internet</Text>
               )}
@@ -335,7 +351,7 @@ export default function ScoutLensScreen() {
           </TouchableOpacity>
         )}
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -352,6 +368,10 @@ const styles = StyleSheet.create({
   historyBtn: { fontSize: 12, fontWeight: '600' },
   content: { padding: 16, gap: 14 },
   noModelCard: { borderRadius: 10, borderWidth: 1, padding: 14 },
+  questionInput: {
+    borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 11,
+    fontSize: 14, lineHeight: 19,
+  },
   noModelText: { fontSize: 13, textAlign: 'center' },
   pickerArea: {
     borderRadius: 18, borderWidth: 1.5,

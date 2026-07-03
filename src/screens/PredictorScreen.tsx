@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, TextInput, Image,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
@@ -158,10 +160,15 @@ export default function PredictorScreen() {
     try {
       const { fixtures: all, online } = await fetchAndCacheFixtures();
       if (!mountedRef.current) return;
-      // Full matchday rail: all live matches first (with scores), then
-      // upcoming by kick-off across the next days, finished games last.
-      // WC cards carry their own WC 2026 badge; the header adapts.
-      setFixtures([...all].sort((a, b) => fixtureOrder(a) - fixtureOrder(b)).slice(0, 14));
+      // Compact matchday rail: every live match (with scores) + the next 3
+      // upcoming. World Cup outranks other leagues within each group.
+      const wcBias = (f: Fixture) => (isWorldCup(f) ? -0.5 : 0);
+      const sorted = [...all].sort(
+        (a, b) => (fixtureOrder(a) + wcBias(a)) - (fixtureOrder(b) + wcBias(b)),
+      );
+      const liveNow = sorted.filter(isLive);
+      const upcoming = sorted.filter(f => !isLive(f) && !isFinished(f)).slice(0, 3);
+      setFixtures([...liveNow, ...upcoming]);
       setNoInternet(!online);
     } catch {
       if (mountedRef.current) setNoInternet(true);
@@ -194,17 +201,26 @@ export default function PredictorScreen() {
     }
   };
 
+  // Lenient parser — small models drift on casing/markdown ("**Winner:**"),
+  // so match case-insensitively and strip decoration
   const parsePrediction = (text: string) => {
-    const lines = text.split('\n').map(l => l.trim());
-    const field = (prefix: string) =>
-      lines.find(l => l.startsWith(prefix))?.replace(prefix, '').trim() ?? '';
-    const winner = field('WINNER:');
-    const score = field('SCORE:');
-    const confidence = field('CONFIDENCE:');
-    const keyHome = field('KEY HOME:');
-    const keyAway = field('KEY AWAY:');
-    const sepIdx = lines.indexOf('---');
-    const analysis = sepIdx >= 0 ? lines.slice(sepIdx + 1).join('\n').trim() : text;
+    const clean = (s: string) => s.replace(/\*+/g, '').trim();
+    const lines = text.split('\n').map(l => clean(l));
+    const field = (name: string) => {
+      const re = new RegExp(`^${name}\\s*:\\s*(.+)$`, 'i');
+      for (const l of lines) { const m = l.match(re); if (m) return clean(m[1]); }
+      return '';
+    };
+    const winner = field('WINNER');
+    const score = field('SCORE');
+    const confidence = field('CONFIDENCE');
+    const keyHome = field('KEY\\s*HOME(?:\\s*PLAYER)?');
+    const keyAway = field('KEY\\s*AWAY(?:\\s*PLAYER)?');
+    const sepIdx = lines.findIndex(l => /^-{3,}$/.test(l));
+    const structured = /^(winner|score|confidence|key\s*home|key\s*away)\s*:/i;
+    const analysis = sepIdx >= 0
+      ? lines.slice(sepIdx + 1).join('\n').trim()
+      : lines.filter(l => l && !structured.test(l)).join('\n').trim();
     return { winner, score, confidence, keyHome, keyAway, analysis };
   };
 
@@ -312,7 +328,10 @@ export default function PredictorScreen() {
   const accent = theme.accent;
 
   return (
-    <View style={[styles.root, { backgroundColor: theme.background }]}>
+    <KeyboardAvoidingView
+      style={[styles.root, { backgroundColor: theme.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
         <View style={styles.headerLeft}>
           <TouchableOpacity
@@ -339,7 +358,7 @@ export default function PredictorScreen() {
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => navigation.navigate('History', { screen: 'predictor' })}
+            onPress={() => navigation.navigate('History', { tab: 'predictor' })}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
@@ -612,16 +631,41 @@ export default function PredictorScreen() {
           </View>
         )}
 
-        {/* Streaming result (plain) */}
-        {isGenerating && prediction.length > 0 && (
-          <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: accent + '50' }]}>
-            <View style={[styles.resultBar, { backgroundColor: accent }]} />
-            <View style={styles.resultContent}>
-              <Text style={[styles.resultLabel, { color: accent }]}>PREDICTING...</Text>
-              <Text style={[styles.resultText, { color: theme.text }]}>{prediction}</Text>
+        {/* Streaming result — parsed live so raw WINNER:/SCORE: lines never
+            show; fields pop in as chips, analysis streams below */}
+        {isGenerating && prediction.length > 0 && (() => {
+          const live = parsePrediction(prediction);
+          return (
+            <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: accent + '50' }]}>
+              <View style={[styles.resultBar, { backgroundColor: accent }]} />
+              <View style={styles.resultContent}>
+                <Text style={[styles.resultLabel, { color: accent }]}>MAKING THE CALL...</Text>
+                {(live.winner || live.score || live.confidence) && (
+                  <View style={styles.liveChipsRow}>
+                    {live.winner ? (
+                      <View style={[styles.liveFieldChip, { backgroundColor: accent + '18', borderColor: accent + '40' }]}>
+                        <Text style={[styles.liveFieldChipText, { color: accent }]}>{live.winner}</Text>
+                      </View>
+                    ) : null}
+                    {live.score ? (
+                      <View style={[styles.liveFieldChip, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
+                        <Text style={[styles.liveFieldChipText, { color: theme.text }]}>{live.score}</Text>
+                      </View>
+                    ) : null}
+                    {live.confidence ? (
+                      <View style={[styles.liveFieldChip, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
+                        <Text style={[styles.liveFieldChipText, { color: theme.textSecondary }]}>{live.confidence}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                )}
+                {live.analysis ? (
+                  <Text style={[styles.resultText, { color: theme.text }]}>{live.analysis}</Text>
+                ) : null}
+              </View>
             </View>
-          </View>
-        )}
+          );
+        })()}
 
         {/* Final result — spring reveal with scoreboard */}
         {!isGenerating && parsed && (
@@ -692,8 +736,20 @@ export default function PredictorScreen() {
               <View style={[styles.analysisCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
                 <View style={[styles.resultBar, { backgroundColor: accent }]} />
                 <View style={styles.resultContent}>
-                  <Text style={[styles.resultLabel, { color: accent }]}>ANALYSIS</Text>
-                  <Text style={[styles.resultText, { color: theme.text }]}>{parsed.analysis}</Text>
+                  <View style={styles.analysisHeader}>
+                    <Text style={[styles.resultLabel, { color: accent }]}>ANALYSIS</Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const full = `${teamA} vs ${teamB}\n${parsed.winner ? `Winner: ${parsed.winner}` : ''} ${parsed.score}\n\n${parsed.analysis}`;
+                        Clipboard.setStringAsync(full.trim()).catch(() => {});
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={[styles.copyBtn, { color: theme.textSecondary }]}>Copy</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text selectable style={[styles.resultText, { color: theme.text }]}>{parsed.analysis}</Text>
                   {elapsed && (
                     <Text style={[styles.stat, { color: theme.textSecondary }]}>{elapsed}s · on-device</Text>
                   )}
@@ -703,7 +759,7 @@ export default function PredictorScreen() {
           </Animated.View>
         )}
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -811,6 +867,8 @@ const styles = StyleSheet.create({
   resultText: { fontSize: 15, lineHeight: 24 },
   thoughtText: { fontSize: 12, lineHeight: 18, color: '#a8a29e', fontStyle: 'italic' },
   stat: { fontSize: 10 },
+  analysisHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  copyBtn: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
   // Scoreboard
   scoreboard: { borderRadius: 16, borderWidth: 1, marginBottom: 10, overflow: 'hidden' },
   scoreboardTop: {
@@ -831,6 +889,9 @@ const styles = StyleSheet.create({
   scoreVs: { fontSize: 14, fontWeight: '700' },
   analysisCard: { borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden' },
   keyPlayersCard: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 9, marginBottom: 10 },
+  liveChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  liveFieldChip: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5 },
+  liveFieldChipText: { fontSize: 12, fontWeight: '700' },
   keyPlayerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   keyPlayerDot: { width: 7, height: 7, borderRadius: 3.5, marginTop: 5 },
   keyPlayerText: { flex: 1, fontSize: 13, lineHeight: 19 },
