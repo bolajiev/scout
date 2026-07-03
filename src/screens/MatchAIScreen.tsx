@@ -23,17 +23,23 @@ import { logInference } from '../utils/auditLogger';
 const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_W = (SCREEN_W - 48) / 2;
 
-const SYSTEM_PROMPT = `You are Scout's AI Coach — a world-class football analyst running fully on-device. You know tactics, player profiles, club history, tournament formats, and coaching philosophy. You talk like a sharp, friendly coach: confident, concrete, never vague.
+const SYSTEM_PROMPT = `You are Scout's AI Coach — a veteran football coach and world-class analyst running fully on-device. Decades in the game: tactics, player development, club history, tournament formats, transfer markets, coaching philosophy.
 
-TOOLS — follow these rules exactly:
-- get_today_fixtures: call ONLY when the user asks about today's matches, fixtures, schedules, kick-off times, or live scores.
-- get_team_form: call ONLY when the user asks about one specific team's recent results, form, or how they have been playing lately.
-- NEVER call a tool for tactics, rules, history, players, or opinion questions — answer those directly from your knowledge.
-- Call at most one tool per question. If a tool returns no data, say so honestly and answer from knowledge.
+VOICE — non-negotiable:
+- Talk like a confident coach with a fan: direct, warm, opinionated, specific.
+- ALWAYS commit to an answer. NEVER say "I can't", "I'm not sure", "I don't have access", "as an AI", or refuse a football question. If information is limited, give your best professional read and state it with conviction — a coach always has a view.
+- Back every opinion with specifics: player names, formations, seasons, scorelines, patterns of play.
+- No filler, no disclaimers, no apologies. Get straight to the football.
+
+TOOLS — follow exactly:
+- get_today_fixtures: call ONLY when asked about today's matches, fixtures, schedules, kick-off times, or live scores.
+- get_team_form: call ONLY when asked about one specific team's recent results or current form.
+- NEVER call a tool for tactics, rules, history, players, or opinion questions — answer those from your knowledge.
+- At most one tool per question. If a tool returns nothing, give your read from knowledge without complaining about data.
 
 STYLE:
-- Use short paragraphs. Use **bold** for team names, players, and key terms. Use bullet lists for comparisons or steps.
-- Football language welcome: kick-off, final third, low block, between the lines.
+- Short paragraphs. **Bold** for team names, players, and key terms. Bullet lists for comparisons or steps.
+- Real football language: final third, low block, between the lines, half-spaces, rest defence.
 - Always respond in English.`;
 
 const SCOUT_TOOLS: Tool[] = [
@@ -652,7 +658,7 @@ export default function MatchAIScreen() {
 
         <TextInput
           style={[styles.input, { backgroundColor: theme.cardAlt, color: theme.text }]}
-          placeholder={modelLoading ? 'Loading model...' : 'Tactics, players, today\'s matches...'}
+          placeholder={modelLoading ? 'Loading model...' : 'Ask your coach...'}
           placeholderTextColor={theme.textSecondary}
           value={input}
           onChangeText={setInput}
@@ -797,24 +803,24 @@ const styles = StyleSheet.create({
   thoughtLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
   thoughtText: { fontSize: 12, lineHeight: 18, color: '#a8a29e', fontStyle: 'italic' },
 
-  // Input bar
+  // Input bar — everything sits on one 42px baseline; input grows upward
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 8,
-    paddingHorizontal: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12, paddingTop: 9, borderTopWidth: StyleSheet.hairlineWidth,
   },
   deepToggle: {
-    borderRadius: 20, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7,
-    flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3,
+    height: 42, borderRadius: 21, borderWidth: 1, paddingHorizontal: 13,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
   },
-  deepToggleText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
-  deepDot: { width: 5, height: 5, borderRadius: 2.5 },
+  deepToggleText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
+  deepDot: { width: 6, height: 6, borderRadius: 3 },
   input: {
-    flex: 1, borderRadius: 22,
-    paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11,
-    fontSize: 16, lineHeight: 21, maxHeight: 130,
+    flex: 1, borderRadius: 21, minHeight: 42,
+    paddingHorizontal: 16, paddingTop: 10.5, paddingBottom: 10.5,
+    fontSize: 15, lineHeight: 21, maxHeight: 126,
   },
   sendBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 2,
+    width: 42, height: 42, borderRadius: 21,
+    alignItems: 'center', justifyContent: 'center',
   },
 });

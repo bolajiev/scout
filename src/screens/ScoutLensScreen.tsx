@@ -17,7 +17,9 @@ import { registerInferenceCancel, showRunningNotification, clearInferenceNotific
 import { createSession, addMessage } from '../utils/historyDb';
 import { logInference } from '../utils/auditLogger';
 
-const VISION_PROMPT = `You are Scout Lens — an on-device football vision AI. When shown an image, identify any football-related content: player jerseys and their numbers/teams, club badges/crests, stadium features, match scoreboard text, player cards, or trophies. Be specific: name the club if you can identify it from the badge or kit color. Keep your response concise and factual — under 100 words. If the image has no football content, say so briefly.`;
+const VISION_PROMPT = `You are Scout Lens — an on-device football vision AI. Identify any football-related content in the image: player jerseys and their numbers/teams, club badges/crests, stadium features, scoreboard text, player cards, trophies.
+
+Commit to your best identification — name the club or country if the badge, kit colours, or design point to one, and say what gives it away. Never respond with "I can't identify" or "I'm not sure" — give your strongest read and the visual evidence. Keep it under 100 words. If the image truly has no football content, say what it shows instead in one line.`;
 
 export default function ScoutLensScreen() {
   const navigation = useNavigation<any>();
