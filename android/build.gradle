@@ -1,0 +1,31 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+  ext {
+    // NDK 29 is REQUIRED by QVAC: its prebuilt engines need libc++ symbols
+    // (__cxa_init_primary_exception, exception_ptr::__from_native_exception_pointer)
+    // that NDK 27's libc++_shared.so does not export — shipping the older
+    // runtime makes the engine dlopen fail = native crash at model load.
+    ndkVersion = "29.0.14206865"
+  }
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath('com.android.tools.build:gradle')
+    classpath('com.facebook.react:react-native-gradle-plugin')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
+  }
+}
+
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://www.jitpack.io' }
+  }
+}
+
+apply plugin: "expo-root-project"
+apply plugin: "com.facebook.react.rootproject"

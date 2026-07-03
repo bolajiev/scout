@@ -128,7 +128,7 @@ Downloaded in-app (resumable) to app-private storage `DocumentDirectory/scout/mo
 | Storage | SQLite (`expo-sqlite`) + AsyncStorage |
 | Live data | TheSportsDB REST (free, no key) |
 | Language | TypeScript |
-| Target | Android arm64-v8a, minSdk 29, NDK 27, new architecture |
+| Target | Android arm64-v8a, minSdk 29, NDK 29 (required by QVAC native engines), new architecture |
 
 ---
 
@@ -140,7 +140,7 @@ npx tsc --noEmit --skipLibCheck
 eas build --platform android --profile preview   # signed APK, local credentials
 ```
 
-`.easignore` ships the local `android/` directory (skips server prebuild, keeps NDK 27 and manifest fixes) and excludes `android/build/` so stale caches never reach the build server. Running `expo prebuild --clean` regenerates `android/` — re-apply the NDK version and manifest fixes if you do.
+`.easignore` ships the local `android/` directory (skips server prebuild, keeps NDK 29 and manifest fixes) and excludes `android/build/` so stale caches never reach the build server. Running `expo prebuild --clean` regenerates `android/` — re-apply the NDK version (29.0.14206865) and manifest fixes if you do.
 
 ---
 
