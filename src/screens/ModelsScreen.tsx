@@ -25,6 +25,7 @@ import {
 } from '../utils/storage';
 import { ModelInfo, DownloadedModel } from '../types';
 import { llmManager } from '../utils/modelManager';
+import * as Device from 'expo-device';
 
 type DownloadPhase = {
   phase: 'model' | 'mmproj';
@@ -214,19 +215,44 @@ export default function ModelsScreen() {
     );
   };
 
-  const handleLoad = async (model: DownloadedModel) => {
+  const handleLoad = (model: DownloadedModel) => {
     if (loadingModelId) return;
+    // Heavy models need ~4 GB free RAM — warn before a load that will
+    // likely be OOM-killed on smaller devices instead of hard-crashing.
+    const totalMem = Device.totalMemory ?? 0;
+    if (model.heavy && totalMem > 0 && totalMem < 5.5e9) {
+      Alert.alert(
+        'This model may be too big',
+        `${model.name} needs about 4 GB of free RAM. This device has ${(totalMem / 1e9).toFixed(1)} GB total, so loading can crash the app.\n\nQwen3 1.7B is recommended for this device.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Load Anyway', style: 'destructive', onPress: () => doLoad(model) },
+        ],
+      );
+      return;
+    }
+    doLoad(model);
+  };
+
+  const doLoad = async (model: DownloadedModel) => {
     setLoadingModelId(model.id);
     setLoadProgress(0);
     try {
       await llmManager.ensure(
         model,
-        { ctx_size: 4096, device: 'auto', tools: model.modelType !== 'vision', projectionModelSrc: model.projectionModelSrc },
+        {
+          // Vision loads with a smaller context — the KV cache for 4096 on a
+          // 3.5 GB model adds hundreds of MB and ScoutLens only needs 2048.
+          ctx_size: model.modelType === 'vision' ? 2048 : 4096,
+          device: 'auto',
+          tools: model.modelType !== 'vision',
+          projectionModelSrc: model.projectionModelSrc,
+        },
         pct => setLoadProgress(Math.round(pct)),
       );
       setLoadedModelId(llmManager.getLoadedModelId());
     } catch {
-      Alert.alert('Load Failed', 'Could not load the model into memory. Try restarting the app.');
+      Alert.alert('Load Failed', 'Could not load the model into memory. Free up RAM by closing other apps, or try a smaller model.');
     } finally {
       setLoadingModelId(null);
       setLoadProgress(0);

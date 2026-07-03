@@ -1,6 +1,6 @@
 import { loadModel, unloadModel } from '@qvac/sdk';
 import { DownloadedModel } from '../types';
-import { toPath } from './storage';
+import { toPath, getSettings } from './storage';
 
 // Keeps the last LLM loaded in memory so screens don't reload every open
 class LLMManager {
@@ -33,6 +33,13 @@ class LLMManager {
     const nativeConfig = { ...modelConfig };
     if (nativeConfig.projectionModelSrc) {
       nativeConfig.projectionModelSrc = toPath(nativeConfig.projectionModelSrc);
+    }
+    // Resolve 'auto' to the user's accelerator setting, defaulting to CPU.
+    // 'auto' can select a GPU path that hard-crashes llama.cpp natively on
+    // many Android devices — CPU is the only universally safe default.
+    if (!nativeConfig.device || nativeConfig.device === 'auto') {
+      const accel = await getSettings().then(s => s.accelerator).catch(() => 'cpu' as const);
+      nativeConfig.device = accel === 'gpu' ? 'gpu' : 'cpu';
     }
     this.pendingId = model.id;
     this.pending = loadModel({
