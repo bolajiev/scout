@@ -46,6 +46,7 @@ const tbStyles = StyleSheet.create({
   letter: { fontSize: 11, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
 });
 import { llmManager } from '../utils/modelManager';
+import { pickTextCapable } from '../utils/models';
 import { syncModelsFromDisk } from '../utils/storage';
 
 const { width: SW } = Dimensions.get('window');
@@ -187,7 +188,7 @@ export default function HomeScreen() {
     mountedRef.current = true;
     syncModelsFromDisk().then(models => {
       if (!mountedRef.current) return;
-      setHasAnyModel(models.some(m => m.modelType === 'text'));
+      setHasAnyModel(!!pickTextCapable(models));
       setLoadedModel(llmManager.getLoadedModelId());
     }).catch(() => { setHasAnyModel(false); });
     refreshFixtures();
@@ -204,7 +205,7 @@ export default function HomeScreen() {
     setModelLoading(true);
     try {
       const models = await syncModelsFromDisk();
-      const text = models.find(m => m.modelType === 'text');
+      const text = pickTextCapable(models);
       if (!text) { navigation.navigate('Models'); return; }
       await llmManager.ensure(text, { ctx_size: 4096, device: 'auto', tools: true, projectionModelSrc: text.projectionModelSrc });
       setLoadedModel(llmManager.getLoadedModelId());

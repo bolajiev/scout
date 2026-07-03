@@ -10,9 +10,10 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconTarget, IconStop, IconBack } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
+import { pickTextCapable } from '../utils/models';
 import { syncModelsFromDisk, getGenParams } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
-import { fetchAndCacheFixtures, isWorldCup, fmtMatchTime as fmtTime, badgeUrl, type Fixture } from '../utils/fixtures';
+import { fetchAndCacheFixtures, isWorldCup, fmtMatchTime as fmtTime, badgeUrl, todayISO, type Fixture } from '../utils/fixtures';
 import { createSession, addMessage } from '../utils/historyDb';
 import { fetchBothTeamForms, formatFormContext, type TeamForm } from '../utils/teamStats';
 import { logInference } from '../utils/auditLogger';
@@ -151,9 +152,10 @@ export default function PredictorScreen() {
     try {
       const { fixtures: all, online } = await fetchAndCacheFixtures();
       if (!mountedRef.current) return;
-      // World Cup first, then rest
-      const sorted = [...all.filter(isWorldCup), ...all.filter(f => !isWorldCup(f))];
-      setFixtures(sorted);
+      // The rail is branded FIFA World Cup 2026 — show only WC matches when
+      // any exist. Other leagues appear only as a fallback on non-WC days.
+      const wc = all.filter(isWorldCup);
+      setFixtures(wc.length > 0 ? wc : all);
       setNoInternet(!online);
     } catch {
       if (mountedRef.current) setNoInternet(true);
@@ -171,12 +173,14 @@ export default function PredictorScreen() {
   const loadModel = async () => {
     try {
       const synced = await syncModelsFromDisk();
-      const model = synced.find((m: any) => m.modelType === 'text');
+      const model = pickTextCapable(synced);
       if (!model) {
         if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
         return;
       }
-      const mid = await llmManager.ensure(model, { ctx_size: 2048, device: 'auto' });
+      // projectionModelSrc keeps a multimodal model (Gemma) consistent with
+      // Scout Lens — the single resident model must be loaded with its mmproj
+      const mid = await llmManager.ensure(model, { ctx_size: 2048, device: 'auto', projectionModelSrc: model.projectionModelSrc });
       modelNameRef.current = model.name;
       if (mountedRef.current) { setModelId(mid); setModelLoading(false); }
     } catch {
@@ -341,8 +345,12 @@ export default function PredictorScreen() {
         <View style={styles.fixturesSection}>
           <View style={styles.fixturesHeader}>
             <View>
-              <Text style={[styles.fixturesSectionLabel, { color: accent }]}>FIFA WORLD CUP 2026</Text>
-              <Text style={[styles.fixturesTodayLabel, { color: theme.textSecondary }]}>Today's matches</Text>
+              <Text style={[styles.fixturesSectionLabel, { color: accent }]}>
+                {fixtures.some(isWorldCup) ? 'FIFA WORLD CUP 2026' : "TODAY'S FOOTBALL"}
+              </Text>
+              <Text style={[styles.fixturesTodayLabel, { color: theme.textSecondary }]}>
+                {fixtures.some(isWorldCup) ? 'Today & upcoming' : "Today's matches"}
+              </Text>
             </View>
             <View style={[styles.apiDisclosure, { backgroundColor: theme.card, borderColor: theme.border }]}>
               <Text style={[styles.apiDisclosureText, { color: theme.textSecondary }]}>TheSportsDB</Text>
@@ -416,7 +424,11 @@ export default function PredictorScreen() {
                       <Text style={[styles.fixtureAway, { color: theme.text }]} numberOfLines={1}>{f.strAwayTeam}</Text>
                     </View>
                     {fmtTime(f.strTime) ? (
-                      <Text style={[styles.fixtureTime, { color: accent }]}>{fmtTime(f.strTime)}</Text>
+                      <Text style={[styles.fixtureTime, { color: accent }]}>
+                        {f.dateEvent && f.dateEvent !== todayISO()
+                          ? `${new Date(f.dateEvent).toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${fmtTime(f.strTime)}`
+                          : fmtTime(f.strTime)}
+                      </Text>
                     ) : null}
                   </TouchableOpacity>
                 );

@@ -56,8 +56,8 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
     id: MODEL_KEYS.VISION,
     name: 'Gemma 4 2B',
     modelType: 'vision',
-    tagline: 'Google vision model — Scout Lens.',
-    description: 'Gemma 4 E2B by Google. Native vision support built into the architecture — identifies jerseys, club badges, and scoreboards for Scout Lens. Also strong for text analysis. Requires ~4 GB free RAM.',
+    tagline: 'Vision + text — the all-in-one model.',
+    description: 'Gemma 4 E2B by Google. Multimodal: powers Scout Lens (jerseys, badges, scoreboards) AND works for AI Coach and Predictor. One model for everything. Requires ~4 GB free RAM.',
     size: '3.8 GB',
     sizeBytes: 3_462_678_272 + 557_367_776,
     mmprojBytes: 557_367_776,
@@ -67,6 +67,14 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
     heavy: true,
   },
 ];
+
+// Best model for text screens (AI Coach, Predictor): a dedicated text model
+// wins, but a multimodal model like Gemma 4 also handles text — so if it's
+// the only model downloaded, use it rather than claiming nothing is there.
+export function pickTextCapable<T extends ModelInfo>(models: T[]): T | undefined {
+  return models.find(m => m.modelType === 'text')
+    ?? models.find(m => m.supports?.includes('text'));
+}
 
 const HF_REGEX = /registry:\/\/hf\/([^/]+\/[^/]+)\/(resolve|blob)\/([^/]+)\/(.+)/;
 

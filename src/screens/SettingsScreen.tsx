@@ -11,6 +11,7 @@ import * as Sharing from 'expo-sharing';
 import { useNavigation } from '@react-navigation/native';
 import { getTheme } from '../theme';
 import { useTheme, useThemeToggle } from '../navigation/AppNavigator';
+import { pickTextCapable } from '../utils/models';
 import {
   getSettings, setAccelerator, setResponseLength, clearAllData,
   saveSettings, syncModelsFromDisk,
@@ -60,7 +61,7 @@ export default function SettingsScreen() {
   const loadModelInfo = async () => {
     try {
       const models = await syncModelsFromDisk();
-      const text = models.find(m => m.modelType === 'text');
+      const text = pickTextCapable(models);
       setTextModelName(text?.name ?? null);
     } catch { setTextModelName(null); }
   };
