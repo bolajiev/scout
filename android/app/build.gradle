@@ -149,6 +149,11 @@ android {
         // the Vulkan backend alone is 109 MB of the APK.
         excludes += "/lib/**/libqvac-ggml-vulkan.so"
         excludes += "/lib/**/libqvac-ggml-opencl.so"
+        // The app ships its own libc++_shared.so (NDK r28, LLVM 19) in
+        // src/main/jniLibs — QVAC engines need LLVM 18+ exception symbols
+        // that RN's AAR-provided NDK-27 copy lacks. pickFirst lets the app
+        // source-set copy (merged first) win over library copies.
+        pickFirsts += "/lib/**/libc++_shared.so"
     }
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'

@@ -2,11 +2,12 @@
 
 buildscript {
   ext {
-    // NDK 29 is REQUIRED by QVAC: its prebuilt engines need libc++ symbols
-    // (__cxa_init_primary_exception, exception_ptr::__from_native_exception_pointer)
-    // that NDK 27's libc++_shared.so does not export — shipping the older
-    // runtime makes the engine dlopen fail = native crash at model load.
-    ndkVersion = "29.0.14206865"
+    // NDK 27 toolchain (proven to build on EAS). The QVAC engines need a
+    // NEWER libc++_shared.so at runtime (LLVM 18+ exception symbols) — that
+    // is shipped explicitly via app/src/main/jniLibs/arm64-v8a/, which wins
+    // the packaging merge over every library-provided copy. Do NOT remove
+    // that file: without it the engine dlopen fails = crash at model load.
+    ndkVersion = "27.1.12297006"
   }
   repositories {
     google()
