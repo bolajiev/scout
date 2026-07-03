@@ -65,22 +65,24 @@ const SCOUT_TOOLS: Tool[] = [
   },
 ];
 
+// Rotating chips — deliberately NO overlap with the category cards above
+// them (high press / Mbappe / WC favorites / offside live there)
 const ALL_SUGGESTIONS = [
-  'How does a high press work?',
   'Best striker in Champions League history?',
-  'Explain the offside rule simply.',
   'What is a false nine?',
   'How does VAR work?',
   'Compare 4-3-3 vs 4-2-3-1 formations.',
   'Who invented total football?',
   'What makes a good defensive midfielder?',
-  'Explain gegenpressing tactics.',
   'Best World Cup goals of all time?',
   'How does penalty shootout psychology work?',
   'What is an overlap run in football?',
-  'Difference between a box-to-box and a holding midfielder?',
+  'Box-to-box vs holding midfielder — the difference?',
   'How do clubs scout young players?',
-  'What makes Mbappe so fast?',
+  'Which nation has the best youth academy system?',
+  'What does a sporting director actually do?',
+  'How do you break down a low block?',
+  'Greatest World Cup final ever played?',
 ];
 
 const CATEGORIES = [
@@ -138,7 +140,8 @@ export default function MatchAIScreen() {
   const [noModel, setNoModel]           = useState(false);
   const [thinkingOn, setThinkingOn]     = useState(false);
   const [thoughtOpen, setThoughtOpen]   = useState<Record<string, boolean>>({});
-  const [suggOffset, setSuggOffset]     = useState(0);
+  // Random start so the chips differ every visit
+  const [suggOffset, setSuggOffset]     = useState(() => Math.floor(Math.random() * ALL_SUGGESTIONS.length));
 
   const scrollRef        = useRef<ScrollView>(null);
   const currentRunRef    = useRef<any>(null);
@@ -679,46 +682,52 @@ export default function MatchAIScreen() {
         )}
       </ScrollView>
 
-      {/* Input bar */}
-      <View style={[styles.inputBar, { backgroundColor: theme.background, borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, 12) }]}>
-        <TouchableOpacity
-          onPress={() => setThinkingOn(v => !v)}
-          style={[styles.deepToggle, { backgroundColor: thinkingOn ? accent + '1a' : theme.card, borderColor: thinkingOn ? accent : theme.border }]}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Text style={[styles.deepToggleText, { color: thinkingOn ? accent : theme.textSecondary }]}>Deep</Text>
-          <View style={[styles.deepDot, { backgroundColor: thinkingOn ? accent : theme.border }]} />
-        </TouchableOpacity>
-
-        <TextInput
-          style={[styles.input, { backgroundColor: theme.cardAlt, color: theme.text }]}
-          placeholder={modelLoading ? 'Loading model...' : 'Ask your coach...'}
-          placeholderTextColor={theme.textSecondary}
-          value={input}
-          onChangeText={setInput}
-          multiline
-          editable={!isGenerating && !modelLoading && !!modelId}
-          returnKeyType="send"
-          blurOnSubmit={false}
-          onSubmitEditing={() => { if (input.trim()) send(); }}
-        />
-
-        {isGenerating ? (
-          <TouchableOpacity
-            style={[styles.sendBtn, { backgroundColor: '#ef4444' }]}
-            onPress={() => { if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {}); }}
-          >
-            <IconStop size={17} color="#fff" />
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            style={[styles.sendBtn, { backgroundColor: accent, opacity: input.trim() && modelId ? 1 : 0.3 }]}
-            onPress={() => send()}
-            disabled={!input.trim() || !modelId || isGenerating}
-          >
-            <IconSend size={17} color="#fff" />
-          </TouchableOpacity>
-        )}
+      {/* Composer — one rounded card: text on top, controls inside at the
+          bottom (Deep toggle left, send right) */}
+      <View style={[styles.composerWrap, { backgroundColor: theme.background, paddingBottom: Math.max(insets.bottom, 10) }]}>
+        <View style={[styles.composer, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
+          <TextInput
+            style={[styles.composerInput, { color: theme.text }]}
+            placeholder={modelLoading ? 'Loading model...' : 'Ask anything'}
+            placeholderTextColor={theme.textSecondary}
+            value={input}
+            onChangeText={setInput}
+            multiline
+            editable={!isGenerating && !modelLoading && !!modelId}
+            returnKeyType="send"
+            blurOnSubmit={false}
+            onSubmitEditing={() => { if (input.trim()) send(); }}
+          />
+          <View style={styles.composerRow}>
+            <TouchableOpacity
+              onPress={() => setThinkingOn(v => !v)}
+              style={[styles.deepToggle, { backgroundColor: thinkingOn ? accent + '1a' : 'transparent', borderColor: thinkingOn ? accent : theme.border }]}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <View style={[styles.deepDot, { backgroundColor: thinkingOn ? accent : theme.border }]} />
+              <Text style={[styles.deepToggleText, { color: thinkingOn ? accent : theme.textSecondary }]}>
+                {thinkingOn ? 'Deep · on' : 'Deep'}
+              </Text>
+            </TouchableOpacity>
+            <View style={{ flex: 1 }} />
+            {isGenerating ? (
+              <TouchableOpacity
+                style={[styles.sendBtn, { backgroundColor: '#ef4444' }]}
+                onPress={() => { if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {}); }}
+              >
+                <IconStop size={17} color="#fff" />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.sendBtn, { backgroundColor: accent, opacity: input.trim() && modelId ? 1 : 0.35 }]}
+                onPress={() => send()}
+                disabled={!input.trim() || !modelId || isGenerating}
+              >
+                <IconSend size={17} color="#fff" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
@@ -838,24 +847,26 @@ const styles = StyleSheet.create({
   thoughtLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
   thoughtText: { fontSize: 12, lineHeight: 18, color: '#a8a29e', fontStyle: 'italic' },
 
-  // Input bar — everything sits on one 42px baseline; input grows upward
-  inputBar: {
-    flexDirection: 'row', alignItems: 'flex-end', gap: 8,
-    paddingHorizontal: 12, paddingTop: 9, borderTopWidth: StyleSheet.hairlineWidth,
+  // Composer — one rounded card, Grok-style: multiline text on top,
+  // controls row inside at the bottom
+  composerWrap: { paddingHorizontal: 12, paddingTop: 8 },
+  composer: {
+    borderRadius: 24, borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14, paddingTop: 6, paddingBottom: 10,
   },
+  composerInput: {
+    fontSize: 16, lineHeight: 22, maxHeight: 120, minHeight: 44,
+    paddingTop: 10, paddingBottom: 6, textAlignVertical: 'top',
+  },
+  composerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   deepToggle: {
-    height: 42, borderRadius: 21, borderWidth: 1, paddingHorizontal: 13,
+    height: 34, borderRadius: 17, borderWidth: 1, paddingHorizontal: 12,
     flexDirection: 'row', alignItems: 'center', gap: 6,
   },
   deepToggleText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
   deepDot: { width: 6, height: 6, borderRadius: 3 },
-  input: {
-    flex: 1, borderRadius: 21, minHeight: 42,
-    paddingHorizontal: 16, paddingTop: 10.5, paddingBottom: 10.5,
-    fontSize: 15, lineHeight: 21, maxHeight: 126,
-  },
   sendBtn: {
-    width: 42, height: 42, borderRadius: 21,
+    width: 40, height: 40, borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
   },
 });

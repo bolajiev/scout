@@ -205,15 +205,28 @@ export default function SettingsScreen() {
 
           <Divider />
 
-          {/* Engine — CPU only; GPU backends are not shipped (unstable on
-              many Android devices and 110 MB of APK weight) */}
+          {/* Engine — CPU default; GPU is experimental (OpenCL backend).
+              If a GPU load fails, modelManager auto-reverts to CPU. */}
           <View style={styles.cardRow}>
             <View style={styles.behaviorLeft}>
               <Text style={[styles.rowLabel, { color: theme.text }]}>Engine</Text>
-              <Text style={[styles.rowHint, { color: theme.textSecondary }]}>Optimized CPU inference — runs on every device</Text>
+              <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
+                {accelerator === 'gpu' ? 'GPU (experimental) — falls back to CPU if unsupported' : 'CPU — reliable on every device'}
+              </Text>
             </View>
             <View style={styles.optionsRow}>
-              <OptionBtn label="CPU" selected onPress={() => {}} />
+              <OptionBtn label="CPU" selected={accelerator === 'cpu'} onPress={() => { setAccelState('cpu'); setAccelerator('cpu'); }} />
+              <OptionBtn label="GPU" selected={accelerator === 'gpu'} onPress={() => {
+                if (accelerator === 'gpu') return;
+                Alert.alert(
+                  'GPU is experimental',
+                  'GPU inference can be faster on supported phones, but on many devices it fails or is unstable. If loading fails, Scout automatically switches back to CPU.\n\nReload your model after changing this.',
+                  [
+                    { text: 'Keep CPU', style: 'cancel' },
+                    { text: 'Use GPU', onPress: () => { setAccelState('gpu'); setAccelerator('gpu'); } },
+                  ],
+                );
+              }} />
             </View>
           </View>
 

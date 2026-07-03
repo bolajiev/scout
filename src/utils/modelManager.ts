@@ -1,6 +1,6 @@
 import { loadModel, unloadModel } from '@qvac/sdk';
 import { DownloadedModel } from '../types';
-import { toPath } from './storage';
+import { toPath, getSettings, saveSettings } from './storage';
 
 // Keeps the last LLM loaded in memory so screens don't reload every open
 class LLMManager {
@@ -34,17 +34,33 @@ class LLMManager {
     if (nativeConfig.projectionModelSrc) {
       nativeConfig.projectionModelSrc = toPath(nativeConfig.projectionModelSrc);
     }
-    // Always CPU. The GPU backends (Vulkan/OpenCL) are excluded from the APK
-    // — they hard-crash llama.cpp on many Android devices and the Vulkan lib
-    // alone was 109 MB. Overrides any stale 'gpu' value in saved settings.
-    nativeConfig.device = 'cpu';
-    this.pendingId = model.id;
-    this.pending = loadModel({
+    // Engine from user settings: CPU (default, safe) or GPU (experimental,
+    // OpenCL backend only — Vulkan is not shipped). 'auto' defers to setting.
+    let wantGpu = false;
+    if (!nativeConfig.device || nativeConfig.device === 'auto') {
+      const accel = await getSettings().then(s => s.accelerator).catch(() => 'cpu' as const);
+      wantGpu = accel === 'gpu';
+      nativeConfig.device = wantGpu ? 'gpu' : 'cpu';
+    }
+    const attempt = (device: string) => loadModel({
       modelSrc: toPath(model.modelSrc),
       modelType: 'llm',
-      modelConfig: nativeConfig,
+      modelConfig: { ...nativeConfig, device },
       onProgress: (p: { percentage: number }) => onProgress?.(p.percentage),
-    }).then(id => {
+    });
+
+    this.pendingId = model.id;
+    this.pending = (async () => {
+      try {
+        return await attempt(nativeConfig.device as string);
+      } catch (err) {
+        // GPU load failed — permanently revert the setting so the app never
+        // gets stuck in a GPU crash loop, then retry once on CPU
+        if (!wantGpu) throw err;
+        await saveSettings({ accelerator: 'cpu' }).catch(() => {});
+        return await attempt('cpu');
+      }
+    })().then(id => {
       this.qvacId = id;
       this.storageId = model.id;
       this.pending = null;

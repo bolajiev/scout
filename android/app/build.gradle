@@ -144,11 +144,11 @@ android {
             useLegacyPackaging enableLegacyPackaging.toBoolean()
         }
         excludes += "/lib/**/libOpenCL.so"
-        // GPU inference backends — dlopen'd optionals that ggml skips when
-        // absent. Scout runs CPU-only (GPU path crashes on many devices);
-        // the Vulkan backend alone is 109 MB of the APK.
+        // Vulkan GPU backend excluded — 109 MB and crash-prone. The OpenCL
+        // backend (1.7 MB) IS shipped so the experimental GPU option in
+        // Settings has a real path on Adreno devices; ggml falls back to
+        // CPU cleanly when OpenCL is unavailable.
         excludes += "/lib/**/libqvac-ggml-vulkan.so"
-        excludes += "/lib/**/libqvac-ggml-opencl.so"
         // The app ships its own libc++_shared.so (NDK r28, LLVM 19) in
         // src/main/jniLibs — QVAC engines need LLVM 18+ exception symbols
         // that RN's AAR-provided NDK-27 copy lacks. pickFirst lets the app
