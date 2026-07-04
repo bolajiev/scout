@@ -91,12 +91,12 @@ export default function OnboardingScreen() {
             <Text style={[styles.tagline, { color: theme.textSecondary }]}>Your on-device football AI.</Text>
             <View style={[styles.pillRow]}>
               {['Private', 'Offline', 'No Cloud'].map(b => (
-                <View key={b} style={[styles.pill, { backgroundColor: accent + '18', borderColor: accent + '44' }]}>
+                <View key={b} style={[styles.pill, { backgroundColor: accent + '18' }]}>
                   <Text style={[styles.pillText, { color: accent }]}>{b}</Text>
                 </View>
               ))}
             </View>
-            <View style={[styles.hackBadge, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={[styles.hackBadge, { backgroundColor: theme.card }]}>
               <View style={[styles.hackDot, { backgroundColor: accent }]} />
               <Text style={[styles.hackText, { color: theme.textSecondary }]}>Private · No cloud · No account</Text>
             </View>
@@ -109,14 +109,14 @@ export default function OnboardingScreen() {
           <Text style={[styles.slideSub, { color: theme.textSecondary }]}>All running on your phone.</Text>
           <ScrollView style={styles.moduleScroll} showsVerticalScrollIndicator={false}>
             {MODULES.map(m => (
-              <View key={m.title} style={[styles.moduleRow, { backgroundColor: theme.card, borderColor: m.tagColor + '40' }]}>
+              <View key={m.title} style={[styles.moduleRow, { backgroundColor: theme.card }]}>
                 <View style={[styles.moduleIconBox, { backgroundColor: m.tagColor + '18' }]}>
                   {m.icon(m.tagColor)}
                 </View>
                 <View style={styles.moduleBody}>
                   <View style={styles.moduleTitleRow}>
                     <Text style={[styles.moduleTitle, { color: theme.text }]}>{m.title}</Text>
-                    <View style={[styles.moduleTag, { backgroundColor: m.tagColor + '18', borderColor: m.tagColor + '44' }]}>
+                    <View style={[styles.moduleTag, { backgroundColor: m.tagColor + '22' }]}>
                       <Text style={[styles.moduleTagText, { color: m.tagColor }]}>{m.tag}</Text>
                     </View>
                   </View>
@@ -136,7 +136,7 @@ export default function OnboardingScreen() {
               No cloud. No tracking.{'\n'}Nothing leaves your phone.
             </Text>
 
-            <View style={[styles.infoCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={[styles.infoCard, { backgroundColor: theme.card }]}>
               <View style={[styles.infoBar, { backgroundColor: accent }]} />
               <View style={styles.infoCardContent}>
                 <Text style={[styles.infoCardTitle, { color: theme.text }]}>On-device inference</Text>
@@ -146,7 +146,7 @@ export default function OnboardingScreen() {
               </View>
             </View>
 
-            <View style={[styles.infoCard, { backgroundColor: theme.card, borderColor: '#60a5fa40' }]}>
+            <View style={[styles.infoCard, { backgroundColor: theme.card }]}>
               <View style={[styles.infoBar, { backgroundColor: '#60a5fa' }]} />
               <View style={styles.infoCardContent}>
                 <Text style={[styles.infoCardTitle, { color: theme.text }]}>Live match data</Text>
@@ -160,7 +160,7 @@ export default function OnboardingScreen() {
       </ScrollView>
 
       {/* Footer */}
-      <View style={[styles.footer, { paddingBottom: botPad, borderTopColor: theme.border }]}>
+      <View style={[styles.footer, { paddingBottom: botPad }]}>
         <View style={styles.dots}>
           {[0, 1, 2].map(i => (
             <View
@@ -201,11 +201,11 @@ const styles = StyleSheet.create({
   wordmark: { fontSize: 40, fontWeight: '900', letterSpacing: 6 },
   tagline: { fontSize: 17, fontWeight: '600', textAlign: 'center' },
   pillRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' },
-  pill: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, borderWidth: 1 },
+  pill: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 },
   pillText: { fontSize: 12, fontWeight: '700' },
   hackBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, marginTop: 4,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginTop: 4,
   },
   hackDot: { width: 6, height: 6, borderRadius: 3 },
   hackText: { fontSize: 12, fontWeight: '600' },
@@ -215,26 +215,26 @@ const styles = StyleSheet.create({
   moduleScroll: { flex: 1 },
   moduleRow: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 14,
-    borderRadius: 14, borderWidth: 1, padding: 14, marginBottom: 10,
+    borderRadius: 14, padding: 14, marginBottom: 10,
   },
   moduleIconBox: { width: 48, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   moduleBody: { flex: 1, gap: 6 },
   moduleTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   moduleTitle: { fontSize: 15, fontWeight: '700' },
-  moduleTag: { borderWidth: 1, borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
+  moduleTag: { borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
   moduleTagText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.4 },
   moduleDesc: { fontSize: 13, lineHeight: 18 },
 
   privacyLine: { fontSize: 17, lineHeight: 26, textAlign: 'center', fontWeight: '500' },
   infoCard: {
-    borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden', width: '100%',
+    borderRadius: 14, flexDirection: 'row', overflow: 'hidden', width: '100%',
   },
   infoBar: { width: 4 },
   infoCardContent: { flex: 1, padding: 14, gap: 6 },
   infoCardTitle: { fontSize: 14, fontWeight: '700' },
   infoCardBody: { fontSize: 13, lineHeight: 19 },
 
-  footer: { paddingHorizontal: 24, paddingTop: 16, gap: 16, borderTopWidth: StyleSheet.hairlineWidth },
+  footer: { paddingHorizontal: 24, paddingTop: 16, gap: 16 },
   dots: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   dot: { height: 7, borderRadius: 4 },
   btn: { borderRadius: 16, paddingVertical: 18, alignItems: 'center' },

@@ -18,6 +18,7 @@ import {
 } from '../utils/storage';
 import { AVAILABLE_MODELS, getHfDownloadUrl } from '../utils/models';
 import { ModelInfo } from '../types';
+import ScreenHeader from '../components/ScreenHeader';
 
 type Phase = 'downloading' | 'done' | 'failed';
 
@@ -229,15 +230,10 @@ export default function DownloadScreen() {
 
   return (
     <Animated.View style={[styles.root, { backgroundColor: theme.background, opacity: fadeAnim }]}>
-      <View style={[styles.header, { borderBottomColor: theme.border }]}>
-        <View style={styles.brand}>
-          <View style={[styles.brandDot, { backgroundColor: theme.accent }]} />
-          <Text style={[styles.brandName, { color: theme.text }]}>Scout</Text>
-        </View>
-      </View>
+      <ScreenHeader title="Scout" onBack={false} />
 
       <View style={styles.body}>
-        <View style={[styles.iconBox, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View style={[styles.iconBox, { backgroundColor: theme.card }]}>
           <View style={[styles.iconDot, { backgroundColor: theme.accent }]} />
         </View>
 
@@ -307,19 +303,12 @@ export default function DownloadScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingTop: 56, paddingHorizontal: 20, paddingBottom: 13, borderBottomWidth: 1,
-  },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  brandDot: { width: 7, height: 7, borderRadius: 3.5 },
-  brandName: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
   body: {
     flex: 1, justifyContent: 'center', alignItems: 'center',
     paddingHorizontal: 40, gap: 16,
   },
   iconBox: {
-    width: 72, height: 72, borderRadius: 22, borderWidth: 1,
+    width: 72, height: 72, borderRadius: 22,
     justifyContent: 'center', alignItems: 'center', marginBottom: 8,
   },
   iconDot: { width: 20, height: 20, borderRadius: 10 },
