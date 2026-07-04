@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, TextInput, Image,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, Share,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -771,16 +771,28 @@ export default function PredictorScreen() {
                 <View style={styles.resultContent}>
                   <View style={styles.analysisHeader}>
                     <Text style={[styles.resultLabel, { color: accent }]}>ANALYSIS</Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const full = `${teamA} vs ${teamB}\n${parsed.winner ? `Winner: ${parsed.winner}` : ''} ${parsed.score}\n\n${parsed.analysis}`;
-                        Clipboard.setStringAsync(full.trim()).catch(() => {});
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Text style={[styles.copyBtn, { color: theme.textSecondary }]}>Copy</Text>
-                    </TouchableOpacity>
+                    <View style={styles.analysisActions}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const full = `${teamA} vs ${teamB}\n${parsed.winner ? `Winner: ${parsed.winner}` : ''} ${parsed.score}\n\n${parsed.analysis}`;
+                          Clipboard.setStringAsync(full.trim()).catch(() => {});
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={[styles.copyBtn, { color: theme.textSecondary }]}>Copy</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const msg = `Scout calls it: ${parsed.winner} ${parsed.score ? `(${parsed.score})` : ''} — ${teamA} vs ${teamB}\n${parsed.confidence} confidence\n\n${parsed.analysis}\n\nPredicted 100% on-device by Scout`;
+                          Share.share({ message: msg }).catch(() => {});
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={[styles.copyBtn, { color: accent }]}>Share</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                   <Text selectable style={[styles.resultText, { color: theme.text }]}>{parsed.analysis}</Text>
                   {elapsed && (
@@ -903,6 +915,7 @@ const styles = StyleSheet.create({
   thoughtText: { fontSize: 12, lineHeight: 18, color: '#a8a29e', fontStyle: 'italic' },
   stat: { fontSize: 10 },
   analysisHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  analysisActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   copyBtn: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
   // Scoreboard
   scoreboard: { borderRadius: 16, borderWidth: 1, marginBottom: 10, overflow: 'hidden' },
