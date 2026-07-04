@@ -44,7 +44,9 @@ export async function getActiveFdKey(): Promise<string> {
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   accelerator: 'cpu',
-  responseLength: 'balanced',
+  // 'short' by default: at CPU token rates, capped answers are the
+  // difference between a snappy app and a 3-minute wait
+  responseLength: 'short',
   deepReasoning: false,
   huggingFaceToken: '',
   temperature: 0.7,

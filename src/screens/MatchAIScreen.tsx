@@ -25,15 +25,11 @@ import { logInference } from '../utils/auditLogger';
 const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_W = (SCREEN_W - 48) / 2;
 
-// Kept tight on purpose: every system-prompt token costs prompt-processing
-// time on CPU before the first visible token appears.
-const SYSTEM_PROMPT = `You are Scout's AI Coach — a veteran football coach and analyst, fully on-device.
+// Kept minimal on purpose: every system-prompt token costs CPU prompt-
+// processing time before the first visible token appears.
+const SYSTEM_PROMPT = `You are Scout's AI Coach — a veteran football coach, fully on-device.
 
-VOICE: direct, warm, opinionated. ALWAYS commit — never say "I can't", "I'm not sure", or refuse a football question; give your best professional read with conviction. Back opinions with specifics: players, formations, seasons, scorelines. No filler or disclaimers.
-
-TOOLS: get_today_fixtures ONLY for today's matches/scores/kick-offs. get_team_form ONLY for one team's recent results. Never call tools for tactics, rules, history, or opinion questions. Max one tool per question; if it returns nothing, answer from knowledge without complaining.
-
-STYLE: short paragraphs, **bold** key names, bullets for comparisons, real football language. English only. Be concise — quality over length.`;
+Rules: always commit — never refuse or say "I'm not sure"; back opinions with specific players, formations, scorelines; no filler or disclaimers. Tools: get_today_fixtures only for today's matches/scores; get_team_form only for one team's recent form; never for tactics, history, or opinion questions; max one tool per question. Style: short paragraphs, **bold** key names, bullets for lists, concise English.`;
 
 const SCOUT_TOOLS: Tool[] = [
   {
@@ -265,9 +261,9 @@ export default function MatchAIScreen() {
       addMessage(sessionIdRef.current, 'user', q);
     } catch {}
 
-    // Only the last 5 exchanges go to the model — prompt processing on CPU
+    // Only the last 4 exchanges go to the model — prompt processing on CPU
     // scales with context, so unbounded history makes every reply slower
-    const history: { role: 'user' | 'assistant' | 'tool'; content: string }[] = entries.slice(-5).map(e => [
+    const history: { role: 'user' | 'assistant' | 'tool'; content: string }[] = entries.slice(-4).map(e => [
       { role: 'user' as const, content: e.question },
       { role: 'assistant' as const, content: e.answer },
     ]).flat();
@@ -317,7 +313,7 @@ export default function MatchAIScreen() {
           if (!thinkStart) thinkStart = Date.now();
           thoughtAcc += event.text;
           const now = Date.now();
-          if (mountedRef.current && now - lastFlush > 40) {
+          if (mountedRef.current && now - lastFlush > 100) {
             lastFlush = now;
             setSlot(s => s ? { ...s, thought: thoughtAcc, isThinking: true } : s);
             throttledScroll();
@@ -326,7 +322,7 @@ export default function MatchAIScreen() {
           if (thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
           pass1Answer += event.text;
           const now = Date.now();
-          if (mountedRef.current && now - lastFlush > 40) {
+          if (mountedRef.current && now - lastFlush > 100) {
             lastFlush = now;
             setSlot(s => s ? { ...s, answer: pass1Answer, isThinking: false } : s);
             throttledScroll();
@@ -397,7 +393,7 @@ export default function MatchAIScreen() {
           if (event.type === 'contentDelta') {
             answerAcc += event.text;
             const now = Date.now();
-            if (mountedRef.current && now - lastFlush > 40) {
+            if (mountedRef.current && now - lastFlush > 100) {
               lastFlush = now;
               setSlot(s => s ? { ...s, answer: answerAcc } : s);
               throttledScroll();

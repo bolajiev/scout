@@ -283,14 +283,14 @@ export default function PredictorScreen() {
         if (event.type === 'thinkingDelta') {
           thoughtAcc += event.text;
           const now = Date.now();
-          if (mountedRef.current && now - lastFlush > 50) {
+          if (mountedRef.current && now - lastFlush > 100) {
             lastFlush = now;
             setThought(thoughtAcc);
           }
         } else if (event.type === 'contentDelta') {
           streamed += event.text;
           const now = Date.now();
-          if (mountedRef.current && now - lastFlush > 50) {
+          if (mountedRef.current && now - lastFlush > 100) {
             lastFlush = now;
             setPrediction(streamed);
           }
