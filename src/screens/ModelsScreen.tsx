@@ -12,7 +12,7 @@ import { createDownloadResumable } from 'expo-file-system/legacy';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { AVAILABLE_MODELS, getHfDownloadUrl, MODEL_KEYS } from '../utils/models';
+import { AVAILABLE_MODELS, getHfDownloadUrl } from '../utils/models';
 import {
   saveDownloadedModel,
   removeDownloadedModel,
