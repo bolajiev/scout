@@ -208,6 +208,8 @@ export default function MatchAIScreen() {
               id: `r-${msgs[i].id}`,
               question: msgs[i].content,
               answer: next?.role === 'assistant' ? next.content : '',
+              elapsed: next?.meta?.elapsed,
+              toks: next?.meta?.toks,
             });
           }
         }
@@ -459,7 +461,7 @@ export default function MatchAIScreen() {
       logInference('matchai', modelNameRef.current, finalStats?.timeToFirstToken ?? 0, totalMs, finalStats?.generatedTokens ?? 0).catch(() => {});
 
       const elapsed = Math.round(totalMs / 100) / 10;
-      if (sessionIdRef.current && answerAcc) addMessage(sessionIdRef.current, 'assistant', answerAcc);
+      if (sessionIdRef.current && answerAcc) addMessage(sessionIdRef.current, 'assistant', answerAcc, { elapsed, toks: finalStats?.generatedTokens });
 
       if (thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
       if (mountedRef.current) {

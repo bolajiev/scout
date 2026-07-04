@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconTarget, IconStop, IconBack } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
@@ -41,6 +41,7 @@ Do not add anything before WINNER or after the analysis. Always respond in Engli
 
 export default function PredictorScreen() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const themeMode = useTheme();
   const theme = getTheme(themeMode);
   const insets = useSafeAreaInsets();
@@ -64,6 +65,8 @@ export default function PredictorScreen() {
   const [formB, setFormB] = useState<TeamForm | null>(null);
   const [formLoading, setFormLoading] = useState(false);
   const [record, setRecord] = useState<{ hits: number; misses: number; pending: number } | null>(null);
+  const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
+  const handoffDoneRef = useRef(false);
 
   const currentRunRef  = useRef<any>(null);
   const mountedRef     = useRef(true);
@@ -186,6 +189,18 @@ export default function PredictorScreen() {
         ...others.filter(upcoming),
       ].slice(0, 10);
       setFixtures(rail);
+      // Arriving from the Home match card: preselect that fixture once
+      // (ref guards against the 60s ticker re-selecting after a manual clear)
+      const want = !handoffDoneRef.current ? route.params?.fixtureId : null;
+      if (want) {
+        handoffDoneRef.current = true;
+        const f = all.find(x => x.idEvent === want);
+        if (f) {
+          setTeamA(f.strHomeTeam);
+          setTeamB(f.strAwayTeam);
+          setSelectedFixture(f);
+        }
+      }
       setNoInternet(!online);
     } catch {
       if (mountedRef.current) setNoInternet(true);
@@ -453,6 +468,7 @@ export default function PredictorScreen() {
                     onPress={() => {
                       setTeamA(f.strHomeTeam);
                       setTeamB(f.strAwayTeam);
+                      setSelectedFixture(f);
                       setParsed(null);
                       setPrediction('');
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -526,7 +542,7 @@ export default function PredictorScreen() {
               placeholder="e.g. Arsenal"
               placeholderTextColor={theme.textSecondary}
               value={teamA}
-              onChangeText={t => { setTeamA(t); setParsed(null); }}
+              onChangeText={t => { setTeamA(t); setParsed(null); setSelectedFixture(null); }}
               returnKeyType="next"
             />
           </View>
@@ -542,11 +558,51 @@ export default function PredictorScreen() {
               placeholder="e.g. Real Madrid"
               placeholderTextColor={theme.textSecondary}
               value={teamB}
-              onChangeText={t => { setTeamB(t); setParsed(null); }}
+              onChangeText={t => { setTeamB(t); setParsed(null); setSelectedFixture(null); }}
               returnKeyType="done"
             />
           </View>
         </View>
+
+        {/* Selected match details */}
+        {selectedFixture && (
+          <View style={[styles.matchDetails, { backgroundColor: theme.card, borderColor: isLive(selectedFixture) ? '#ef444455' : theme.border }]}>
+            <View style={styles.matchDetailsTop}>
+              <Text style={[styles.matchDetailsLeague, { color: theme.textSecondary }]} numberOfLines={1}>
+                {selectedFixture.strLeague}
+              </Text>
+              {isLive(selectedFixture) ? (
+                <View style={styles.matchDetailsLiveRow}>
+                  <View style={styles.matchDetailsLiveDot} />
+                  <Text style={styles.matchDetailsLiveText}>
+                    LIVE {selectedFixture.intHomeScore}-{selectedFixture.intAwayScore}
+                  </Text>
+                </View>
+              ) : isFinished(selectedFixture) ? (
+                <Text style={[styles.matchDetailsTime, { color: theme.textSecondary }]}>
+                  FT {selectedFixture.intHomeScore}-{selectedFixture.intAwayScore}
+                </Text>
+              ) : (
+                <Text style={[styles.matchDetailsTime, { color: accent }]}>
+                  {selectedFixture.dateEvent && selectedFixture.dateEvent !== todayISO()
+                    ? `${new Date(selectedFixture.dateEvent).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })} · ${fmtTime(selectedFixture.strTime)}`
+                    : `Today · ${fmtTime(selectedFixture.strTime)}`}
+                </Text>
+              )}
+            </View>
+            <View style={styles.matchDetailsTeams}>
+              {badgeUrl(selectedFixture.strHomeTeamBadge) ? (
+                <Image source={{ uri: badgeUrl(selectedFixture.strHomeTeamBadge)! }} style={styles.matchDetailsBadge} resizeMode="contain" />
+              ) : null}
+              <Text style={[styles.matchDetailsVs, { color: theme.text }]} numberOfLines={1}>
+                {selectedFixture.strHomeTeam}  vs  {selectedFixture.strAwayTeam}
+              </Text>
+              {badgeUrl(selectedFixture.strAwayTeamBadge) ? (
+                <Image source={{ uri: badgeUrl(selectedFixture.strAwayTeamBadge)! }} style={styles.matchDetailsBadge} resizeMode="contain" />
+              ) : null}
+            </View>
+          </View>
+        )}
 
         {/* Live form section — appears when both teams searched */}
         {(formLoading || formA || formB) && (
@@ -878,6 +934,18 @@ const styles = StyleSheet.create({
     borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12,
     fontSize: 14, lineHeight: 20, minHeight: 60,
   },
+  // Selected match details
+  matchDetails: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 10 },
+  matchDetailsTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  matchDetailsLeague: { flex: 1, fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' },
+  matchDetailsTime: { fontSize: 12, fontWeight: '700' },
+  matchDetailsLiveRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  matchDetailsLiveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444' },
+  matchDetailsLiveText: { fontSize: 12, fontWeight: '800', color: '#ef4444', letterSpacing: 0.4 },
+  matchDetailsTeams: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  matchDetailsBadge: { width: 26, height: 26 },
+  matchDetailsVs: { flex: 1, fontSize: 15, fontWeight: '800', textAlign: 'center' },
+
   // Live form section
   formSection: {
     borderRadius: 14, borderWidth: 1, padding: 14, gap: 10,

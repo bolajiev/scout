@@ -148,6 +148,17 @@ export function unregisterInferenceCancel() {
   _cancelFn = null;
 }
 
+// True while a screen has an active inference registered
+export function hasActiveInference(): boolean {
+  return _cancelFn !== null;
+}
+
+// Cancel whatever is generating right now (no-op when idle). Used before
+// unloading the model — unloading mid-generation is a native use-after-free.
+export function cancelActiveInference(): void {
+  try { _cancelFn?.(); } catch {}
+}
+
 async function ensureChannel(): Promise<void> {
   if (channelReady || Platform.OS !== 'android') return;
   if (_channelSetupPromise) return _channelSetupPromise;
@@ -218,6 +229,9 @@ export async function showRunningNotification(label = 'Scout') {
 }
 
 export async function clearInferenceNotifications() {
+  // Every generation path calls this when the run ends (success, cancel or
+  // error) — clearing the cancel hook here keeps hasActiveInference honest
+  _cancelFn = null;
   try {
     await Notifications.dismissNotificationAsync(RUNNING_ID);
     await Notifications.dismissNotificationAsync(DONE_ID);

@@ -111,6 +111,11 @@ export default function HistoryScreen() {
             <Text selectable style={[styles.chatText, { color: msg.role === 'user' ? '#fff' : theme.text }]}>
               {msg.content}
             </Text>
+            {msg.role === 'assistant' && msg.meta?.elapsed != null && (
+              <Text style={[styles.chatStat, { color: theme.textSecondary }]}>
+                {msg.meta.elapsed}s{msg.meta.toks ? ` · ${Math.round(msg.meta.toks / (msg.meta.elapsed || 1))} tok/s` : ''} · on-device
+              </Text>
+            )}
           </View>
         </View>
       ))}
@@ -315,6 +320,7 @@ const styles = StyleSheet.create({
   chatAiRow: { alignItems: 'flex-start' },
   chatBubble: { maxWidth: '85%', borderRadius: 16, paddingHorizontal: 13, paddingVertical: 9 },
   chatText: { fontSize: 14, lineHeight: 20 },
+  chatStat: { fontSize: 9, marginTop: 5 },
   continueBtn: {
     borderRadius: 12, borderWidth: 1, paddingVertical: 11,
     alignItems: 'center', marginTop: 4,

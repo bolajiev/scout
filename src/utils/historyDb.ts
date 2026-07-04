@@ -9,12 +9,18 @@ export interface Session {
   createdAt: number;
 }
 
+export interface MessageMeta {
+  elapsed?: number;  // seconds
+  toks?: number;     // generated tokens
+}
+
 export interface Message {
   id: string;
   sessionId: string;
   role: 'user' | 'assistant';
   content: string;
   createdAt: number;
+  meta?: MessageMeta;
 }
 
 let _db: SQLite.SQLiteDatabase | null = null;
@@ -52,6 +58,7 @@ export const getDb = (): SQLite.SQLiteDatabase => {
           role       TEXT NOT NULL,
           content    TEXT NOT NULL,
           created_at INTEGER NOT NULL,
+          meta       TEXT,
           FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
@@ -73,6 +80,8 @@ export const getDb = (): SQLite.SQLiteDatabase => {
       for (const col of ['date_event TEXT', 'home_badge TEXT', 'away_badge TEXT']) {
         try { _db.execSync(`ALTER TABLE fixtures ADD COLUMN ${col};`); } catch {}
       }
+      // Stats metadata on messages (tok/s, elapsed) — added later
+      try { _db.execSync('ALTER TABLE messages ADD COLUMN meta TEXT;'); } catch {}
     } catch (e) {
       _dbFailed = true;
       throw e;
@@ -117,26 +126,32 @@ export const addMessage = (
   sessionId: string,
   role: 'user' | 'assistant',
   content: string,
+  meta?: MessageMeta,
 ): void => {
   getDb().runSync(
-    'INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)',
-    [uid(), sessionId, role, content, Date.now()],
+    'INSERT INTO messages (id, session_id, role, content, created_at, meta) VALUES (?, ?, ?, ?, ?, ?)',
+    [uid(), sessionId, role, content, Date.now(), meta ? JSON.stringify(meta) : null],
   );
 };
 
 export const getMessages = (sessionId: string): Message[] =>
   getDb()
-    .getAllSync<{ id: string; session_id: string; role: string; content: string; created_at: number }>(
+    .getAllSync<{ id: string; session_id: string; role: string; content: string; created_at: number; meta: string | null }>(
       'SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC',
       [sessionId],
     )
-    .map(r => ({
-      id: r.id,
-      sessionId: r.session_id,
-      role: r.role as 'user' | 'assistant',
-      content: r.content,
-      createdAt: r.created_at,
-    }));
+    .map(r => {
+      let meta: MessageMeta | undefined;
+      if (r.meta) { try { meta = JSON.parse(r.meta); } catch {} }
+      return {
+        id: r.id,
+        sessionId: r.session_id,
+        role: r.role as 'user' | 'assistant',
+        content: r.content,
+        createdAt: r.created_at,
+        meta,
+      };
+    });
 
 // Update the final assistant message content (streaming completes after initial insert)
 export const updateLastAssistantMessage = (sessionId: string, content: string): void => {

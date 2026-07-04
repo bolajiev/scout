@@ -4,25 +4,31 @@ import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import AppNavigator from './src/navigation/AppNavigator';
 import { llmManager } from './src/utils/modelManager';
-import { clearInferenceNotifications } from './src/utils/bgNotification';
+import { clearInferenceNotifications, cancelActiveInference, hasActiveInference } from './src/utils/bgNotification';
 
 // Release model when app goes to background.
 // 30-second grace period so quick task-switching doesn't reload the model.
-// On full close, MainActivity.onDestroy kills the process when the activity
-// is finishing, so native QVAC memory is freed immediately regardless.
+// CRITICAL ORDER: cancel any active generation first and give llama.cpp a
+// moment to settle — unloading the model mid-generation is a native
+// use-after-free and crashed the app when users switched away and back.
 let bgReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+let bgSettleTimer: ReturnType<typeof setTimeout> | null = null;
 
 AppState.addEventListener('change', (next: AppStateStatus) => {
   if (next === 'background') {
-    bgReleaseTimer = setTimeout(async () => {
-      await clearInferenceNotifications();
-      await llmManager.release().catch(() => {});
+    bgReleaseTimer = setTimeout(() => {
+      cancelActiveInference();
+      bgSettleTimer = setTimeout(async () => {
+        // If a run is somehow still registered, skip this cycle — memory
+        // pressure is better than a native crash
+        if (hasActiveInference()) return;
+        await clearInferenceNotifications();
+        await llmManager.release().catch(() => {});
+      }, 2_000);
     }, 30_000);
   } else if (next === 'active') {
-    if (bgReleaseTimer !== null) {
-      clearTimeout(bgReleaseTimer);
-      bgReleaseTimer = null;
-    }
+    if (bgReleaseTimer !== null) { clearTimeout(bgReleaseTimer); bgReleaseTimer = null; }
+    if (bgSettleTimer !== null) { clearTimeout(bgSettleTimer); bgSettleTimer = null; }
   }
 });
 

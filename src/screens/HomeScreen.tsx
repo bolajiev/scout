@@ -349,7 +349,7 @@ export default function HomeScreen() {
         <Animated.View style={[styles.twoColRow, { opacity: c2.op, transform: [{ translateY: c2.ty }] }]}>
 
           {/* Predictor */}
-          <TouchableOpacity style={styles.predictCard} onPress={() => go('Predictor')} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.predictCard} onPress={() => navigation.navigate('Predictor', nextMatch ? { fixtureId: nextMatch.idEvent } : undefined)} activeOpacity={0.85}>
             <Text style={styles.predictModLabel}>PREDICTOR</Text>
 
             {nextMatch ? (
