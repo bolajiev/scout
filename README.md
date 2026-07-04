@@ -10,7 +10,7 @@ Scout is a fully private football AI app for Android. Every AI feature — chat,
 
 | Feature | Engine | What it does |
 |---|---|---|
-| **AI Coach** | QVAC LLM | Football chat with live tool calling — the model decides when to fetch today's fixtures or a team's recent results from TheSportsDB and grounds its answers in real data. Streams tokens live; in Deep mode the thinking process streams too, then collapses to a tappable "Thought for X.Xs" row. Answers render as markdown. |
+| **AI Coach** | QVAC LLM | Football chat with live tool calling — the model decides when to fetch today's fixtures, a team's recent results (TheSportsDB), or football news to verify a claim/rumor (BBC Sport RSS), and grounds its answers in real data. Every fetch is disclosed with a tappable chip showing the raw data used. Streams tokens live; in Think mode the reasoning stream shows too, then collapses to a tappable "Thought for X.Xs" row. Answers render as markdown. |
 | **Predictor** | QVAC LLM | Pick a fixture (live World Cup 2026 matches with real team badges) or type any two teams. Recent form is fetched live and injected into the prompt; output is a structured scoreboard: winner, score, confidence, analysis. |
 | **Scout Lens** | QVAC Vision | Point the camera at a jersey, club badge, or scoreboard — the vision model identifies it on-device. Reasoning is disabled for scans so results come fast. |
 | **History** | SQLite | Every session (chat, prediction, scan) stored locally and replayable. |
@@ -30,9 +30,9 @@ const run1 = completion({
   modelId,
   history: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
   stream: true,
-  tools: SCOUT_TOOLS,                       // get_today_fixtures, get_team_form
-  captureThinking: deepMode,
-  generationParams: { ...genParams, reasoning_budget: deepMode ? -1 : 0 },
+  tools: SCOUT_TOOLS,      // get_today_fixtures, get_team_form, get_football_news
+  captureThinking: thinkMode,
+  generationParams: { ...genParams, reasoning_budget: thinkMode ? -1 : 0 },
 });
 
 for await (const event of run1.events) {
@@ -41,8 +41,10 @@ for await (const event of run1.events) {
 }
 
 const toolCalls = await run1.toolCalls;
-// execute tools against TheSportsDB, push { role: 'tool', content } messages,
-// then run pass 2 for the final grounded answer
+// execute against TheSportsDB (fixtures/form) or BBC Sport RSS (news),
+// push { role: 'tool', content } messages, then run pass 2 for the
+// final grounded answer — the raw tool result is also kept for the UI
+// so the user can see exactly what data backed the answer
 ```
 
 Streaming UI flushes are throttled to ~40ms batches, finished answers render as markdown while the live stream stays plain text, and completed bubbles are memoized — tokens never lag behind the model, even in long chats.
@@ -59,7 +61,7 @@ CONFIDENCE: High
 City's high press and recent 4-0 run give them the edge...
 ```
 
-In Deep mode the thinking stream renders in an amber "Reading the game..." card before the prediction appears.
+In Think mode the reasoning stream renders in an amber "Reading the game..." card before the prediction appears.
 
 ### Scout Lens — vision with multimodal projection
 
@@ -104,6 +106,8 @@ EAS Build reinstalls `node_modules`, which would silently revert these patches �
 
 [TheSportsDB](https://www.thesportsdb.com) free endpoints, no key: today's fixtures, FIFA World Cup 2026 schedule, team search, recent results, and team badge images. Fixtures are cached in SQLite keyed by date — offline you get today's cache, never a stale day. The home card refreshes every 5 minutes, shows live scores, and rotates finished matches to the next kick-off.
 
+[BBC Sport RSS](https://feeds.bbci.co.uk/sport/football/rss.xml) (public, no key) backs the AI Coach's `get_football_news` tool — used only to verify a specific claim, transfer, injury, or club news story, never for tactics/history/opinion questions.
+
 ---
 
 ## Models
@@ -112,10 +116,12 @@ Downloaded in-app (resumable) to app-private storage `DocumentDirectory/scout/mo
 
 | Model | Type | Size | Used for |
 |---|---|---|---|
+| Qwen3 0.6B | Text | 390 MB | Instant tier — loads in seconds, full chat/predict on any device |
 | Qwen3 1.7B Q4 | Text | 1.1 GB | AI Coach, Predictor — fast, recommended |
 | MedPsy 1.7B (QVAC) | Text | 1.1 GB | Lighter-weight alternative |
 | MedPsy 4B (QVAC) | Text | 2.7 GB | Richer reasoning |
-| Gemma 4 E2B Q4 + mmproj | Vision | 3.8 GB | Scout Lens |
+| SmolVLM2 500M | Vision | 550 MB | Scout Lens — fastest vision option |
+| Gemma 4 2B Q4 + mmproj | Vision | 3.8 GB | Scout Lens — richer identification |
 
 ---
 
@@ -128,7 +134,7 @@ Downloaded in-app (resumable) to app-private storage `DocumentDirectory/scout/mo
 | Storage | SQLite (`expo-sqlite`) + AsyncStorage |
 | Live data | TheSportsDB REST (free, no key) |
 | Language | TypeScript |
-| Target | Android arm64-v8a, minSdk 29, NDK 29 (required by QVAC native engines), new architecture |
+| Target | Android arm64-v8a, minSdk 29, NDK 27.1.12297006 + explicit NDK 28b `libc++_shared.so` for QVAC's native engines, new architecture |
 
 ---
 
@@ -137,10 +143,17 @@ Downloaded in-app (resumable) to app-private storage `DocumentDirectory/scout/mo
 ```bash
 npm install                 # postinstall re-applies QVAC patches automatically
 npx tsc --noEmit --skipLibCheck
+
+# Local build (no EAS quota needed) — signs with android/app/debug.keystore
+# unless KEYSTORE_PATH/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD are set
+cd android && ./gradlew assembleRelease
+# APK: android/app/build/outputs/apk/release/app-release.apk
+
+# or, via EAS:
 eas build --platform android --profile preview   # signed APK, local credentials
 ```
 
-`.easignore` ships the local `android/` directory (skips server prebuild, keeps NDK 29 and manifest fixes) and excludes `android/build/` so stale caches never reach the build server. Running `expo prebuild --clean` regenerates `android/` — re-apply the NDK version (29.0.14206865) and manifest fixes if you do.
+`.easignore` ships the local `android/` directory (skips server prebuild, keeps the NDK 27 toolchain and manifest fixes) and excludes `android/build/` so stale caches never reach the build server. Running `expo prebuild --clean` regenerates `android/` — re-apply the NDK version (27.1.12297006), the `jniLibs/arm64-v8a/libc++_shared.so` override, and the manifest fixes if you do.
 
 ---
 

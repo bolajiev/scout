@@ -47,3 +47,12 @@ credentials.json
 !/android/app/src/
 !/android/app/src/main/
 !/android/app/src/main/AndroidManifest.xml
+
+# Claude Code session tooling — never part of the app
+.claude/
+
+# Built APKs are distributed via GitHub Releases, not git — 170MB+ each
+*.apk
+
+# Local screenshots used during development, not app assets
+/image/
