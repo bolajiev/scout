@@ -228,7 +228,7 @@ export default function MatchAIScreen() {
         }
       } catch {}
     }
-    // Sync Deep Reasoning default from global settings
+    // Sync Think mode default from global settings
     getSettings().then(s => {
       if (mountedRef.current) setThinkingOn(s.deepReasoning ?? false);
     }).catch(() => {});

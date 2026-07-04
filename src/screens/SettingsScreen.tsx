@@ -191,7 +191,7 @@ export default function SettingsScreen() {
 
           <Divider />
 
-          {/* Deep Reasoning */}
+          {/* Think Mode */}
           <View style={styles.cardRow}>
             <View style={styles.behaviorLeft}>
               <Text style={[styles.rowLabel, { color: theme.text }]}>Think Mode</Text>

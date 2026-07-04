@@ -14,7 +14,7 @@ const MODULES = [
     tag: 'TOOL CALLING',
     tagColor: '#22c55e',
     title: 'AI Coach',
-    desc: 'On-device LLM with live tool calling: the model decides when to fetch today\'s fixtures or a team\'s form and grounds its answers in real data. Streams its thinking process in Deep mode.',
+    desc: 'On-device LLM with live tool calling: the model decides when to fetch today\'s fixtures or a team\'s form and grounds its answers in real data. Streams its thinking process in Think mode.',
   },
   {
     icon: (c: string) => <IconTarget size={18} color={c} />,
