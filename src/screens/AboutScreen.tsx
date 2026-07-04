@@ -14,7 +14,7 @@ const MODULES = [
     tag: 'TOOL CALLING',
     tagColor: '#22c55e',
     title: 'AI Coach',
-    desc: 'On-device LLM with live tool calling: the model decides when to fetch today\'s fixtures or a team\'s form and grounds its answers in real data. Streams its thinking process in Think mode.',
+    desc: 'On-device LLM with live tool calling: the model decides when to fetch today\'s fixtures, a team\'s form, or check football news to verify a claim — every fetch is disclosed and viewable. Streams its thinking process in Think mode.',
   },
   {
     icon: (c: string) => <IconTarget size={18} color={c} />,
@@ -120,7 +120,8 @@ export default function AboutScreen() {
         <Text style={[styles.sectionLabel, { color: theme.textSecondary, marginTop: 8 }]}>Third-party disclosures</Text>
         <View style={[styles.techCard, { backgroundColor: theme.card }]}>
           {[
-            { name: 'TheSportsDB', note: 'Fixture data for Predictor · thesportsdb.com · Free public API · No account required' },
+            { name: 'TheSportsDB', note: 'Fixture and form data · thesportsdb.com · Free public API · No account required' },
+            { name: 'BBC Sport RSS', note: "AI Coach's news-verification tool · feeds.bbci.co.uk · Public RSS feed" },
             { name: 'Gemma 4 E2B', note: 'Google model weights via HuggingFace (bartowski/google_gemma-4-E2B-it-GGUF)' },
             { name: 'Qwen3 1.7B', note: 'Alibaba model weights via QVAC SDK registry' },
             { name: 'MedPsy 1.7B / 4B', note: 'QVAC model weights — inference on-device only' },

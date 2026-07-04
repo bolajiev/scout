@@ -20,6 +20,7 @@ import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId } from
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage, getMessages } from '../utils/historyDb';
 import { formatFixtureContext, fetchTeamForm } from '../utils/teamStats';
+import { fetchFootballNews, formatNewsContext } from '../utils/footballNews';
 import { fetchAndCacheFixtures } from '../utils/fixtures';
 import { logInference } from '../utils/auditLogger';
 
@@ -30,7 +31,7 @@ const CARD_W = (SCREEN_W - 48) / 2;
 // processing time before the first visible token appears.
 const SYSTEM_PROMPT = `You are Scout's AI Coach — a veteran football coach, fully on-device.
 
-Rules: always commit — never refuse or say "I'm not sure"; back opinions with specific players, formations, scorelines; no filler or disclaimers. Tools: get_today_fixtures only for today's matches/scores; get_team_form only for one team's recent form; never for tactics, history, or opinion questions; max one tool per question. Style: short paragraphs, **bold** key names, bullets for lists, concise English.`;
+Rules: always commit — never refuse or say "I'm not sure"; back opinions with specific players, formations, scorelines; no filler or disclaimers. Tools — use at most one per question: get_today_fixtures ONLY for today's games/scores; get_team_form ONLY for a team's recent match RESULTS; get_football_news ONLY for transfers, injuries, club news, or verifying a specific claim/rumor. Never call a tool for tactics, history, or opinion questions — answer those from knowledge. Style: short paragraphs, **bold** key names, bullets for lists, concise English.`;
 
 const SCOUT_TOOLS: Tool[] = [
   {
@@ -49,6 +50,18 @@ const SCOUT_TOOLS: Tool[] = [
         team_name: { type: 'string', description: 'Name of the football team' },
       },
       required: ['team_name'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_football_news',
+    description: "Get recent football news headlines from BBC Sport to verify a claim or check transfers, injuries, or club news. Use when asked to confirm/verify something, or about transfer rumors, injuries, manager changes, or recent club news that isn't a match result.",
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Player, club, or topic to look for in headlines (e.g. "Mbappe transfer", "Arsenal injury")' },
+      },
+      required: ['query'],
     },
   },
 ];
@@ -125,7 +138,7 @@ interface Entry {
   thinkingMs?: number;
   elapsed?: number;
   toks?: number;
-  usedLiveData?: boolean;
+  liveSources?: string[];  // deduped source names, e.g. ['TheSportsDB', 'BBC Sport']
   liveData?: string;  // the raw tool result the model actually saw — user-visible on demand
 }
 
@@ -136,7 +149,7 @@ interface StreamSlot {
   thought: string;
   isThinking: boolean;
   toolStatus: string | null;  // non-null while a tool call is executing
-  usedLiveData: boolean;
+  liveSources: string[];
   liveData: string;
 }
 
@@ -317,11 +330,11 @@ export default function MatchAIScreen() {
     ]).flat();
     history.push({ role: 'user', content: q });
 
-    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn, toolStatus: null, usedLiveData: false, liveData: '' });
+    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn, toolStatus: null, liveSources: [], liveData: '' });
     setIsGenerating(true);
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60);
 
-    let usedLiveData = false;
+    let liveSources: string[] = [];
     let liveDataAcc = '';
     let answerAcc = '';
     let thoughtAcc = '';
@@ -394,7 +407,7 @@ export default function MatchAIScreen() {
             if (tc.name === 'get_today_fixtures') {
               const { fixtures } = await fetchAndCacheFixtures();
               toolResult = formatFixtureContext(fixtures) || 'No fixtures scheduled today.';
-              usedLiveData = true;
+              liveSources.push('TheSportsDB');
             } else if (tc.name === 'get_team_form') {
               const teamName = String(tc.arguments.team_name ?? '');
               const form = await fetchTeamForm(teamName);
@@ -417,7 +430,13 @@ export default function MatchAIScreen() {
                 );
                 toolResult = teamFix.length > 0 ? formatFixtureContext(teamFix) : `No recent data found for ${teamName}.`;
               }
-              usedLiveData = true;
+              liveSources.push('TheSportsDB');
+            } else if (tc.name === 'get_football_news') {
+              const query = String(tc.arguments.query ?? '');
+              setSlot(s => s ? { ...s, toolStatus: 'Checking football news...' } : s);
+              const news = await fetchFootballNews(query);
+              toolResult = formatNewsContext(news, query);
+              if (news.length > 0) liveSources.push(news[0].source);
             }
           } catch { toolResult = 'Unable to fetch live data.'; }
           toolHistory.push({ role: 'tool', content: toolResult });
@@ -425,7 +444,7 @@ export default function MatchAIScreen() {
         }
 
         if (!mountedRef.current) return;
-        setSlot(s => s ? { ...s, toolStatus: null, answer: '', usedLiveData, liveData: liveDataAcc } : s);
+        setSlot(s => s ? { ...s, toolStatus: null, answer: '', liveSources: [...new Set(liveSources)], liveData: liveDataAcc } : s);
 
         // ── Pass 2: final answer incorporating tool results ─────────────────
         const run2 = completion({
@@ -471,7 +490,7 @@ export default function MatchAIScreen() {
 
       if (thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
       if (mountedRef.current) {
-        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, usedLiveData, liveData: liveDataAcc || undefined };
+        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, liveSources: [...new Set(liveSources)], liveData: liveDataAcc || undefined };
         setSlot(null);
         setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
@@ -559,14 +578,14 @@ export default function MatchAIScreen() {
               <Markdown style={mdStyles(theme)}>{entry.answer}</Markdown>
             </View>
             <View style={styles.statRow}>
-              {entry.usedLiveData && (
+              {entry.liveSources && entry.liveSources.length > 0 && (
                 <TouchableOpacity
                   style={[styles.liveChip, { backgroundColor: '#22c55e14' }]}
                   onPress={() => setDataOpen(p => ({ ...p, [entry.id]: !p[entry.id] }))}
                   hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
                 >
                   <View style={[styles.liveDotSmall, { backgroundColor: '#22c55e' }]} />
-                  <Text style={[styles.liveChipText, { color: '#22c55e' }]}>TheSportsDB</Text>
+                  <Text style={[styles.liveChipText, { color: '#22c55e' }]}>{entry.liveSources.join(' · ')}</Text>
                   {entry.liveData && (
                     <Text style={[styles.liveChipText, { color: '#22c55e' }]}>{dataOpen[entry.id] ? ' ‹' : ' ›'}</Text>
                   )}
@@ -590,7 +609,7 @@ export default function MatchAIScreen() {
             {/* Raw data the model actually saw — collapsed by default so the
                 chat stays clean, but never hidden: the user asked for exactly
                 this, since "TheSportsDB" alone doesn't say what was fetched */}
-            {entry.usedLiveData && entry.liveData && dataOpen[entry.id] && (
+            {entry.liveSources && entry.liveSources.length > 0 && entry.liveData && dataOpen[entry.id] && (
               <View style={[styles.liveDataBlock, { backgroundColor: theme.cardAlt }]}>
                 <Text style={[styles.liveDataText, { color: theme.textSecondary }]} selectable>
                   {entry.liveData}
