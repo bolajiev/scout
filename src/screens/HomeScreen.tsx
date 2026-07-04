@@ -455,7 +455,7 @@ export default function HomeScreen() {
 
         <TouchableOpacity onPress={() => navigation.navigate('About')} style={styles.footer}>
           <Text style={[styles.footerText, { color: theme.textSecondary }]}>
-            Scout · Tether Developers Cup 2026
+            Scout · 100% on-device football AI
           </Text>
         </TouchableOpacity>
       </ScrollView>

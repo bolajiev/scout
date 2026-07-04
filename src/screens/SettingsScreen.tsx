@@ -244,21 +244,22 @@ export default function SettingsScreen() {
         <View style={[styles.card, { backgroundColor: theme.card }]}>
           <View style={styles.cardRow}>
             <View style={styles.behaviorLeft}>
-              <Text style={[styles.rowLabel, { color: theme.text }]}>football-data.org key</Text>
-              <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
-                {fdKey && fdEnabled
-                  ? 'Premium data active — WC, PL, UCL + 9 leagues with live scores'
-                  : 'Optional. Without a key Scout uses the free source (TheSportsDB). Free key at football-data.org.'}
+              <Text style={[styles.rowLabel, { color: theme.text }]}>Premium live data</Text>
+              <Text style={[styles.rowHint, { color: fdKey && fdEnabled ? accent : theme.textSecondary }]}>
+                {!fdKey.trim()
+                  ? 'Using free data. Paste a free football-data.org key below to unlock 12 leagues.'
+                  : fdEnabled
+                    ? 'ON — football-data.org: WC, PL, UCL + 9 leagues, live scores'
+                    : 'OFF — key saved, using the free source (TheSportsDB)'}
               </Text>
             </View>
-            {fdKey.length > 0 && (
-              <Switch
-                value={fdEnabled}
-                onValueChange={v => { setFdEnabledState(v); setFdKeyEnabled(v).catch(() => {}); }}
-                trackColor={{ true: accent + '80', false: theme.border }}
-                thumbColor={fdEnabled ? accent : theme.textSecondary}
-              />
-            )}
+            <Switch
+              value={fdEnabled && fdKey.trim().length > 0}
+              disabled={fdKey.trim().length === 0}
+              onValueChange={v => { setFdEnabledState(v); setFdKeyEnabled(v).catch(() => {}); }}
+              trackColor={{ true: accent + '80', false: theme.border }}
+              thumbColor={fdEnabled && fdKey.trim().length > 0 ? accent : theme.textSecondary}
+            />
           </View>
           <TextInput
             style={[styles.keyInput, { backgroundColor: theme.cardAlt, borderColor: fdKey && fdEnabled ? accent + '50' : theme.border, color: theme.text }]}

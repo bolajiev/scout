@@ -98,7 +98,7 @@ export default function OnboardingScreen() {
             </View>
             <View style={[styles.hackBadge, { backgroundColor: theme.card, borderColor: theme.border }]}>
               <View style={[styles.hackDot, { backgroundColor: accent }]} />
-              <Text style={[styles.hackText, { color: theme.textSecondary }]}>Tether Developers Cup 2026</Text>
+              <Text style={[styles.hackText, { color: theme.textSecondary }]}>Private · No cloud · No account</Text>
             </View>
           </View>
         </View>

@@ -1,6 +1,6 @@
 # Scout — On-Device Football AI
 
-**Tether Developers Cup 2026 · QVAC track**
+**100% on-device football AI, powered by the QVAC SDK**
 
 Scout is a fully private football AI app for Android. Every AI feature — chat, match prediction, image recognition — runs **100% on-device through the [QVAC SDK](https://qvac.tether.io)**. No cloud AI, no API keys, no account. The only network traffic is live fixture data from TheSportsDB (free, keyless) and one-time model downloads from Hugging Face.
 
@@ -151,4 +151,4 @@ eas build --platform android --profile preview   # signed APK, local credentials
 - Camera/gallery images are processed in memory, on-device only
 - Clear All Data wipes AsyncStorage and every SQLite table
 
-Built for the **Tether Developers Cup 2026** — QVAC track.
+Every AI feature runs on the user's device. No cloud, no accounts, no telemetry.

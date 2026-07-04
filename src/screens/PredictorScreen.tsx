@@ -171,15 +171,21 @@ export default function PredictorScreen() {
     try {
       const { fixtures: all, online } = await fetchAndCacheFixtures();
       if (!mountedRef.current) return;
-      // World Cup ONLY: every live WC match (with scores) + the next 3 WC
-      // kick-offs. Other leagues appear only when no WC fixtures exist at
-      // all, so the rail is never empty.
-      const wc = all.filter(isWorldCup);
-      const pool = wc.length > 0 ? wc : all;
-      const sorted = [...pool].sort((a, b) => fixtureOrder(a) - fixtureOrder(b));
-      const liveNow = sorted.filter(isLive);
-      const upcoming = sorted.filter(f => !isLive(f) && !isFinished(f)).slice(0, 3);
-      setFixtures([...liveNow, ...upcoming]);
+      // World Cup owns the front of the rail (all live WC + next WC
+      // kick-offs), then other leagues fill it so it never looks empty —
+      // each card carries its own league name / WC badge.
+      const byKickoff = (a: Fixture, b: Fixture) => fixtureOrder(a) - fixtureOrder(b);
+      const wc = all.filter(isWorldCup).sort(byKickoff);
+      const others = all.filter(f => !isWorldCup(f)).sort(byKickoff);
+      const playing = (f: Fixture) => isLive(f);
+      const upcoming = (f: Fixture) => !isLive(f) && !isFinished(f);
+      const rail = [
+        ...wc.filter(playing),
+        ...wc.filter(upcoming),
+        ...others.filter(playing),
+        ...others.filter(upcoming),
+      ].slice(0, 10);
+      setFixtures(rail);
       setNoInternet(!online);
     } catch {
       if (mountedRef.current) setNoInternet(true);
@@ -401,10 +407,10 @@ export default function PredictorScreen() {
           <View style={styles.fixturesHeader}>
             <View>
               <Text style={[styles.fixturesSectionLabel, { color: accent }]}>
-                {fixtures.some(isWorldCup) ? (fixtures.some(isLive) ? 'WORLD CUP · LIVE' : 'FIFA WORLD CUP 2026') : fixtures.some(isLive) ? 'MATCHDAY LIVE' : 'MATCHDAY'}
+                {fixtures.some(f => isWorldCup(f) && isLive(f)) ? 'WORLD CUP · LIVE' : fixtures.some(isWorldCup) ? 'WORLD CUP & MATCHDAY' : fixtures.some(isLive) ? 'MATCHDAY · LIVE' : 'MATCHDAY'}
               </Text>
               <Text style={[styles.fixturesTodayLabel, { color: theme.textSecondary }]}>
-                Live scores · today & upcoming
+                World Cup first · live scores · upcoming
               </Text>
             </View>
             <View style={[styles.apiDisclosure, { backgroundColor: theme.card, borderColor: theme.border }]}>
