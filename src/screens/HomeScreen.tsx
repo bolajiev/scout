@@ -8,7 +8,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Device from 'expo-device';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconSettings, IconModels } from '../components/Icons';
+import { IconSettings, IconModels, IconBall, IconTarget, IconCamera } from '../components/Icons';
+import { getSessions, type Session, type ScreenType } from '../utils/historyDb';
 import {
   fetchAndCacheFixtures, findClosestMatch, isLive,
   fmtMatchTime, teamAbbr, isWorldCup, badgeUrl,
@@ -194,6 +195,36 @@ export default function HomeScreen() {
     refreshFixtures();
     return () => { mountedRef.current = false; };
   }, [refreshFixtures]));
+
+  const [recent, setRecent] = useState<Session[]>([]);
+
+  // Recent Activity — fills the dead space below the feature cards with
+  // real, useful content instead of empty screen, and doubles as a quick
+  // way back into a session without going through Settings/History first
+  useFocusEffect(useCallback(() => {
+    try {
+      const merged = [
+        ...getSessions('matchai', 5),
+        ...getSessions('predictor', 5),
+        ...getSessions('scoutlens', 5),
+      ].sort((a, b) => b.createdAt - a.createdAt).slice(0, 3);
+      setRecent(merged);
+    } catch { setRecent([]); }
+  }, []));
+
+  const RECENT_META: Record<ScreenType, { label: string; Icon: typeof IconBall; color: string }> = {
+    matchai: { label: 'AI Coach', Icon: IconBall, color: '#22c55e' },
+    predictor: { label: 'Predictor', Icon: IconTarget, color: '#f97316' },
+    scoutlens: { label: 'Scout Lens', Icon: IconCamera, color: '#34d399' },
+  };
+
+  const relativeTime = (ts: number): string => {
+    const mins = Math.max(1, Math.round((Date.now() - ts) / 60000));
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.round(hrs / 24)}d ago`;
+  };
 
   const accent = '#22c55e';
 
@@ -452,6 +483,37 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </Animated.View>
 
+        {/* Recent Activity — real content instead of dead space, and a
+            shortcut straight back into a past session */}
+        {recent.length > 0 && (
+          <View style={styles.recentSection}>
+            <Text style={[styles.recentLabel, { color: theme.textSecondary }]}>RECENT ACTIVITY</Text>
+            {recent.map(session => {
+              const meta = RECENT_META[session.screen];
+              return (
+                <TouchableOpacity
+                  key={session.id}
+                  style={[styles.recentRow, { backgroundColor: theme.card }]}
+                  onPress={() => navigation.navigate('History', { tab: session.screen })}
+                  activeOpacity={0.75}
+                >
+                  <View style={[styles.recentIconWrap, { backgroundColor: meta.color + '18' }]}>
+                    <meta.Icon size={16} color={meta.color} />
+                  </View>
+                  <View style={styles.recentTextCol}>
+                    <Text style={[styles.recentTitle, { color: theme.text }]} numberOfLines={1}>
+                      {session.title}
+                    </Text>
+                    <Text style={[styles.recentMeta, { color: theme.textSecondary }]}>
+                      {meta.label} · {relativeTime(session.createdAt)}
+                    </Text>
+                  </View>
+                  <Text style={[styles.recentChevron, { color: theme.textSecondary }]}>›</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
 
         <TouchableOpacity onPress={() => navigation.navigate('About')} style={styles.footer}>
           <Text style={[styles.footerText, { color: theme.textSecondary }]}>
@@ -585,6 +647,22 @@ const styles = StyleSheet.create({
   lensCta: { fontSize: 13, fontWeight: '800', color: '#34d399', marginTop: 2 },
 
   // Footer
+  // Recent Activity
+  recentSection: { paddingHorizontal: 14, marginTop: 22, gap: 9 },
+  recentLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.6, paddingHorizontal: 6, marginBottom: 2 },
+  recentRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderRadius: 14, padding: 12,
+  },
+  recentIconWrap: {
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  recentTextCol: { flex: 1, gap: 2 },
+  recentTitle: { fontSize: 13, fontWeight: '700' },
+  recentMeta: { fontSize: 11 },
+  recentChevron: { fontSize: 18, fontWeight: '600' },
+
   footer: { alignItems: 'center', marginTop: 24 },
   footerText: { fontSize: 11 },
 });

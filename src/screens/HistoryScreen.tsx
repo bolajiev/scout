@@ -51,19 +51,32 @@ export default function HistoryScreen() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
 
-  const load = useCallback(() => {
+  const load = useCallback((forTab: ScreenType) => {
     try {
-      setSessions(getSessions(tab));
+      setSessions(getSessions(forTab));
       setCounts({
         matchai: getSessions('matchai').length,
         predictor: getSessions('predictor').length,
         scoutlens: getSessions('scoutlens').length,
       });
     } catch {}
-  }, [tab]);
+  }, []);
 
-  useFocusEffect(load);
-  useEffect(load, [tab]);
+  // BUG FIX: React Navigation reuses an already-mounted 'History' screen
+  // instance instead of remounting it, so `useState(route.params?.tab)`'s
+  // initializer only ever ran once — opening History from Predictor after
+  // already having opened it from Chat kept showing Chat's tab and
+  // sessions. Re-sync from route.params on every focus instead.
+  useFocusEffect(
+    useCallback(() => {
+      const wanted: ScreenType = route.params?.tab ?? 'matchai';
+      setTab(wanted);
+      setExpanded(null);
+      load(wanted);
+    }, [route.params?.tab, load])
+  );
+
+  useEffect(() => { load(tab); }, [tab, load]);
 
   const switchTab = (t: ScreenType) => {
     setTab(t);
