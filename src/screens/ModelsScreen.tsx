@@ -332,7 +332,14 @@ export default function ModelsScreen() {
         {/* Top row: model name + actions */}
         <View style={styles.cardTop}>
           <View style={styles.cardTopLeft}>
-            <Text style={[styles.modelName, { color: theme.text }]}>{model.name}</Text>
+            <View style={styles.nameRow}>
+              <Text style={[styles.modelName, { color: theme.text }]}>{model.name}</Text>
+              {model.badge && (
+                <View style={[styles.nameBadge, { backgroundColor: (model.badgeColor ?? accent) + '1c', borderColor: (model.badgeColor ?? accent) + '50' }]}>
+                  <Text style={[styles.nameBadgeText, { color: model.badgeColor ?? accent }]}>{model.badge}</Text>
+                </View>
+              )}
+            </View>
             {model.tagline && (
               <Text style={[styles.modelTagline, { color: theme.textSecondary }]}>{model.tagline}</Text>
             )}
@@ -545,6 +552,9 @@ const styles = StyleSheet.create({
   loadedDot: { width: 7, height: 7, borderRadius: 4 },
   loadedText: { fontSize: 12, fontWeight: '600' },
   modelName: { fontSize: 16, fontWeight: '700', marginBottom: 2 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  nameBadge: { borderRadius: 6, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2 },
+  nameBadgeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.6 },
   modelTagline: { fontSize: 12, lineHeight: 16 },
   modelDescription: { fontSize: 13, lineHeight: 18, marginBottom: 10, marginTop: 8 },
   chipsRow: { flexDirection: 'row', gap: 6 },

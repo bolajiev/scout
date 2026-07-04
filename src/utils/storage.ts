@@ -21,11 +21,24 @@ const KEYS = {
 
 // football-data.org API key (optional) — unlocks richer fixtures for the
 // 12 major competitions incl. World Cup, PL, UCL. Free key: 10 calls/min.
+// The key can be kept saved but toggled off — then the free keyless data
+// source (TheSportsDB) is used instead.
 export async function getFdApiKey(): Promise<string> {
   try { return (await AsyncStorage.getItem(KEYS.FD_API_KEY)) || ''; } catch { return ''; }
 }
 export async function setFdApiKey(key: string): Promise<void> {
   await AsyncStorage.setItem(KEYS.FD_API_KEY, key.trim());
+}
+export async function getFdKeyEnabled(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem('@scout_fd_enabled')) !== 'false'; } catch { return true; }
+}
+export async function setFdKeyEnabled(on: boolean): Promise<void> {
+  await AsyncStorage.setItem('@scout_fd_enabled', on ? 'true' : 'false');
+}
+// The key fixtures should actually use right now (empty = free source)
+export async function getActiveFdKey(): Promise<string> {
+  const [key, enabled] = await Promise.all([getFdApiKey(), getFdKeyEnabled()]);
+  return enabled ? key : '';
 }
 
 const DEFAULT_SETTINGS: AppSettings = {

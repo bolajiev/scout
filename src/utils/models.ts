@@ -26,6 +26,8 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
   {
     id: MODEL_KEYS.TEXT_FAST,
     name: 'Qwen3 1.7B',
+    badge: 'RECOMMENDED',
+    badgeColor: '#22c55e',
     modelType: 'text',
     tagline: 'Fast football AI — recommended.',
     description: 'Qwen3 1.7B runs fully on-device. Fast responses, low RAM. Best for AI Coach and Predictor. Start here.',
@@ -37,6 +39,8 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
   {
     id: MODEL_KEYS.TEXT_INSTANT,
     name: 'Qwen3 0.6B',
+    badge: 'INSTANT',
+    badgeColor: '#f59e0b',
     modelType: 'text',
     tagline: 'Instant — loads in seconds, streams fast.',
     description: 'Qwen3 0.6B is the speed option: loads in seconds and streams several times faster than bigger models. Shorter, simpler answers — ideal for quick questions and low-RAM devices.',
@@ -85,6 +89,8 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
   {
     id: MODEL_KEYS.VISION_LITE,
     name: 'SmolVLM2 500M',
+    badge: 'INSTANT',
+    badgeColor: '#f59e0b',
     modelType: 'vision',
     tagline: 'Light vision — fast scans, low RAM.',
     description: 'SmolVLM2 500M is the light vision option for Scout Lens: loads in seconds and scans fast on any device. Less detailed than Gemma 4 but great for quick jersey and badge checks.',

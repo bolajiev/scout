@@ -1,5 +1,5 @@
 import { getDb } from './historyDb';
-import { getFdApiKey } from './storage';
+import { getActiveFdKey } from './storage';
 
 export interface Fixture {
   idEvent: string;
@@ -216,19 +216,23 @@ export const fetchAndCacheFixtures = async (): Promise<{
   const plusDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().split('T')[0];
 
   try {
-    const fdKey = await getFdApiKey().catch(() => '');
+    const fdKey = await getActiveFdKey().catch(() => '');
 
-    // Parallel: optional football-data.org window + WC next events + today's
-    // soccer + the next two days, so the rail always has upcoming matches
-    const [fdMatches, ...results] = await Promise.all([
-      fdKey ? fetchFdMatches(fdKey, today, plusDays(2)) : Promise.resolve([] as Fixture[]),
-      ...[
+    // Keyed mode: football-data.org is the exclusive source while the key
+    // works — the free API is only consulted if the keyed call fails or
+    // returns nothing (rate limit, outage, bad key).
+    const fdMatches = fdKey ? await fetchFdMatches(fdKey, today, plusDays(2)) : [];
+
+    let results: (Response | null)[] = [];
+    if (fdMatches.length === 0) {
+      // Free keyless source: WC next events + today's soccer + next two days
+      results = await Promise.all([
         fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`),
         fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`),
         fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(1)}&s=Soccer`),
         fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(2)}&s=Soccer`),
-      ].map(p => p.then(r => r as Response | null).catch(() => null)),
-    ]);
+      ].map(p => p.then(r => r as Response | null).catch(() => null)));
+    }
 
     const oks = results.map(r => !!r && r.ok);
     // Every source unreachable → we are offline; don't report success with 0 fixtures

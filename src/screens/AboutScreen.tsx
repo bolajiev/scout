@@ -11,24 +11,24 @@ const appVersion = Constants.expoConfig?.version ?? '1.0';
 const MODULES = [
   {
     icon: (c: string) => <IconBall size={18} color={c} />,
-    tag: 'QVAC',
+    tag: 'TOOL CALLING',
     tagColor: '#22c55e',
     title: 'AI Coach',
-    desc: 'Ask anything about football — tactics, formations, players, clubs, and tournaments. Fully on-device, no internet.',
+    desc: 'On-device LLM with live tool calling: the model decides when to fetch today\'s fixtures or a team\'s form and grounds its answers in real data. Streams its thinking process in Deep mode.',
   },
   {
     icon: (c: string) => <IconTarget size={18} color={c} />,
-    tag: 'QVAC',
-    tagColor: '#22c55e',
+    tag: 'ACCOUNTABLE',
+    tagColor: '#f97316',
     title: 'Predictor',
-    desc: 'Pick two teams and generate an on-device AI match prediction with score, reasoning, and live form data.',
+    desc: 'Structured on-device predictions fed with live team form. Every call is recorded and graded against the real result — the app keeps a public W/L track record of its own AI.',
   },
   {
     icon: (c: string) => <IconCamera size={18} color={c} />,
-    tag: 'QVAC Vision',
-    tagColor: '#22c55e',
+    tag: 'MULTIMODAL',
+    tagColor: '#3b82f6',
     title: 'Scout Lens',
-    desc: 'Point your camera at any football image — jersey, club badge, player card, scoreboard — and get instant on-device identification.',
+    desc: 'Vision + text conversation about any football image: scan a jersey, badge, or scoreboard, then ask follow-up questions — all processed on your phone.',
   },
 ];
 
@@ -78,7 +78,7 @@ export default function AboutScreen() {
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.cardTitle, { color: theme.text }]}>What is Scout?</Text>
           <Text style={[styles.cardBody, { color: theme.textSecondary }]}>
-            Scout is an on-device football AI built for the Tether Developers Cup 2026. All inference runs locally via the QVAC SDK — no data leaves your phone. Modules: AI Coach, Predictor, and Scout Lens.
+            A complete football companion where every AI feature — chat, match prediction, image recognition — runs 100% on your phone through the QVAC SDK. No cloud AI, no accounts, works offline. Built for the FIFA World Cup 2026 moment: live fixtures, form-grounded predictions with a real track record, and a vision scanner for match-day moments.
           </Text>
         </View>
 
@@ -113,9 +113,11 @@ export default function AboutScreen() {
         <Text style={[styles.sectionLabel, { color: theme.textSecondary, marginTop: 8 }]}>Built with</Text>
         <View style={[styles.techCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
           {[
-            { name: 'QVAC SDK', note: 'On-device LLM inference — all AI runs locally' },
-            { name: 'TheSportsDB', note: 'Free public API — fixtures and team form data' },
-            { name: 'Expo SDK 54', note: 'React Native framework' },
+            { name: 'QVAC SDK', note: 'All inference on-device: LLM, vision, tool calling, streaming' },
+            { name: 'Custom QVAC worker', note: 'Rebuilt LLM-only: 918 MB of native engines trimmed to 145 MB' },
+            { name: 'Models', note: 'Qwen3, Gemma 4, QVAC MedPsy, SmolVLM2 — 390 MB to 3.8 GB tiers' },
+            { name: 'TheSportsDB', note: 'Free keyless fixtures, form and badges (football-data.org optional)' },
+            { name: 'Expo SDK 54', note: 'React Native, Android arm64' },
           ].map((t, i) => (
             <View key={t.name} style={[styles.techRow, { borderTopWidth: i > 0 ? 1 : 0, borderTopColor: theme.border }]}>
               <Text style={[styles.techName, { color: theme.text }]}>{t.name}</Text>

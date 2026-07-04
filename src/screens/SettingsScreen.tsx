@@ -15,6 +15,7 @@ import { pickTextCapable } from '../utils/models';
 import {
   getSettings, setAccelerator, setResponseLength, clearAllData,
   saveSettings, syncModelsFromDisk, getFdApiKey, setFdApiKey,
+  getFdKeyEnabled, setFdKeyEnabled,
 } from '../utils/storage';
 import { Accelerator, ResponseLength } from '../types';
 import ConfigSlider from '../components/ConfigSlider';
@@ -39,6 +40,7 @@ export default function SettingsScreen() {
   const [repeatPenalty, setRepeatState] = useState(1.1);
   const [maxTokens, setMaxTokensState] = useState(1024);
   const [fdKey, setFdKeyState] = useState('');
+  const [fdEnabled, setFdEnabledState] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [textModelName, setTextModelName] = useState<string | null>(null);
   const [deviceModel, setDeviceModel] = useState('');
@@ -48,6 +50,7 @@ export default function SettingsScreen() {
   useEffect(() => {
     loadAll();
     getFdApiKey().then(setFdKeyState).catch(() => {});
+    getFdKeyEnabled().then(setFdEnabledState).catch(() => {});
   }, []);
 
   const loadAll = async () => {
@@ -243,12 +246,22 @@ export default function SettingsScreen() {
             <View style={styles.behaviorLeft}>
               <Text style={[styles.rowLabel, { color: theme.text }]}>football-data.org key</Text>
               <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
-                Optional — richer fixtures & scores for World Cup, PL, UCL and 9 more leagues. Free key at football-data.org.
+                {fdKey && fdEnabled
+                  ? 'Premium data active — WC, PL, UCL + 9 leagues with live scores'
+                  : 'Optional. Without a key Scout uses the free source (TheSportsDB). Free key at football-data.org.'}
               </Text>
             </View>
+            {fdKey.length > 0 && (
+              <Switch
+                value={fdEnabled}
+                onValueChange={v => { setFdEnabledState(v); setFdKeyEnabled(v).catch(() => {}); }}
+                trackColor={{ true: accent + '80', false: theme.border }}
+                thumbColor={fdEnabled ? accent : theme.textSecondary}
+              />
+            )}
           </View>
           <TextInput
-            style={[styles.keyInput, { backgroundColor: theme.cardAlt, borderColor: fdKey ? accent + '50' : theme.border, color: theme.text }]}
+            style={[styles.keyInput, { backgroundColor: theme.cardAlt, borderColor: fdKey && fdEnabled ? accent + '50' : theme.border, color: theme.text }]}
             placeholder="Paste API key (leave empty to use free data)"
             placeholderTextColor={theme.textSecondary}
             value={fdKey}
