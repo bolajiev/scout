@@ -84,7 +84,10 @@ export default function ScoutLensScreen() {
   const loadModel = async () => {
     try {
       const synced = await syncModelsFromDisk();
-      const vision = synced.find((m: any) => m.modelType === 'vision');
+      // If a vision model is already resident, keep using it; otherwise
+      // first in catalog order (Gemma before the light SmolVLM option)
+      const visions = synced.filter((m: any) => m.modelType === 'vision');
+      const vision = visions.find((m: any) => m.id === llmManager.getLoadedModelId()) ?? visions[0];
       if (!vision) { setNoModel(true); return; }
       const mid = await llmManager.ensure(vision, { ctx_size: 2048, device: 'auto', projectionModelSrc: vision.projectionModelSrc });
       modelNameRef.current = vision.name;

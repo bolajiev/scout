@@ -48,7 +48,7 @@ const tbStyles = StyleSheet.create({
 });
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
-import { syncModelsFromDisk } from '../utils/storage';
+import { syncModelsFromDisk, getDefaultModelId } from '../utils/storage';
 
 const { width: SW } = Dimensions.get('window');
 const HIT = { top: 10, bottom: 10, left: 10, right: 10 };
@@ -195,9 +195,9 @@ export default function HomeScreen() {
   // refetch fixtures when stale or missing (e.g. came back online)
   useFocusEffect(useCallback(() => {
     mountedRef.current = true;
-    syncModelsFromDisk().then(models => {
+    syncModelsFromDisk().then(async models => {
       if (!mountedRef.current) return;
-      const pick = pickTextCapable(models);
+      const pick = pickTextCapable(models, await getDefaultModelId());
       setHasAnyModel(!!pick);
       const lid = llmManager.getLoadedModelId();
       setLoadedModel(lid);
@@ -235,7 +235,7 @@ export default function HomeScreen() {
     if (modelLoading) return;
     try {
       const models = await syncModelsFromDisk();
-      const text = pickTextCapable(models);
+      const text = pickTextCapable(models, await getDefaultModelId());
       if (!text) { navigation.navigate('Models'); return; }
       const totalMem = Device.totalMemory ?? 0;
       if (text.heavy && totalMem > 0 && totalMem < 5.5e9) {

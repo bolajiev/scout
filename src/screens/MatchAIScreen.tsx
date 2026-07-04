@@ -15,7 +15,7 @@ import { useTheme } from '../navigation/AppNavigator';
 import { IconSend, IconStop, IconBall, IconBack } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
-import { syncModelsFromDisk, getGenParams, getSettings } from '../utils/storage';
+import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage, getMessages } from '../utils/historyDb';
 import { formatFixtureContext, fetchTeamForm } from '../utils/teamStats';
@@ -216,7 +216,7 @@ export default function MatchAIScreen() {
   const loadModel = async () => {
     try {
       const synced = await syncModelsFromDisk();
-      const model = pickTextCapable(synced);
+      const model = pickTextCapable(synced, await getDefaultModelId());
       if (!model) {
         if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
         return;

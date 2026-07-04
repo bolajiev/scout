@@ -16,7 +16,17 @@ const KEYS = {
   DOWNLOADED_MODELS: '@scout_downloaded_models',
   HF_TOKEN: 'scout_hf_token',
   CUSTOM_PROMPTS: '@scout_custom_prompts',
+  FD_API_KEY: '@scout_fd_api_key',
 };
+
+// football-data.org API key (optional) — unlocks richer fixtures for the
+// 12 major competitions incl. World Cup, PL, UCL. Free key: 10 calls/min.
+export async function getFdApiKey(): Promise<string> {
+  try { return (await AsyncStorage.getItem(KEYS.FD_API_KEY)) || ''; } catch { return ''; }
+}
+export async function setFdApiKey(key: string): Promise<void> {
+  await AsyncStorage.setItem(KEYS.FD_API_KEY, key.trim());
+}
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',

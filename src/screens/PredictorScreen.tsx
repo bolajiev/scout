@@ -13,7 +13,7 @@ import { useTheme } from '../navigation/AppNavigator';
 import { IconTarget, IconStop, IconBack } from '../components/Icons';
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
-import { syncModelsFromDisk, getGenParams } from '../utils/storage';
+import { syncModelsFromDisk, getGenParams, getDefaultModelId } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, todayISO, type Fixture } from '../utils/fixtures';
 import { createSession, addMessage, addPrediction } from '../utils/historyDb';
@@ -197,7 +197,7 @@ export default function PredictorScreen() {
   const loadModel = async () => {
     try {
       const synced = await syncModelsFromDisk();
-      const model = pickTextCapable(synced);
+      const model = pickTextCapable(synced, await getDefaultModelId());
       if (!model) {
         if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
         return;

@@ -1,4 +1,5 @@
 import { getDb } from './historyDb';
+import { getFdApiKey } from './storage';
 
 export interface Fixture {
   idEvent: string;
@@ -13,10 +14,11 @@ export interface Fixture {
   strAwayTeamBadge: string | null;
 }
 
-// TheSportsDB badge URLs serve resized variants via a path suffix.
-// "/small" (~128px) is plenty for our 36-56px circles and loads fast.
+// TheSportsDB badge URLs serve resized variants via a path suffix —
+// "/small" (~128px) is plenty for our circles. Other sources (football-data
+// crests) are used as-is.
 export const badgeUrl = (url: string | null | undefined): string | null =>
-  url ? `${url}/small` : null;
+  url ? (url.includes('thesportsdb') ? `${url}/small` : url) : null;
 
 export const todayISO = () => new Date().toISOString().split('T')[0];
 
@@ -158,13 +160,50 @@ const WC_LEAGUE_ID = '4429';
 // AbortSignal.timeout() does not exist in React Native's Hermes runtime —
 // calling it throws synchronously, which made every fetch "fail" and the app
 // permanently show the offline fallback. Manual AbortController instead.
-export const fetchWithTimeout = async (url: string, ms = 8000): Promise<Response> => {
+export const fetchWithTimeout = async (url: string, ms = 8000, init?: RequestInit): Promise<Response> => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await fetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+  }
+};
+
+// football-data.org v4 (optional, user-supplied free key): accurate scores
+// and fixtures for the 12 major competitions incl. World Cup, PL, UCL.
+// One /matches call covers a whole date window — friendly to the 10/min cap.
+const fetchFdMatches = async (key: string, from: string, to: string): Promise<Fixture[]> => {
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.football-data.org/v4/matches?dateFrom=${from}&dateTo=${to}`,
+      8000,
+      { headers: { 'X-Auth-Token': key } },
+    );
+    if (!res.ok) return []; // 429 rate limit or bad key — silently fall back
+    const data = await res.json();
+    return (data.matches ?? []).map((m: any): Fixture => {
+      const utc = new Date(m.utcDate);
+      const hh = String(utc.getUTCHours()).padStart(2, '0');
+      const mm = String(utc.getUTCMinutes()).padStart(2, '0');
+      const started = m.status === 'IN_PLAY' || m.status === 'PAUSED' || m.status === 'FINISHED';
+      const crest = (u: string | null | undefined) =>
+        u && /\.(png|jpg|jpeg)$/i.test(u) ? u : null; // RN Image can't render SVG crests
+      return {
+        idEvent: `fd-${m.id}`,
+        strHomeTeam: m.homeTeam?.shortName || m.homeTeam?.name || '',
+        strAwayTeam: m.awayTeam?.shortName || m.awayTeam?.name || '',
+        strLeague: m.competition?.name ?? '',
+        strTime: `${hh}:${mm}:00`,
+        dateEvent: m.utcDate?.split('T')[0] ?? null,
+        intHomeScore: started && m.score?.fullTime?.home != null ? String(m.score.fullTime.home) : null,
+        intAwayScore: started && m.score?.fullTime?.away != null ? String(m.score.fullTime.away) : null,
+        strHomeTeamBadge: crest(m.homeTeam?.crest),
+        strAwayTeamBadge: crest(m.awayTeam?.crest),
+      };
+    }).filter((f: Fixture) => f.strHomeTeam && f.strAwayTeam);
+  } catch {
+    return [];
   }
 };
 
@@ -177,42 +216,62 @@ export const fetchAndCacheFixtures = async (): Promise<{
   const plusDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().split('T')[0];
 
   try {
-    // Parallel: WC next events + today's soccer + the next two days, so the
-    // rail always has upcoming matches even when today is sparse
-    const results = await Promise.allSettled([
-      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`),
-      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`),
-      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(1)}&s=Soccer`),
-      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(2)}&s=Soccer`),
+    const fdKey = await getFdApiKey().catch(() => '');
+
+    // Parallel: optional football-data.org window + WC next events + today's
+    // soccer + the next two days, so the rail always has upcoming matches
+    const [fdMatches, ...results] = await Promise.all([
+      fdKey ? fetchFdMatches(fdKey, today, plusDays(2)) : Promise.resolve([] as Fixture[]),
+      ...[
+        fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`),
+        fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`),
+        fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(1)}&s=Soccer`),
+        fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(2)}&s=Soccer`),
+      ].map(p => p.then(r => r as Response | null).catch(() => null)),
     ]);
 
-    const oks = results.map(r => r.status === 'fulfilled' && r.value.ok);
-    // Every endpoint unreachable → we are offline; don't report success with 0 fixtures
-    if (!oks.some(Boolean)) throw new Error('offline');
+    const oks = results.map(r => !!r && r.ok);
+    // Every source unreachable → we are offline; don't report success with 0 fixtures
+    if (!oks.some(Boolean) && fdMatches.length === 0) throw new Error('offline');
 
     const eventLists: any[][] = await Promise.all(results.map(async (r, i) =>
-      oks[i] ? (((await (r as PromiseFulfilledResult<Response>).value.json()).events) ?? []) : []
+      oks[i] ? (((await (r as Response).json()).events) ?? []) : []
     ));
 
-    // Merge: WC events first, deduplicated by idEvent (skip entries missing idEvent)
-    const seen = new Set<string>();
+    // Merge: football-data first (accurate scores when keyed), then TheSportsDB.
+    // Dedup by team-pair + date so the same real match never appears twice
+    // across sources, plus by idEvent within a source.
+    const seenId = new Set<string>();
+    const seenMatch = new Set<string>();
+    const matchKey = (f: Fixture) =>
+      `${f.strHomeTeam.toLowerCase().slice(0, 6)}|${f.strAwayTeam.toLowerCase().slice(0, 6)}|${f.dateEvent ?? ''}`;
     const merged: Fixture[] = [];
-    for (const e of eventLists.flat()) {
-      if (e.idEvent && !seen.has(e.idEvent)) {
-        seen.add(e.idEvent);
-        merged.push({
-          idEvent: e.idEvent,
-          strHomeTeam: e.strHomeTeam ?? '',
-          strAwayTeam: e.strAwayTeam ?? '',
-          strLeague: e.strLeague ?? '',
-          strTime: e.strTime ?? '',
-          dateEvent: e.dateEvent ?? null,
-          intHomeScore: e.intHomeScore ?? null,
-          intAwayScore: e.intAwayScore ?? null,
-          strHomeTeamBadge: e.strHomeTeamBadge ?? null,
-          strAwayTeamBadge: e.strAwayTeamBadge ?? null,
-        });
+
+    for (const f of fdMatches) {
+      if (!seenId.has(f.idEvent) && !seenMatch.has(matchKey(f))) {
+        seenId.add(f.idEvent);
+        seenMatch.add(matchKey(f));
+        merged.push(f);
       }
+    }
+    for (const e of eventLists.flat()) {
+      if (!e.idEvent || seenId.has(e.idEvent)) continue;
+      const f: Fixture = {
+        idEvent: e.idEvent,
+        strHomeTeam: e.strHomeTeam ?? '',
+        strAwayTeam: e.strAwayTeam ?? '',
+        strLeague: e.strLeague ?? '',
+        strTime: e.strTime ?? '',
+        dateEvent: e.dateEvent ?? null,
+        intHomeScore: e.intHomeScore ?? null,
+        intAwayScore: e.intAwayScore ?? null,
+        strHomeTeamBadge: e.strHomeTeamBadge ?? null,
+        strAwayTeamBadge: e.strAwayTeamBadge ?? null,
+      };
+      if (seenMatch.has(matchKey(f))) continue;
+      seenId.add(f.idEvent);
+      seenMatch.add(matchKey(f));
+      merged.push(f);
     }
 
     // Caching is best-effort — never lose fresh network data to a DB error

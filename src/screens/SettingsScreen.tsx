@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Alert, Switch,
+  Alert, Switch, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Device from 'expo-device';
@@ -14,7 +14,7 @@ import { useTheme, useThemeToggle } from '../navigation/AppNavigator';
 import { pickTextCapable } from '../utils/models';
 import {
   getSettings, setAccelerator, setResponseLength, clearAllData,
-  saveSettings, syncModelsFromDisk,
+  saveSettings, syncModelsFromDisk, getFdApiKey, setFdApiKey,
 } from '../utils/storage';
 import { Accelerator, ResponseLength } from '../types';
 import ConfigSlider from '../components/ConfigSlider';
@@ -38,13 +38,17 @@ export default function SettingsScreen() {
   const [topP, setTopPState] = useState(0.9);
   const [repeatPenalty, setRepeatState] = useState(1.1);
   const [maxTokens, setMaxTokensState] = useState(1024);
+  const [fdKey, setFdKeyState] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [textModelName, setTextModelName] = useState<string | null>(null);
   const [deviceModel, setDeviceModel] = useState('');
   const [deviceBrand, setDeviceBrand] = useState('');
   const [totalMemory, setTotalMemory] = useState('N/A');
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    loadAll();
+    getFdApiKey().then(setFdKeyState).catch(() => {});
+  }, []);
 
   const loadAll = async () => {
     const [s] = await Promise.all([getSettings(), loadModelInfo(), loadDevice()]);
@@ -232,6 +236,28 @@ export default function SettingsScreen() {
 
         </View>
 
+        {/* ── Live Data ────────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Live Data</Text>
+        <View style={[styles.card, { backgroundColor: theme.card }]}>
+          <View style={styles.cardRow}>
+            <View style={styles.behaviorLeft}>
+              <Text style={[styles.rowLabel, { color: theme.text }]}>football-data.org key</Text>
+              <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
+                Optional — richer fixtures & scores for World Cup, PL, UCL and 9 more leagues. Free key at football-data.org.
+              </Text>
+            </View>
+          </View>
+          <TextInput
+            style={[styles.keyInput, { backgroundColor: theme.cardAlt, borderColor: fdKey ? accent + '50' : theme.border, color: theme.text }]}
+            placeholder="Paste API key (leave empty to use free data)"
+            placeholderTextColor={theme.textSecondary}
+            value={fdKey}
+            onChangeText={t => { setFdKeyState(t); setFdApiKey(t).catch(() => {}); }}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+
         {/* ── Device ───────────────────────────────────────────── */}
         <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Device</Text>
         <View style={[styles.card, { backgroundColor: theme.card }]}>
@@ -370,6 +396,10 @@ const styles = StyleSheet.create({
 
   // Card
   card: { borderRadius: 14, padding: 16, gap: 12 },
+  keyInput: {
+    borderRadius: 10, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 10,
+    fontSize: 13,
+  },
   cardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   divider: { height: StyleSheet.hairlineWidth },
 

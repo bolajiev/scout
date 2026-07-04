@@ -1,7 +1,10 @@
 import {
   QWEN3_1_7B_INST_Q4,
+  QWEN3_600M_INST_Q4,
   GEMMA4_2B_MULTIMODAL_Q4_K_M,
   MMPROJ_GEMMA4_2B_MULTIMODAL_Q8_0,
+  SMOLVLM2_500M_MULTIMODAL_Q8_0,
+  MMPROJ_SMOLVLM2_500M_MULTIMODAL_Q8_0,
 } from '@qvac/sdk';
 
 const MEDPSY_4B_SRC = 'registry://hf/qvac/MedPsy-4B-GGUF/resolve/main/medpsy-4b-q4_k_m-imat.gguf';
@@ -10,9 +13,11 @@ import { ModelInfo } from '../types';
 
 export const MODEL_KEYS = {
   TEXT_FAST: 'text-fast',
+  TEXT_INSTANT: 'text-instant',
   TEXT_HEALTH: 'text-health',
   TEXT_HEALTH_LITE: 'text-health-lite',
   VISION: 'vision',
+  VISION_LITE: 'vision-lite',
 } as const;
 
 export type ModelKey = (typeof MODEL_KEYS)[keyof typeof MODEL_KEYS];
@@ -27,6 +32,17 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
     size: '1.1 GB',
     sizeBytes: 1_056_782_912,
     modelSrc: QWEN3_1_7B_INST_Q4.src,
+    supports: ['text'],
+  },
+  {
+    id: MODEL_KEYS.TEXT_INSTANT,
+    name: 'Qwen3 0.6B',
+    modelType: 'text',
+    tagline: 'Instant — loads in seconds, streams fast.',
+    description: 'Qwen3 0.6B is the speed option: loads in seconds and streams several times faster than bigger models. Shorter, simpler answers — ideal for quick questions and low-RAM devices.',
+    size: '390 MB',
+    sizeBytes: 382_156_480,
+    modelSrc: QWEN3_600M_INST_Q4.src,
     supports: ['text'],
   },
   {
@@ -66,12 +82,30 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
     supports: ['vision', 'text'],
     heavy: true,
   },
+  {
+    id: MODEL_KEYS.VISION_LITE,
+    name: 'SmolVLM2 500M',
+    modelType: 'vision',
+    tagline: 'Light vision — fast scans, low RAM.',
+    description: 'SmolVLM2 500M is the light vision option for Scout Lens: loads in seconds and scans fast on any device. Less detailed than Gemma 4 but great for quick jersey and badge checks.',
+    size: '550 MB',
+    sizeBytes: 436_808_704 + 108_785_184,
+    mmprojBytes: 108_785_184,
+    modelSrc: SMOLVLM2_500M_MULTIMODAL_Q8_0.src,
+    projectionModelSrc: MMPROJ_SMOLVLM2_500M_MULTIMODAL_Q8_0.src,
+    supports: ['vision'],
+  },
 ];
 
-// Best model for text screens (AI Coach, Predictor): a dedicated text model
-// wins, but a multimodal model like Gemma 4 also handles text — so if it's
-// the only model downloaded, use it rather than claiming nothing is there.
-export function pickTextCapable<T extends ModelInfo>(models: T[]): T | undefined {
+// Best model for text screens (AI Coach, Predictor):
+// 1. the user's chosen default (set in Models) when it's downloaded
+// 2. any dedicated text model
+// 3. a multimodal model like Gemma 4 that also handles text
+export function pickTextCapable<T extends ModelInfo>(models: T[], preferredId?: string | null): T | undefined {
+  if (preferredId) {
+    const pref = models.find(m => m.id === preferredId && m.supports?.includes('text'));
+    if (pref) return pref;
+  }
   return models.find(m => m.modelType === 'text')
     ?? models.find(m => m.supports?.includes('text'));
 }
