@@ -126,6 +126,7 @@ interface Entry {
   elapsed?: number;
   toks?: number;
   usedLiveData?: boolean;
+  liveData?: string;  // the raw tool result the model actually saw — user-visible on demand
 }
 
 interface StreamSlot {
@@ -136,6 +137,7 @@ interface StreamSlot {
   isThinking: boolean;
   toolStatus: string | null;  // non-null while a tool call is executing
   usedLiveData: boolean;
+  liveData: string;
 }
 
 export default function MatchAIScreen() {
@@ -155,6 +157,7 @@ export default function MatchAIScreen() {
   const [noModel, setNoModel]           = useState(false);
   const [thinkingOn, setThinkingOn]     = useState(false);
   const [thoughtOpen, setThoughtOpen]   = useState<Record<string, boolean>>({});
+  const [dataOpen, setDataOpen]         = useState<Record<string, boolean>>({});
   // Card questions rotate automatically while the empty state is visible
   const [catIdx, setCatIdx] = useState(() => Math.floor(Math.random() * 5));
 
@@ -314,11 +317,12 @@ export default function MatchAIScreen() {
     ]).flat();
     history.push({ role: 'user', content: q });
 
-    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn, toolStatus: null, usedLiveData: false });
+    setSlot({ id: entryId, question: q, answer: '', thought: '', isThinking: thinkingOn, toolStatus: null, usedLiveData: false, liveData: '' });
     setIsGenerating(true);
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60);
 
     let usedLiveData = false;
+    let liveDataAcc = '';
     let answerAcc = '';
     let thoughtAcc = '';
     let lastFlush = 0;
@@ -417,10 +421,11 @@ export default function MatchAIScreen() {
             }
           } catch { toolResult = 'Unable to fetch live data.'; }
           toolHistory.push({ role: 'tool', content: toolResult });
+          liveDataAcc += (liveDataAcc ? '\n\n' : '') + toolResult;
         }
 
         if (!mountedRef.current) return;
-        setSlot(s => s ? { ...s, toolStatus: null, answer: '', usedLiveData } : s);
+        setSlot(s => s ? { ...s, toolStatus: null, answer: '', usedLiveData, liveData: liveDataAcc } : s);
 
         // ── Pass 2: final answer incorporating tool results ─────────────────
         const run2 = completion({
@@ -466,7 +471,7 @@ export default function MatchAIScreen() {
 
       if (thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
       if (mountedRef.current) {
-        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, usedLiveData };
+        const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, usedLiveData, liveData: liveDataAcc || undefined };
         setSlot(null);
         setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
@@ -555,10 +560,17 @@ export default function MatchAIScreen() {
             </View>
             <View style={styles.statRow}>
               {entry.usedLiveData && (
-                <View style={[styles.liveChip, { backgroundColor: '#22c55e14' }]}>
+                <TouchableOpacity
+                  style={[styles.liveChip, { backgroundColor: '#22c55e14' }]}
+                  onPress={() => setDataOpen(p => ({ ...p, [entry.id]: !p[entry.id] }))}
+                  hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                >
                   <View style={[styles.liveDotSmall, { backgroundColor: '#22c55e' }]} />
                   <Text style={[styles.liveChipText, { color: '#22c55e' }]}>TheSportsDB</Text>
-                </View>
+                  {entry.liveData && (
+                    <Text style={[styles.liveChipText, { color: '#22c55e' }]}>{dataOpen[entry.id] ? ' ‹' : ' ›'}</Text>
+                  )}
+                </TouchableOpacity>
               )}
               {entry.elapsed != null && (
                 <Text style={[styles.stat, { color: theme.textSecondary }]}>
@@ -575,6 +587,16 @@ export default function MatchAIScreen() {
                 <Text style={[styles.copyBtn, { color: theme.textSecondary }]}>Copy</Text>
               </TouchableOpacity>
             </View>
+            {/* Raw data the model actually saw — collapsed by default so the
+                chat stays clean, but never hidden: the user asked for exactly
+                this, since "TheSportsDB" alone doesn't say what was fetched */}
+            {entry.usedLiveData && entry.liveData && dataOpen[entry.id] && (
+              <View style={[styles.liveDataBlock, { backgroundColor: theme.cardAlt }]}>
+                <Text style={[styles.liveDataText, { color: theme.textSecondary }]} selectable>
+                  {entry.liveData}
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       </Animated.View>
@@ -586,7 +608,7 @@ export default function MatchAIScreen() {
   // memo a long chat would re-parse every bubble on each token batch.
   const renderedEntries = useMemo(
     () => entries.map(renderEntry),
-    [entries, thoughtOpen, themeMode],
+    [entries, thoughtOpen, dataOpen, themeMode],
   );
 
   // ── Empty state ────────────────────────────────────────────────────────────
@@ -862,6 +884,8 @@ const styles = StyleSheet.create({
   },
   liveDotSmall: { width: 4, height: 4, borderRadius: 2 },
   liveChipText: { fontSize: 10, fontWeight: '700' },
+  liveDataBlock: { borderRadius: 10, padding: 10, marginTop: 6 },
+  liveDataText: { fontSize: 11, lineHeight: 16, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
 
 
   // Thought block
