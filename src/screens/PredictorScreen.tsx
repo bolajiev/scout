@@ -570,6 +570,11 @@ export default function PredictorScreen() {
                         <Text style={[styles.formNotFound, { color: theme.textSecondary }]}>not found</Text>
                       )}
                     </View>
+                    {form && form.events[0] ? (
+                      <Text style={[styles.formLastResult, { color: theme.textSecondary }]} numberOfLines={1}>
+                        {form.events[0].score} vs {form.events[0].opponent}
+                      </Text>
+                    ) : null}
                   </View>
                 ))}
               </View>
@@ -632,7 +637,6 @@ export default function PredictorScreen() {
             until the first token arrives, so the wait never looks frozen */}
         {isGenerating && thought.length === 0 && prediction.length === 0 && (
           <Animated.View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: theme.border, opacity: pulsAnim }]}>
-            <View style={[styles.resultBar, { backgroundColor: accent }]} />
             <View style={styles.resultContent}>
               <Text style={[styles.resultLabel, { color: accent }]}>
                 {thinkingOn ? 'DEEP ANALYSIS STARTING...' : 'ANALYZING THE MATCHUP...'}
@@ -649,7 +653,6 @@ export default function PredictorScreen() {
         {/* Deep-mode thinking stream */}
         {isGenerating && thinkingOn && thought.length > 0 && prediction.length === 0 && (
           <View style={[styles.resultCard, { backgroundColor: '#1a1200', borderColor: '#f59e0b33' }]}>
-            <View style={[styles.resultBar, { backgroundColor: '#f59e0b' }]} />
             <View style={styles.resultContent}>
               <Text style={[styles.resultLabel, { color: '#f59e0b' }]}>READING THE GAME...</Text>
               <Text style={styles.thoughtText} numberOfLines={8}>{thought}</Text>
@@ -663,7 +666,6 @@ export default function PredictorScreen() {
           const live = parsePrediction(prediction);
           return (
             <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: accent + '50' }]}>
-              <View style={[styles.resultBar, { backgroundColor: accent }]} />
               <View style={styles.resultContent}>
                 <Text style={[styles.resultLabel, { color: accent }]}>MAKING THE CALL...</Text>
                 {(live.winner || live.score || live.confidence) && (
@@ -760,7 +762,6 @@ export default function PredictorScreen() {
             {/* Analysis */}
             {parsed.analysis ? (
               <View style={[styles.analysisCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-                <View style={[styles.resultBar, { backgroundColor: accent }]} />
                 <View style={styles.resultContent}>
                   <View style={styles.analysisHeader}>
                     <Text style={[styles.resultLabel, { color: accent }]}>ANALYSIS</Text>
@@ -876,6 +877,7 @@ const styles = StyleSheet.create({
   },
   formDotText: { fontSize: 10, fontWeight: '800', color: '#fff' },
   formNotFound: { fontSize: 11, fontStyle: 'italic' },
+  formLastResult: { flex: 1, fontSize: 11, textAlign: 'right' },
   vsBox: {
     width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1,
@@ -888,8 +890,7 @@ const styles = StyleSheet.create({
   predictBtnText: { fontSize: 16, fontWeight: '800' },
   noModelCard: { borderRadius: 10, borderWidth: 1, padding: 14 },
   noModelText: { fontSize: 13, textAlign: 'center' },
-  resultCard: { borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden' },
-  resultBar: { width: 4 },
+  resultCard: { borderRadius: 14, borderWidth: 1, overflow: 'hidden' },
   resultContent: { flex: 1, padding: 16, gap: 8 },
   resultLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
   resultText: { fontSize: 15, lineHeight: 24 },
@@ -915,7 +916,7 @@ const styles = StyleSheet.create({
   scoreCenter: { alignItems: 'center', minWidth: 60 },
   scoreText: { fontSize: 32, fontWeight: '900', letterSpacing: -1 },
   scoreVs: { fontSize: 14, fontWeight: '700' },
-  analysisCard: { borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden' },
+  analysisCard: { borderRadius: 14, borderWidth: 1, overflow: 'hidden' },
   keyPlayersCard: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 9, marginBottom: 10 },
   liveChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   liveFieldChip: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5 },

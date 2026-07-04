@@ -111,16 +111,6 @@ const sbStyles = StyleSheet.create({
   corner: { position: 'absolute', width: 15, height: 15 },
 });
 
-// ── Quick analysis chips ────────────────────────────────────────────────────
-
-const CHIPS = [
-  { label: 'High Press', q: 'Explain high press tactics — how does it work and which clubs master it?' },
-  { label: 'Offside Rule', q: 'Explain the offside rule simply with a clear example.' },
-  { label: 'Best Striker', q: 'Who is the greatest striker in Champions League history and why?' },
-  { label: 'Formations', q: 'Compare the 4-3-3 and 4-2-3-1 formations — when is each most effective?' },
-  { label: 'Pressing Stats', q: 'How do analysts measure pressing intensity and team press?' },
-];
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
@@ -145,7 +135,6 @@ export default function HomeScreen() {
 
   const c1 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
   const c2 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
-  const c3 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
 
   // Refetch fixtures so the card never shows a stale match: a finished game
   // rotates to the next kick-off, live scores update, and a new day replaces
@@ -180,7 +169,6 @@ export default function HomeScreen() {
     };
     animCard(c1, 240);
     animCard(c2, 360);
-    animCard(c3, 480);
 
     refreshFixtures(true);
     // Home is the root screen and never unmounts — keep the match fresh
@@ -464,24 +452,6 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </Animated.View>
 
-        {/* ── QUICK ANALYSIS CHIPS ─────────────────────────────────── */}
-        <Animated.View style={{ opacity: c3.op, transform: [{ translateY: c3.ty }] }}>
-        <View style={styles.chipsSection}>
-          <Text style={[styles.chipsLabel, { color: theme.textSecondary }]}>QUICK ANALYSIS</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-            {CHIPS.map((chip) => (
-              <TouchableOpacity
-                key={chip.label}
-                style={[styles.chip, { backgroundColor: accent + '16', borderColor: accent + '32' }]}
-                onPress={() => go('MatchAI', chip.q)}
-                activeOpacity={0.72}
-              >
-                <Text style={[styles.chipText, { color: accent }]}>{chip.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-        </Animated.View>
 
         <TouchableOpacity onPress={() => navigation.navigate('About')} style={styles.footer}>
           <Text style={[styles.footerText, { color: theme.textSecondary }]}>
@@ -510,12 +480,6 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
 
-  // Chips
-  chipsSection: { marginTop: 20, gap: 9 },
-  chipsLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.6, paddingHorizontal: 20 },
-  chipsRow: { paddingHorizontal: 16, gap: 8 },
-  chip: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 8 },
-  chipText: { fontSize: 13, fontWeight: '700' },
 
   // Model status strip
   modelStrip: {

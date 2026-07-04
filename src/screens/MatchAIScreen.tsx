@@ -52,35 +52,62 @@ const SCOUT_TOOLS: Tool[] = [
   },
 ];
 
-// Rotating chips — deliberately NO overlap with the category cards above
-// them (high press / Mbappe / WC favorites / offside live there)
-const ALL_SUGGESTIONS = [
-  'Best striker in Champions League history?',
-  'What is a false nine?',
-  'How does VAR work?',
-  'Compare 4-3-3 vs 4-2-3-1 formations.',
-  'Who invented total football?',
-  'What makes a good defensive midfielder?',
-  'Best World Cup goals of all time?',
-  'How does penalty shootout psychology work?',
-  'What is an overlap run in football?',
-  'Box-to-box vs holding midfielder — the difference?',
-  'How do clubs scout young players?',
-  'Which nation has the best youth academy system?',
-  'What does a sporting director actually do?',
-  'How do you break down a low block?',
-  'Greatest World Cup final ever played?',
+// Four fixed category cards whose questions rotate automatically —
+// fresh suggestions every few seconds, no manual "More" needed
+const CATEGORY_POOLS = [
+  { tag: 'TACTICS', qs: [
+    'How does a high press work in modern football?',
+    'How do you break down a low block?',
+    'Compare 4-3-3 vs 4-2-3-1 formations.',
+    'Explain gegenpressing in simple terms.',
+    'What is a false nine and when do you use one?',
+  ]},
+  { tag: 'PLAYERS', qs: [
+    'What makes Mbappe the fastest player right now?',
+    'Best striker in Champions League history?',
+    'What makes a great defensive midfielder?',
+    'Box-to-box vs holding midfielder — the difference?',
+    'How do clubs scout young players?',
+  ]},
+  { tag: 'WC 2026', qs: [
+    'Who are the top favorites for FIFA World Cup 2026?',
+    'Greatest World Cup final ever played?',
+    'Best World Cup goals of all time?',
+    'Which dark horse could surprise at WC 2026?',
+    'How does the 48-team World Cup format work?',
+  ]},
+  { tag: 'RULES', qs: [
+    'Explain the offside rule with a simple example.',
+    'How does VAR actually work?',
+    'What counts as a handball now?',
+    'How does penalty shootout psychology work?',
+    'When is a tackle a red card?',
+  ]},
 ];
 
-const CATEGORIES = [
-  { tag: 'TACTICS',   question: 'How does a high press work in modern football?' },
-  { tag: 'PLAYERS',   question: 'What makes Mbappe the fastest player right now?' },
-  { tag: 'WC 2026',   question: 'Who are the top favorites for FIFA World Cup 2026?' },
-  { tag: 'RULES',     question: 'Explain the offside rule with a simple example.' },
-];
-
-const rotateSuggestions = (offset: number): string[] =>
-  [0, 1, 2].map(i => ALL_SUGGESTIONS[(offset + i) % ALL_SUGGESTIONS.length]);
+// Animated three-dot typing indicator (the static one looked frozen)
+function TypingDots({ color }: { color: string }) {
+  const dots = useRef([new Animated.Value(0.25), new Animated.Value(0.25), new Animated.Value(0.25)]).current;
+  useEffect(() => {
+    const loops = dots.map((d, i) =>
+      Animated.loop(Animated.sequence([
+        Animated.delay(i * 160),
+        Animated.timing(d, { toValue: 1, duration: 320, useNativeDriver: true }),
+        Animated.timing(d, { toValue: 0.25, duration: 320, useNativeDriver: true }),
+        Animated.delay((2 - i) * 160),
+      ])),
+    );
+    loops.forEach(l => l.start());
+    return () => loops.forEach(l => l.stop());
+  }, []);
+  return (
+    <View style={{ flexDirection: 'row', gap: 5, alignItems: 'center', paddingVertical: 3 }}>
+      {dots.map((d, i) => (
+        <Animated.View key={i} style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: color, opacity: d }} />
+      ))}
+    </View>
+  );
+}
 
 const getGreeting = () => {
   const h = new Date().getHours();
@@ -126,9 +153,10 @@ export default function MatchAIScreen() {
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel]           = useState(false);
   const [thinkingOn, setThinkingOn]     = useState(false);
+  const [reasoningOk, setReasoningOk]   = useState(false);
   const [thoughtOpen, setThoughtOpen]   = useState<Record<string, boolean>>({});
-  // Random start so the chips differ every visit
-  const [suggOffset, setSuggOffset]     = useState(() => Math.floor(Math.random() * ALL_SUGGESTIONS.length));
+  // Card questions rotate automatically while the empty state is visible
+  const [catIdx, setCatIdx] = useState(() => Math.floor(Math.random() * 5));
 
   const scrollRef        = useRef<ScrollView>(null);
   const currentRunRef    = useRef<any>(null);
@@ -155,6 +183,13 @@ export default function MatchAIScreen() {
   };
 
   useEffect(() => { slotRef.current = slot; }, [slot]);
+
+  // Auto-rotate the category card questions while the empty state is visible
+  useEffect(() => {
+    if (entries.length > 0 || slot) return;
+    const t = setInterval(() => setCatIdx(i => i + 1), 6000);
+    return () => clearInterval(t);
+  }, [entries.length, !!slot]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -220,9 +255,16 @@ export default function MatchAIScreen() {
       // Tool calling only for true text models — a multimodal fallback like
       // Gemma has a chat template without reliable tool-call support
       const supportsTools = model.modelType === 'text';
+      const supportsReasoning = !!model.supportsReasoning;
       const mid = await llmManager.ensure(model, { ctx_size: model.modelType === 'vision' ? 2048 : 4096, device: 'auto', tools: supportsTools, projectionModelSrc: model.projectionModelSrc });
       modelNameRef.current = model.name;
       toolsEnabledRef.current = supportsTools;
+      if (mountedRef.current) {
+        setReasoningOk(supportsReasoning);
+        // Models without a thinking channel (Gemma, MedPsy) ignore Deep —
+        // never leave the toggle on where it can only confuse
+        if (!supportsReasoning) setThinkingOn(false);
+      }
       if (mountedRef.current) {
         setModelId(mid);
         setModelLoading(false);
@@ -576,44 +618,25 @@ export default function MatchAIScreen() {
         </View>
       ) : (
         <>
-          {/* Category cards 2×2 */}
+          {/* Category cards 2×2 — questions auto-rotate every few seconds */}
           <View style={styles.cardGrid}>
-            {CATEGORIES.map((cat) => (
-              <TouchableOpacity
-                key={cat.tag}
-                style={[styles.categoryCard, { backgroundColor: theme.card, borderColor: theme.border }]}
-                onPress={() => send(cat.question)}
-                activeOpacity={0.75}
-                disabled={modelLoading || !modelId}
-              >
-                <Text style={[styles.cardTag, { color: accent }]}>{cat.tag}</Text>
-                <Text style={[styles.cardQuestion, { color: theme.text }]} numberOfLines={3}>
-                  {cat.question}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Rotating chips */}
-          <View style={styles.chipRow}>
-            {rotateSuggestions(suggOffset).map(q => (
-              <TouchableOpacity
-                key={q}
-                style={[styles.suggChip, { backgroundColor: theme.card, borderColor: theme.border }]}
-                onPress={() => send(q)}
-                disabled={modelLoading || !modelId}
-                activeOpacity={0.72}
-              >
-                <Text style={[styles.suggText, { color: theme.textSecondary }]}>{q}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              onPress={() => setSuggOffset(o => (o + 3) % ALL_SUGGESTIONS.length)}
-              style={[styles.suggChip, { borderColor: accent + '35', backgroundColor: accent + '0c' }]}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.suggText, { color: accent }]}>More...</Text>
-            </TouchableOpacity>
+            {CATEGORY_POOLS.map((cat) => {
+              const q = cat.qs[catIdx % cat.qs.length];
+              return (
+                <TouchableOpacity
+                  key={cat.tag}
+                  style={[styles.categoryCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+                  onPress={() => send(q)}
+                  activeOpacity={0.75}
+                  disabled={modelLoading || !modelId}
+                >
+                  <Text style={[styles.cardTag, { color: accent }]}>{cat.tag}</Text>
+                  <Text style={[styles.cardQuestion, { color: theme.text }]} numberOfLines={3}>
+                    {q}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </>
       )}
@@ -644,12 +667,28 @@ export default function MatchAIScreen() {
             </Text>
           </View>
         </View>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('History', { tab: 'matchai' })}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-        >
-          <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          {(entries.length > 0 || slot) && !isGenerating && (
+            <TouchableOpacity
+              onPress={() => {
+                setEntries([]);
+                setSlot(null);
+                sessionIdRef.current = null;
+                setThoughtOpen({});
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Text style={[styles.historyBtn, { color: accent }]}>New</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            onPress={() => navigation.navigate('History', { tab: 'matchai' })}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Feed */}
@@ -683,11 +722,7 @@ export default function MatchAIScreen() {
                 {slot.answer.length > 0 ? (
                   <Text style={[styles.aiText, { color: theme.text }]}>{slot.answer}</Text>
                 ) : (
-                  <View style={styles.typingRow}>
-                    <View style={[styles.typingDot, { backgroundColor: accent }]} />
-                    <View style={[styles.typingDot, { backgroundColor: accent, opacity: 0.6 }]} />
-                    <View style={[styles.typingDot, { backgroundColor: accent, opacity: 0.3 }]} />
-                  </View>
+                  <TypingDots color={accent} />
                 )}
               </View>
             </View>
@@ -712,6 +747,7 @@ export default function MatchAIScreen() {
             onSubmitEditing={() => { if (input.trim()) send(); }}
           />
           <View style={styles.composerRow}>
+            {reasoningOk && (
             <TouchableOpacity
               onPress={() => setThinkingOn(v => !v)}
               style={[styles.deepToggle, { backgroundColor: thinkingOn ? accent + '1a' : 'transparent', borderColor: thinkingOn ? accent : theme.border }]}
@@ -722,6 +758,7 @@ export default function MatchAIScreen() {
                 {thinkingOn ? 'Deep · on' : 'Deep'}
               </Text>
             </TouchableOpacity>
+            )}
             <View style={{ flex: 1 }} />
             {isGenerating ? (
               <TouchableOpacity
@@ -785,6 +822,7 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.4 },
   headerSub: { fontSize: 11, fontWeight: '500', marginTop: 1 },
   historyBtn: { fontSize: 13, fontWeight: '600' },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 18 },
 
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 14, paddingTop: 16, gap: 4 },
@@ -816,9 +854,6 @@ const styles = StyleSheet.create({
   cardQuestion: { fontSize: 14, fontWeight: '500', lineHeight: 20 },
 
   // Chip row
-  chipRow: { width: '100%', gap: 7, marginTop: -2 },
-  suggChip: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 11 },
-  suggText: { fontSize: 13, fontWeight: '500' },
 
   // ── Message blocks ────────────────────────────────────────────────────────
   entryBlock: { marginBottom: 18, gap: 7 },
@@ -847,8 +882,6 @@ const styles = StyleSheet.create({
   liveDotSmall: { width: 4, height: 4, borderRadius: 2 },
   liveChipText: { fontSize: 10, fontWeight: '700' },
 
-  typingRow: { flexDirection: 'row', gap: 5, alignItems: 'center', paddingVertical: 3 },
-  typingDot: { width: 7, height: 7, borderRadius: 3.5 },
 
   // Thought block
   thoughtBlock: {

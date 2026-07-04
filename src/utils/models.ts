@@ -35,6 +35,7 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
     sizeBytes: 382_156_480,
     modelSrc: QWEN3_600M_INST_Q4.src,
     supports: ['text'],
+    supportsReasoning: true,
   },
   {
     id: MODEL_KEYS.TEXT_FAST,
@@ -48,6 +49,7 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
     sizeBytes: 1_056_782_912,
     modelSrc: QWEN3_1_7B_INST_Q4.src,
     supports: ['text'],
+    supportsReasoning: true,
   },
   {
     id: MODEL_KEYS.TEXT_HEALTH_LITE,

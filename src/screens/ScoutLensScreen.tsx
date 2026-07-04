@@ -34,6 +34,7 @@ export default function ScoutLensScreen() {
   const [turns, setTurns] = useState<{ q: string; a: string }[]>([]);
   const sessionDbRef = useRef<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [elapsedS, setElapsedS] = useState(0);
   const [modelId, setModelId] = useState<string | null>(null);
   const [noModel, setNoModel] = useState(false);
 
@@ -55,6 +56,13 @@ export default function ScoutLensScreen() {
     loop.start();
     return () => loop.stop();
   }, []);
+
+  // Seconds counter so a long Gemma scan never looks frozen
+  useEffect(() => {
+    if (!isAnalyzing) { setElapsedS(0); return; }
+    const t = setInterval(() => setElapsedS(x => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [isAnalyzing]);
 
   useEffect(() => {
     if (isAnalyzing) {
@@ -370,12 +378,11 @@ export default function ScoutLensScreen() {
         {/* Finished turns — Q&A stack for this image */}
         {turns.map((t, i) => (
           <View key={i} style={[styles.resultCard, { backgroundColor: theme.card, borderColor: accent + '40' }]}>
-            <View style={[styles.resultBar, { backgroundColor: accent }]} />
             <View style={styles.resultContent}>
               <Text style={[styles.resultLabel, { color: accent }]} numberOfLines={2}>
                 {t.q.startsWith('What football') ? 'Scout Lens' : t.q}
               </Text>
-              <Text selectable style={[styles.resultText, { color: theme.text }]}>{t.a}</Text>
+              <Text selectable style={[styles.resultText, { color: theme.text }]}>{t.a.replace(/\*\*/g, '')}</Text>
               <Text style={[styles.resultNote, { color: theme.textSecondary }]}>On-device · no internet</Text>
             </View>
           </View>
@@ -384,11 +391,15 @@ export default function ScoutLensScreen() {
         {/* In-flight answer */}
         {isAnalyzing && (
           <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <View style={[styles.resultBar, { backgroundColor: accent }]} />
             <View style={styles.resultContent}>
               <Text style={[styles.resultText, { color: result ? theme.text : theme.textSecondary }]}>
-                {result || 'Analysing...'}
+                {result ? result.replace(/\*\*/g, '') : `Analysing... ${elapsedS}s`}
               </Text>
+              {!result && elapsedS > 10 && (
+                <Text style={[styles.resultNote, { color: theme.textSecondary }]}>
+                  Big models take a while on the first scan — SmolVLM2 500M scans in seconds
+                </Text>
+              )}
             </View>
           </View>
         )}
@@ -466,9 +477,8 @@ const styles = StyleSheet.create({
   },
   sourceBtnText: { fontSize: 14, fontWeight: '700' },
   resultCard: {
-    borderRadius: 14, borderWidth: 1, flexDirection: 'row', overflow: 'hidden',
+    borderRadius: 14, borderWidth: 1, overflow: 'hidden',
   },
-  resultBar: { width: 4 },
   resultContent: { flex: 1, padding: 16, gap: 6 },
   resultLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1 },
   resultText: { fontSize: 15, lineHeight: 24 },

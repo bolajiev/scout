@@ -12,6 +12,7 @@ export interface ModelInfo {
   projectionModelSrc?: string;
   modelType: 'vision' | 'text';
   supports: string[];
+  supportsReasoning?: boolean; // model streams a thinking channel (Qwen3)
   isDownloaded?: boolean;
   downloadedPath?: string;
   isCustom?: boolean;
