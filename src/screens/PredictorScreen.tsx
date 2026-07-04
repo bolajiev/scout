@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, TextInput, Image,
   KeyboardAvoidingView, Platform, Share,
@@ -38,6 +38,45 @@ KEY AWAY: [away team's most dangerous player — why he decides this match, one 
 [2-4 sentences of sharp reasoning: the tactical matchup, where the game is won and lost, and the form pattern behind your call. If live form data was provided, reference it directly. Write like a pundit making a call, not a bot citing caveats.]
 
 Do not add anything before WINNER or after the analysis. Always respond in English.`;
+
+// Precompiled once at module load — the old version created 5 fresh
+// RegExp objects and rescanned every line on EVERY streaming flush
+// (~10x/sec), which was real, measurable jank stacked on top of an
+// already CPU-saturated device (llama.cpp uses every core while
+// generating). Small models also drift on casing/markdown
+// ("**Winner:**"), so matching stays case-insensitive and strips `**`.
+const FIELD_PATTERNS: Record<string, RegExp> = {
+  winner: /^winner\s*:\s*(.+)$/im,
+  score: /^score\s*:\s*(.+)$/im,
+  confidence: /^confidence\s*:\s*(.+)$/im,
+  keyHome: /^key\s*home(?:\s*player)?\s*:\s*(.+)$/im,
+  keyAway: /^key\s*away(?:\s*player)?\s*:\s*(.+)$/im,
+};
+const STRUCTURED_LINE_RE = /^(winner|score|confidence|key\s*home|key\s*away)\s*:/i;
+const SEPARATOR_RE = /^-{3,}\s*$/;
+const STARS_RE = /\*+/g;
+
+interface ParsedPrediction {
+  winner: string; score: string; confidence: string;
+  keyHome: string; keyAway: string; analysis: string;
+}
+
+function parsePrediction(text: string): ParsedPrediction {
+  const clean = (s: string) => s.replace(STARS_RE, '').trim();
+  const field = (name: keyof typeof FIELD_PATTERNS) => {
+    const m = text.match(FIELD_PATTERNS[name]);
+    return m ? clean(m[1]) : '';
+  };
+  const lines = text.split('\n');
+  const sepIdx = lines.findIndex(l => SEPARATOR_RE.test(l.trim()));
+  const analysis = sepIdx >= 0
+    ? lines.slice(sepIdx + 1).join('\n').trim()
+    : lines.filter(l => l.trim() && !STRUCTURED_LINE_RE.test(l.trim())).join('\n').trim();
+  return {
+    winner: field('winner'), score: field('score'), confidence: field('confidence'),
+    keyHome: field('keyHome'), keyAway: field('keyAway'), analysis,
+  };
+}
 
 export default function PredictorScreen() {
   const navigation = useNavigation<any>();
@@ -233,29 +272,6 @@ export default function PredictorScreen() {
     }
   };
 
-  // Lenient parser — small models drift on casing/markdown ("**Winner:**"),
-  // so match case-insensitively and strip decoration
-  const parsePrediction = (text: string) => {
-    const clean = (s: string) => s.replace(/\*+/g, '').trim();
-    const lines = text.split('\n').map(l => clean(l));
-    const field = (name: string) => {
-      const re = new RegExp(`^${name}\\s*:\\s*(.+)$`, 'i');
-      for (const l of lines) { const m = l.match(re); if (m) return clean(m[1]); }
-      return '';
-    };
-    const winner = field('WINNER');
-    const score = field('SCORE');
-    const confidence = field('CONFIDENCE');
-    const keyHome = field('KEY\\s*HOME(?:\\s*PLAYER)?');
-    const keyAway = field('KEY\\s*AWAY(?:\\s*PLAYER)?');
-    const sepIdx = lines.findIndex(l => /^-{3,}$/.test(l));
-    const structured = /^(winner|score|confidence|key\s*home|key\s*away)\s*:/i;
-    const analysis = sepIdx >= 0
-      ? lines.slice(sepIdx + 1).join('\n').trim()
-      : lines.filter(l => l && !structured.test(l)).join('\n').trim();
-    return { winner, score, confidence, keyHome, keyAway, analysis };
-  };
-
   const predict = async () => {
     if (!teamA.trim() || !teamB.trim() || isGenerating || !modelId) return;
     setPrediction('');
@@ -365,6 +381,10 @@ export default function PredictorScreen() {
     if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
   };
 
+  // Only recomputed when the streamed text actually grows — a re-render
+  // triggered by anything else (e.g. the pulse animation) reuses this
+  const live = useMemo(() => parsePrediction(prediction), [prediction]);
+
   const accent = theme.accent;
 
   return (
@@ -372,7 +392,7 @@ export default function PredictorScreen() {
       style={[styles.root, { backgroundColor: theme.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 12, }]}>
         <View style={styles.headerLeft}>
           <TouchableOpacity
             onPress={() => navigation.goBack()}
@@ -386,7 +406,7 @@ export default function PredictorScreen() {
           </View>
           <Text style={[styles.headerTitle, { color: theme.text }]}>Predictor</Text>
           {record && record.hits + record.misses > 0 && (
-            <View style={[styles.recordChip, { backgroundColor: accent + '16', borderColor: accent + '40' }]}>
+            <View style={[styles.recordChip, { backgroundColor: accent + '16' }]}>
               <Text style={[styles.recordChipText, { color: accent }]}>
                 {record.hits}W · {record.misses}L
               </Text>
@@ -398,10 +418,10 @@ export default function PredictorScreen() {
           <TouchableOpacity
             onPress={() => setThinkingOn(v => !v)}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={[styles.thinkBtn, { backgroundColor: thinkingOn ? accent + '28' : 'transparent', borderColor: thinkingOn ? accent : theme.border }]}
+            style={[styles.thinkBtn, { backgroundColor: thinkingOn ? accent + '28' : theme.cardAlt }]}
           >
             <Text style={[styles.thinkBtnText, { color: thinkingOn ? accent : theme.textSecondary }]}>
-              {thinkingOn ? 'Deep ON' : 'Deep'}
+              {thinkingOn ? 'Think ON' : 'Think'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -428,7 +448,7 @@ export default function PredictorScreen() {
                 World Cup first · live scores · upcoming
               </Text>
             </View>
-            <View style={[styles.apiDisclosure, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={[styles.apiDisclosure, { backgroundColor: theme.cardAlt }]}>
               <Text style={[styles.apiDisclosureText, { color: theme.textSecondary }]}>TheSportsDB</Text>
             </View>
           </View>
@@ -437,7 +457,7 @@ export default function PredictorScreen() {
             <Text style={[styles.fixturesLoading, { color: theme.textSecondary }]}>Loading fixtures...</Text>
           ) : noInternet ? (
             <TouchableOpacity
-              style={[styles.noInternetCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+              style={[styles.noInternetCard, { backgroundColor: theme.card }]}
               onPress={retryFixtures}
               activeOpacity={0.8}
             >
@@ -463,7 +483,7 @@ export default function PredictorScreen() {
                     key={f.idEvent}
                     style={[styles.fixtureCard, {
                       backgroundColor: theme.card,
-                      borderColor: selected ? accent : isWC ? accent + '50' : theme.border,
+                      ...(selected ? { borderWidth: 1.5, borderColor: accent } : isWC ? { borderWidth: 1, borderColor: accent + '40' } : null),
                     }]}
                     onPress={() => {
                       setTeamA(f.strHomeTeam);
@@ -528,14 +548,14 @@ export default function PredictorScreen() {
 
         {/* Model loading pulse */}
         {modelLoading && !noModel && (
-          <Animated.View style={[styles.loadingBar, { backgroundColor: theme.card, borderColor: theme.border, opacity: loadPulse }]}>
+          <Animated.View style={[styles.loadingBar, { backgroundColor: theme.card, opacity: loadPulse }]}>
             <Text style={[styles.loadingText, { color: theme.textSecondary }]}>Warming up model...</Text>
           </Animated.View>
         )}
 
         {/* Team inputs */}
         <View style={styles.matchup}>
-          <View style={[styles.teamCard, { backgroundColor: theme.card, borderColor: teamA.trim() ? accent : theme.border }]}>
+          <View style={[styles.teamCard, { backgroundColor: theme.card }, teamA.trim() ? { borderWidth: 1.5, borderColor: accent } : null]}>
             <Text style={[styles.teamCardLabel, { color: theme.textSecondary }]}>Home</Text>
             <TextInput
               style={[styles.teamInput, { color: theme.text }]}
@@ -547,11 +567,11 @@ export default function PredictorScreen() {
             />
           </View>
 
-          <View style={[styles.vsBox, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={[styles.vsBox, { backgroundColor: theme.cardAlt }]}>
             <Text style={[styles.vsText, { color: theme.textSecondary }]}>VS</Text>
           </View>
 
-          <View style={[styles.teamCard, { backgroundColor: theme.card, borderColor: teamB.trim() ? accent : theme.border }]}>
+          <View style={[styles.teamCard, { backgroundColor: theme.card }, teamB.trim() ? { borderWidth: 1.5, borderColor: accent } : null]}>
             <Text style={[styles.teamCardLabel, { color: theme.textSecondary }]}>Away</Text>
             <TextInput
               style={[styles.teamInput, { color: theme.text }]}
@@ -566,7 +586,7 @@ export default function PredictorScreen() {
 
         {/* Selected match details */}
         {selectedFixture && (
-          <View style={[styles.matchDetails, { backgroundColor: theme.card, borderColor: isLive(selectedFixture) ? '#ef444455' : theme.border }]}>
+          <View style={[styles.matchDetails, { backgroundColor: theme.card }, isLive(selectedFixture) ? { borderWidth: 1, borderColor: '#ef444455' } : null]}>
             <View style={styles.matchDetailsTop}>
               <Text style={[styles.matchDetailsLeague, { color: theme.textSecondary }]} numberOfLines={1}>
                 {selectedFixture.strLeague}
@@ -606,7 +626,7 @@ export default function PredictorScreen() {
 
         {/* Live form section — appears when both teams searched */}
         {(formLoading || formA || formB) && (
-          <View style={[styles.formSection, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={[styles.formSection, { backgroundColor: theme.card }]}>
             <View style={styles.formHeader}>
               <View style={[styles.formDot, { backgroundColor: formLoading ? theme.textSecondary : '#22c55e' }]} />
               <Text style={[styles.formLabel, { color: formLoading ? theme.textSecondary : '#22c55e' }]}>
@@ -646,7 +666,7 @@ export default function PredictorScreen() {
 
         {/* Optional context */}
         <TextInput
-          style={[styles.contextInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.text }]}
+          style={[styles.contextInput, { backgroundColor: theme.card, color: theme.text }]}
           placeholder="Add context: injuries, venue, pressure, head-to-head..."
           placeholderTextColor={theme.textSecondary}
           value={context}
@@ -681,7 +701,7 @@ export default function PredictorScreen() {
         </Animated.View>
 
         {noModel && (
-          <View style={[styles.noModelCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={[styles.noModelCard, { backgroundColor: theme.card }]}>
             <Text style={[styles.noModelText, { color: theme.textSecondary }]}>
               No model downloaded. Go to Models to download one.
             </Text>
@@ -698,10 +718,10 @@ export default function PredictorScreen() {
         {/* Immediate feedback — visible from the instant Predict is pressed
             until the first token arrives, so the wait never looks frozen */}
         {isGenerating && thought.length === 0 && prediction.length === 0 && (
-          <Animated.View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: theme.border, opacity: pulsAnim }]}>
+          <Animated.View style={[styles.resultCard, { backgroundColor: theme.card, opacity: pulsAnim }]}>
             <View style={styles.resultContent}>
               <Text style={[styles.resultLabel, { color: accent }]}>
-                {thinkingOn ? 'DEEP ANALYSIS STARTING...' : 'ANALYZING THE MATCHUP...'}
+                {thinkingOn ? 'THINKING IT THROUGH...' : 'ANALYZING THE MATCHUP...'}
               </Text>
               <Text style={[styles.resultText, { color: theme.textSecondary }]}>
                 {formA || formB
@@ -714,7 +734,7 @@ export default function PredictorScreen() {
 
         {/* Deep-mode thinking stream */}
         {isGenerating && thinkingOn && thought.length > 0 && prediction.length === 0 && (
-          <View style={[styles.resultCard, { backgroundColor: '#1a1200', borderColor: '#f59e0b33' }]}>
+          <View style={[styles.resultCard, { backgroundColor: '#1a1200' }]}>
             <View style={styles.resultContent}>
               <Text style={[styles.resultLabel, { color: '#f59e0b' }]}>READING THE GAME...</Text>
               <Text style={styles.thoughtText} numberOfLines={8}>{thought}</Text>
@@ -724,26 +744,24 @@ export default function PredictorScreen() {
 
         {/* Streaming result — parsed live so raw WINNER:/SCORE: lines never
             show; fields pop in as chips, analysis streams below */}
-        {isGenerating && prediction.length > 0 && (() => {
-          const live = parsePrediction(prediction);
-          return (
-            <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: accent + '50' }]}>
+        {isGenerating && prediction.length > 0 && (
+          <View style={[styles.resultCard, { backgroundColor: theme.card }]}>
               <View style={styles.resultContent}>
                 <Text style={[styles.resultLabel, { color: accent }]}>MAKING THE CALL...</Text>
                 {(live.winner || live.score || live.confidence) && (
                   <View style={styles.liveChipsRow}>
                     {live.winner ? (
-                      <View style={[styles.liveFieldChip, { backgroundColor: accent + '18', borderColor: accent + '40' }]}>
+                      <View style={[styles.liveFieldChip, { backgroundColor: accent + '18' }]}>
                         <Text style={[styles.liveFieldChipText, { color: accent }]}>{live.winner}</Text>
                       </View>
                     ) : null}
                     {live.score ? (
-                      <View style={[styles.liveFieldChip, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
+                      <View style={[styles.liveFieldChip, { backgroundColor: theme.cardAlt }]}>
                         <Text style={[styles.liveFieldChipText, { color: theme.text }]}>{live.score}</Text>
                       </View>
                     ) : null}
                     {live.confidence ? (
-                      <View style={[styles.liveFieldChip, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
+                      <View style={[styles.liveFieldChip, { backgroundColor: theme.cardAlt }]}>
                         <Text style={[styles.liveFieldChipText, { color: theme.textSecondary }]}>{live.confidence}</Text>
                       </View>
                     ) : null}
@@ -754,20 +772,18 @@ export default function PredictorScreen() {
                 ) : null}
               </View>
             </View>
-          );
-        })()}
+        )}
 
         {/* Final result — spring reveal with scoreboard */}
         {!isGenerating && parsed && (
           <Animated.View style={{ opacity: resultOpacity, transform: [{ scale: resultScale }] }}>
             {/* Scoreboard */}
-            <View style={[styles.scoreboard, { backgroundColor: theme.card, borderColor: accent + '40' }]}>
+            <View style={[styles.scoreboard, { backgroundColor: theme.card }]}>
               <View style={[styles.scoreboardTop, { borderBottomColor: theme.border }]}>
                 <Text style={[styles.scoreboardLabel, { color: accent }]}>PREDICTION</Text>
                 {parsed.confidence ? (
                   <View style={[styles.confBadge, {
                     backgroundColor: parsed.confidence === 'High' ? accent + '22' : theme.cardAlt,
-                    borderColor: parsed.confidence === 'High' ? accent + '55' : theme.border,
                   }]}>
                     <Text style={[styles.confText, { color: parsed.confidence === 'High' ? accent : theme.textSecondary }]}>
                       {parsed.confidence} confidence
@@ -804,7 +820,7 @@ export default function PredictorScreen() {
 
             {/* Players to watch */}
             {(parsed.keyHome || parsed.keyAway) && (
-              <View style={[styles.keyPlayersCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <View style={[styles.keyPlayersCard, { backgroundColor: theme.card }]}>
                 <Text style={[styles.resultLabel, { color: accent }]}>PLAYERS TO WATCH</Text>
                 {parsed.keyHome ? (
                   <View style={styles.keyPlayerRow}>
@@ -823,7 +839,7 @@ export default function PredictorScreen() {
 
             {/* Analysis */}
             {parsed.analysis ? (
-              <View style={[styles.analysisCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <View style={[styles.analysisCard, { backgroundColor: theme.card }]}>
                 <View style={styles.resultContent}>
                   <View style={styles.analysisHeader}>
                     <Text style={[styles.resultLabel, { color: accent }]}>ANALYSIS</Text>
@@ -868,7 +884,7 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1,
+    paddingHorizontal: 20, paddingBottom: 12,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   backBtn: { padding: 2, marginLeft: -6 },
@@ -876,14 +892,14 @@ const styles = StyleSheet.create({
   headerIcon: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   liveDot: { width: 6, height: 6, borderRadius: 3 },
-  recordChip: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
+  recordChip: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   recordChipText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
-  thinkBtn: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4 },
+  thinkBtn: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
   thinkBtnText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   historyBtn: { fontSize: 12, fontWeight: '600' },
   content: { padding: 16, gap: 16 },
   loadingBar: {
-    borderRadius: 10, borderWidth: 1, padding: 12, alignItems: 'center',
+    borderRadius: 10, padding: 12, alignItems: 'center',
   },
   loadingText: { fontSize: 13, fontWeight: '500' },
   matchup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -892,11 +908,11 @@ const styles = StyleSheet.create({
   fixturesHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
   fixturesSectionLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 1.4 },
   fixturesTodayLabel: { fontSize: 10, fontWeight: '500', marginTop: 1 },
-  apiDisclosure: { borderRadius: 6, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3, marginTop: 2 },
+  apiDisclosure: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginTop: 2 },
   apiDisclosureText: { fontSize: 9, fontWeight: '600' },
   fixturesLoading: { fontSize: 13, fontStyle: 'italic' },
   fixturesScroll: { gap: 8, paddingBottom: 2 },
-  fixtureCard: { width: 152, borderRadius: 12, borderWidth: 1, padding: 12, gap: 3 },
+  fixtureCard: { width: 152, borderRadius: 12, padding: 12, gap: 3 },
   wcBadge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start', marginBottom: 2 },
   wcBadgeText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
   fixtureLeague: { fontSize: 9, fontWeight: '600', letterSpacing: 0.3 },
@@ -913,7 +929,7 @@ const styles = StyleSheet.create({
   fixtureTime: { fontSize: 11, fontWeight: '700', marginTop: 2 },
   noInternetCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    borderRadius: 12, borderWidth: 1, padding: 14,
+    borderRadius: 12, padding: 14,
   },
   noInternetDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
   noInternetText: { flex: 1, gap: 2 },
@@ -925,17 +941,17 @@ const styles = StyleSheet.create({
   disclosureText: { fontSize: 10, lineHeight: 15, textAlign: 'center' },
 
   teamCard: {
-    flex: 1, borderRadius: 14, borderWidth: 1.5, padding: 14,
+    flex: 1, borderRadius: 14, padding: 14,
     gap: 4, minHeight: 80,
   },
   teamCardLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase' },
   teamInput: { fontSize: 15, fontWeight: '700', paddingTop: 2 },
   contextInput: {
-    borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12,
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
     fontSize: 14, lineHeight: 20, minHeight: 60,
   },
   // Selected match details
-  matchDetails: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 10 },
+  matchDetails: { borderRadius: 14, padding: 14, gap: 10 },
   matchDetailsTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   matchDetailsLeague: { flex: 1, fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' },
   matchDetailsTime: { fontSize: 12, fontWeight: '700' },
@@ -948,7 +964,7 @@ const styles = StyleSheet.create({
 
   // Live form section
   formSection: {
-    borderRadius: 14, borderWidth: 1, padding: 14, gap: 10,
+    borderRadius: 14, padding: 14, gap: 10,
   },
   formHeader: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   formDot: { width: 6, height: 6, borderRadius: 3 },
@@ -966,7 +982,6 @@ const styles = StyleSheet.create({
   formLastResult: { flex: 1, fontSize: 11, textAlign: 'right' },
   vsBox: {
     width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1,
   },
   vsText: { fontSize: 11, fontWeight: '800' },
   predictBtn: {
@@ -974,9 +989,9 @@ const styles = StyleSheet.create({
   },
   btnInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   predictBtnText: { fontSize: 16, fontWeight: '800' },
-  noModelCard: { borderRadius: 10, borderWidth: 1, padding: 14 },
+  noModelCard: { borderRadius: 10, padding: 14 },
   noModelText: { fontSize: 13, textAlign: 'center' },
-  resultCard: { borderRadius: 14, borderWidth: 1, overflow: 'hidden' },
+  resultCard: { borderRadius: 14, overflow: 'hidden' },
   resultContent: { flex: 1, padding: 16, gap: 8 },
   resultLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
   resultText: { fontSize: 15, lineHeight: 24 },
@@ -986,13 +1001,13 @@ const styles = StyleSheet.create({
   analysisActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   copyBtn: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
   // Scoreboard
-  scoreboard: { borderRadius: 16, borderWidth: 1, marginBottom: 10, overflow: 'hidden' },
+  scoreboard: { borderRadius: 16, marginBottom: 10, overflow: 'hidden' },
   scoreboardTop: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12, borderBottomWidth: 1,
   },
   scoreboardLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
-  confBadge: { borderRadius: 6, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3 },
+  confBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   confText: { fontSize: 10, fontWeight: '700' },
   scoreRow: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 8 },
   scoreTeam: { flex: 1, alignItems: 'flex-start', gap: 6 },
@@ -1003,10 +1018,10 @@ const styles = StyleSheet.create({
   scoreCenter: { alignItems: 'center', minWidth: 60 },
   scoreText: { fontSize: 32, fontWeight: '900', letterSpacing: -1 },
   scoreVs: { fontSize: 14, fontWeight: '700' },
-  analysisCard: { borderRadius: 14, borderWidth: 1, overflow: 'hidden' },
-  keyPlayersCard: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 9, marginBottom: 10 },
+  analysisCard: { borderRadius: 14, overflow: 'hidden' },
+  keyPlayersCard: { borderRadius: 14, padding: 14, gap: 9, marginBottom: 10 },
   liveChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  liveFieldChip: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5 },
+  liveFieldChip: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
   liveFieldChipText: { fontSize: 12, fontWeight: '700' },
   keyPlayerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   keyPlayerDot: { width: 7, height: 7, borderRadius: 3.5, marginTop: 5 },

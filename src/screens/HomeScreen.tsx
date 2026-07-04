@@ -269,7 +269,7 @@ export default function HomeScreen() {
 
         {/* ── MODEL STATUS STRIP ───────────────────────────────────── */}
         {hasAnyModel !== null && (
-          <View style={[styles.modelStrip, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={[styles.modelStrip, { backgroundColor: theme.card }]}>
             {loadedModel ? (
               <>
                 <View style={styles.modelStripLeft}>
@@ -486,8 +486,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     marginHorizontal: 14, marginTop: 4, marginBottom: 2,
     borderRadius: 14, paddingVertical: 11, paddingHorizontal: 15,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
+    },
   modelStripLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   modelStatusDot: { width: 7, height: 7, borderRadius: 4 },
   modelStatusText: { fontSize: 13, fontWeight: '600' },

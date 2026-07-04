@@ -196,7 +196,7 @@ export default function HistoryScreen() {
     const isOpen = expanded === session.id;
     const msgs = messages[session.id] ?? [];
     return (
-      <View key={session.id} style={[styles.sessionCard, { backgroundColor: theme.card, borderColor: isOpen ? accent + '50' : theme.border }]}>
+      <View key={session.id} style={[styles.sessionCard, { backgroundColor: theme.card }, isOpen ? { borderWidth: 1, borderColor: accent + '50' } : null]}>
         <TouchableOpacity style={styles.sessionRow} onPress={() => expand(session.id)} activeOpacity={0.75}>
           <View style={styles.sessionLeft}>
             <Text style={[styles.sessionTitle, { color: theme.text }]} numberOfLines={1}>{session.title}</Text>
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
   emptySub: { fontSize: 14, textAlign: 'center', lineHeight: 20, maxWidth: 260 },
 
   // Session card
-  sessionCard: { borderRadius: 16, borderWidth: 1, overflow: 'hidden' },
+  sessionCard: { borderRadius: 16, overflow: 'hidden' },
   sessionRow: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
   sessionLeft: { flex: 1, gap: 3 },
   sessionTitle: { fontSize: 14, fontWeight: '700' },

@@ -199,7 +199,7 @@ export default function SettingsScreen() {
           {/* Deep Reasoning */}
           <View style={styles.cardRow}>
             <View style={styles.behaviorLeft}>
-              <Text style={[styles.rowLabel, { color: theme.text }]}>Deep Reasoning</Text>
+              <Text style={[styles.rowLabel, { color: theme.text }]}>Think Mode</Text>
               <Text style={[styles.rowHint, { color: theme.textSecondary }]}>AI thinks before answering in Coach</Text>
             </View>
             <Switch

@@ -248,7 +248,7 @@ export default function ScoutLensScreen() {
       style={[styles.root, { backgroundColor: theme.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <View style={styles.headerLeft}>
           <TouchableOpacity
             onPress={() => navigation.goBack()}
@@ -273,7 +273,7 @@ export default function ScoutLensScreen() {
         showsVerticalScrollIndicator={false}
       >
         {noModel && (
-          <View style={[styles.noModelCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={[styles.noModelCard, { backgroundColor: theme.card }]}>
             <Text style={[styles.noModelText, { color: theme.textSecondary }]}>
               No vision model downloaded. Go to Models and download a vision model.
             </Text>
@@ -282,10 +282,13 @@ export default function ScoutLensScreen() {
 
         {/* Image picker — tap to open camera by default */}
         <TouchableOpacity
-          style={[styles.pickerArea, {
-            backgroundColor: theme.card,
-            borderColor: isAnalyzing ? accent : imagePath ? accent + '80' : theme.border,
-          }]}
+          style={[
+            styles.pickerArea,
+            { backgroundColor: theme.card },
+            isAnalyzing ? { borderWidth: 1.5, borderColor: accent }
+              : imagePath ? { borderWidth: 1.5, borderColor: accent + '80' }
+              : null,
+          ]}
           onPress={imagePath ? pickImage : takePhoto}
           disabled={isAnalyzing}
           activeOpacity={0.8}
@@ -333,7 +336,7 @@ export default function ScoutLensScreen() {
         {/* Camera / Gallery row */}
         <View style={styles.sourceRow}>
           <TouchableOpacity
-            style={[styles.sourceBtn, { backgroundColor: theme.card, borderColor: isAnalyzing ? theme.border : accent + '60' }]}
+            style={[styles.sourceBtn, { backgroundColor: theme.card }, !isAnalyzing ? { borderWidth: 1, borderColor: accent + '50' } : null]}
             onPress={takePhoto}
             disabled={isAnalyzing}
             activeOpacity={0.8}
@@ -342,7 +345,7 @@ export default function ScoutLensScreen() {
             <Text style={[styles.sourceBtnText, { color: theme.text }]}>Camera</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.sourceBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+            style={[styles.sourceBtn, { backgroundColor: theme.card }]}
             onPress={pickImage}
             disabled={isAnalyzing}
             activeOpacity={0.8}
@@ -355,7 +358,7 @@ export default function ScoutLensScreen() {
         {/* Question / follow-up input — conversation continues on one image */}
         <View style={styles.askRow}>
           <TextInput
-            style={[styles.questionInput, { backgroundColor: theme.card, borderColor: theme.border, color: theme.text }]}
+            style={[styles.questionInput, { backgroundColor: theme.card, color: theme.text }]}
             placeholder={turns.length > 0 ? 'Ask a follow-up about this image...' : 'Ask about the image (optional)'}
             placeholderTextColor={theme.textSecondary}
             value={question}
@@ -377,7 +380,7 @@ export default function ScoutLensScreen() {
 
         {/* Finished turns — Q&A stack for this image */}
         {turns.map((t, i) => (
-          <View key={i} style={[styles.resultCard, { backgroundColor: theme.card, borderColor: accent + '40' }]}>
+          <View key={i} style={[styles.resultCard, { backgroundColor: theme.card }]}>
             <View style={styles.resultContent}>
               <Text style={[styles.resultLabel, { color: accent }]} numberOfLines={2}>
                 {t.q.startsWith('What football') ? 'Scout Lens' : t.q}
@@ -390,7 +393,7 @@ export default function ScoutLensScreen() {
 
         {/* In-flight answer */}
         {isAnalyzing && (
-          <View style={[styles.resultCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={[styles.resultCard, { backgroundColor: theme.card }]}>
             <View style={styles.resultContent}>
               <Text style={[styles.resultText, { color: result ? theme.text : theme.textSecondary }]}>
                 {result ? result.replace(/\*\*/g, '') : `Analysing... ${elapsedS}s`}
@@ -424,7 +427,7 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1,
+    paddingHorizontal: 20, paddingBottom: 12,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   backBtn: { padding: 2, marginLeft: -6 },
@@ -432,17 +435,17 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   historyBtn: { fontSize: 12, fontWeight: '600' },
   content: { padding: 16, gap: 14 },
-  noModelCard: { borderRadius: 10, borderWidth: 1, padding: 14 },
+  noModelCard: { borderRadius: 10, padding: 14 },
   askRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   questionInput: {
-    flex: 1, borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 11,
+    flex: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11,
     fontSize: 14, lineHeight: 19,
   },
   askBtn: { borderRadius: 12, paddingHorizontal: 18, paddingVertical: 12 },
   askBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },
   noModelText: { fontSize: 13, textAlign: 'center' },
   pickerArea: {
-    borderRadius: 18, borderWidth: 1.5,
+    borderRadius: 18,
     minHeight: 220, overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
   },
   pickerEmpty: { alignItems: 'center', gap: 10, padding: 36, width: '100%' },
@@ -472,12 +475,12 @@ const styles = StyleSheet.create({
   },
   sourceRow: { flexDirection: 'row', gap: 10 },
   sourceBtn: {
-    flex: 1, borderRadius: 14, borderWidth: 1,
+    flex: 1, borderRadius: 14,
     paddingVertical: 14, alignItems: 'center', gap: 4,
   },
   sourceBtnText: { fontSize: 14, fontWeight: '700' },
   resultCard: {
-    borderRadius: 14, borderWidth: 1, overflow: 'hidden',
+    borderRadius: 14, overflow: 'hidden',
   },
   resultContent: { flex: 1, padding: 16, gap: 6 },
   resultLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1 },

@@ -153,7 +153,6 @@ export default function MatchAIScreen() {
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel]           = useState(false);
   const [thinkingOn, setThinkingOn]     = useState(false);
-  const [reasoningOk, setReasoningOk]   = useState(false);
   const [thoughtOpen, setThoughtOpen]   = useState<Record<string, boolean>>({});
   // Card questions rotate automatically while the empty state is visible
   const [catIdx, setCatIdx] = useState(() => Math.floor(Math.random() * 5));
@@ -184,10 +183,18 @@ export default function MatchAIScreen() {
 
   useEffect(() => { slotRef.current = slot; }, [slot]);
 
-  // Auto-rotate the category card questions while the empty state is visible
+  // Auto-rotate the category card questions while the empty state is
+  // visible. Fades out, swaps the text, fades back in — an instant text
+  // swap every few seconds read as "jumpy"; this reads as a calm update.
+  const cardFade = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     if (entries.length > 0 || slot) return;
-    const t = setInterval(() => setCatIdx(i => i + 1), 6000);
+    const t = setInterval(() => {
+      Animated.timing(cardFade, { toValue: 0, duration: 220, useNativeDriver: true }).start(() => {
+        setCatIdx(i => i + 1);
+        Animated.timing(cardFade, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+      });
+    }, 10000);
     return () => clearInterval(t);
   }, [entries.length, !!slot]);
 
@@ -257,16 +264,9 @@ export default function MatchAIScreen() {
       // Tool calling only for true text models — a multimodal fallback like
       // Gemma has a chat template without reliable tool-call support
       const supportsTools = model.modelType === 'text';
-      const supportsReasoning = !!model.supportsReasoning;
       const mid = await llmManager.ensure(model, { ctx_size: model.modelType === 'vision' ? 2048 : 4096, device: 'auto', tools: supportsTools, projectionModelSrc: model.projectionModelSrc });
       modelNameRef.current = model.name;
       toolsEnabledRef.current = supportsTools;
-      if (mountedRef.current) {
-        setReasoningOk(supportsReasoning);
-        // Models without a thinking channel (Gemma, MedPsy) ignore Deep —
-        // never leave the toggle on where it can only confuse
-        if (!supportsReasoning) setThinkingOn(false);
-      }
       if (mountedRef.current) {
         setModelId(mid);
         setModelLoading(false);
@@ -512,8 +512,8 @@ export default function MatchAIScreen() {
         style={[
           styles.thoughtBlock,
           isStreaming
-            ? { backgroundColor: '#1a1200', borderColor: '#f59e0b33' }
-            : { backgroundColor: 'transparent', borderColor: theme.border },
+            ? { backgroundColor: '#1a1200' }
+            : { backgroundColor: theme.cardAlt },
         ]}
       >
         <View style={styles.thoughtHeader}>
@@ -554,7 +554,7 @@ export default function MatchAIScreen() {
             </View>
             <View style={styles.statRow}>
               {entry.usedLiveData && (
-                <View style={[styles.liveChip, { backgroundColor: '#22c55e14', borderColor: '#22c55e25' }]}>
+                <View style={[styles.liveChip, { backgroundColor: '#22c55e14' }]}>
                   <View style={[styles.liveDotSmall, { backgroundColor: '#22c55e' }]} />
                   <Text style={[styles.liveChipText, { color: '#22c55e' }]}>TheSportsDB</Text>
                 </View>
@@ -615,7 +615,7 @@ export default function MatchAIScreen() {
       </View>
 
       {noModel ? (
-        <View style={[styles.noModelCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View style={[styles.noModelCard, { backgroundColor: theme.card }]}>
           <Text style={[styles.noModelText, { color: theme.textSecondary }]}>No model downloaded — go to Models.</Text>
         </View>
       ) : (
@@ -627,15 +627,15 @@ export default function MatchAIScreen() {
               return (
                 <TouchableOpacity
                   key={cat.tag}
-                  style={[styles.categoryCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+                  style={[styles.categoryCard, { backgroundColor: theme.card }]}
                   onPress={() => send(q)}
                   activeOpacity={0.75}
                   disabled={modelLoading || !modelId}
                 >
                   <Text style={[styles.cardTag, { color: accent }]}>{cat.tag}</Text>
-                  <Text style={[styles.cardQuestion, { color: theme.text }]} numberOfLines={3}>
+                  <Animated.Text style={[styles.cardQuestion, { color: theme.text, opacity: cardFade }]} numberOfLines={3}>
                     {q}
-                  </Text>
+                  </Animated.Text>
                 </TouchableOpacity>
               );
             })}
@@ -653,7 +653,7 @@ export default function MatchAIScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 10, borderBottomColor: theme.border }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <View style={styles.headerLeft}>
           <TouchableOpacity
             onPress={() => navigation.goBack()}
@@ -713,7 +713,7 @@ export default function MatchAIScreen() {
               </View>
             </View>
             {slot.toolStatus && (
-              <View style={[styles.liveChip, { backgroundColor: '#22c55e14', borderColor: '#22c55e25', alignSelf: 'flex-start' }]}>
+              <View style={[styles.liveChip, { backgroundColor: '#22c55e14', alignSelf: 'flex-start' }]}>
                 <View style={[styles.liveDotSmall, { backgroundColor: '#22c55e' }]} />
                 <Text style={[styles.liveChipText, { color: '#22c55e' }]}>{slot.toolStatus}</Text>
               </View>
@@ -733,9 +733,9 @@ export default function MatchAIScreen() {
       </ScrollView>
 
       {/* Composer — one rounded card: text on top, controls inside at the
-          bottom (Deep toggle left, send right) */}
+          bottom (Think toggle left, send right) */}
       <View style={[styles.composerWrap, { backgroundColor: theme.background, paddingBottom: Math.max(insets.bottom, 10) }]}>
-        <View style={[styles.composer, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
+        <View style={[styles.composer, { backgroundColor: theme.cardAlt }]}>
           <TextInput
             style={[styles.composerInput, { color: theme.text }]}
             placeholder={modelLoading ? 'Loading model...' : 'Ask anything'}
@@ -749,18 +749,16 @@ export default function MatchAIScreen() {
             onSubmitEditing={() => { if (input.trim()) send(); }}
           />
           <View style={styles.composerRow}>
-            {reasoningOk && (
             <TouchableOpacity
               onPress={() => setThinkingOn(v => !v)}
-              style={[styles.deepToggle, { backgroundColor: thinkingOn ? accent + '1a' : 'transparent', borderColor: thinkingOn ? accent : theme.border }]}
+              style={[styles.deepToggle, { backgroundColor: thinkingOn ? accent + '1a' : theme.cardAlt }]}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <View style={[styles.deepDot, { backgroundColor: thinkingOn ? accent : theme.border }]} />
+              <View style={[styles.deepDot, { backgroundColor: thinkingOn ? accent : theme.textSecondary }]} />
               <Text style={[styles.deepToggleText, { color: thinkingOn ? accent : theme.textSecondary }]}>
-                {thinkingOn ? 'Deep · on' : 'Deep'}
+                {thinkingOn ? 'Think · on' : 'Think'}
               </Text>
             </TouchableOpacity>
-            )}
             <View style={{ flex: 1 }} />
             {isGenerating ? (
               <TouchableOpacity
@@ -817,7 +815,7 @@ const styles = StyleSheet.create({
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 14, paddingBottom: 11, borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14, paddingBottom: 11,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   backBtn: { padding: 2, marginRight: 2 },
@@ -843,14 +841,14 @@ const styles = StyleSheet.create({
   pillDot: { width: 5, height: 5, borderRadius: 2.5 },
   pillText: { fontSize: 12, fontWeight: '600' },
 
-  noModelCard: { borderRadius: 12, borderWidth: 1, padding: 14, width: '100%', marginTop: 4 },
+  noModelCard: { borderRadius: 12, padding: 14, width: '100%', marginTop: 4 },
   noModelText: { fontSize: 13, textAlign: 'center' },
 
   // Category cards
   cardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, width: '100%', marginTop: 4 },
   categoryCard: {
-    width: CARD_W, borderRadius: 16, borderWidth: 1,
-    padding: 16, gap: 8, borderLeftWidth: 3,
+    width: CARD_W, borderRadius: 16,
+    padding: 16, gap: 8,
   },
   cardTag: { fontSize: 10, fontWeight: '800', letterSpacing: 1.2 },
   cardQuestion: { fontSize: 14, fontWeight: '500', lineHeight: 20 },
@@ -879,7 +877,7 @@ const styles = StyleSheet.create({
   copyBtn: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
   liveChip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
-    borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4,
   },
   liveDotSmall: { width: 4, height: 4, borderRadius: 2 },
   liveChipText: { fontSize: 10, fontWeight: '700' },
@@ -887,7 +885,7 @@ const styles = StyleSheet.create({
 
   // Thought block
   thoughtBlock: {
-    borderRadius: 12, borderWidth: 1, padding: 11, marginRight: 30, gap: 6,
+    borderRadius: 12, padding: 11, marginRight: 30, gap: 6,
   },
   thoughtHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   thoughtChevron: { fontSize: 14, fontWeight: '700', marginLeft: 'auto' },
@@ -899,7 +897,7 @@ const styles = StyleSheet.create({
   // controls row inside at the bottom
   composerWrap: { paddingHorizontal: 12, paddingTop: 8 },
   composer: {
-    borderRadius: 24, borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 24,
     paddingHorizontal: 14, paddingTop: 6, paddingBottom: 10,
   },
   composerInput: {
@@ -908,7 +906,7 @@ const styles = StyleSheet.create({
   },
   composerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   deepToggle: {
-    height: 34, borderRadius: 17, borderWidth: 1, paddingHorizontal: 12,
+    height: 34, borderRadius: 17, paddingHorizontal: 12,
     flexDirection: 'row', alignItems: 'center', gap: 6,
   },
   deepToggleText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
