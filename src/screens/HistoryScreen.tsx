@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { getSessions, getMessages, deleteSession, type Session, type Message, type ScreenType } from '../utils/historyDb';
+import ScreenHeader from '../components/ScreenHeader';
 
 const TABS: { key: ScreenType; label: string }[] = [
   { key: 'matchai', label: 'Coach' },
@@ -242,13 +243,7 @@ export default function HistoryScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <Text style={[styles.backBtn, { color: accent }]}>‹ Back</Text>
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: theme.text }]}>History</Text>
-        <View style={{ width: 60 }} />
-      </View>
+      <ScreenHeader title="History" />
 
       {/* Segmented tabs — each feature has its own history */}
       <View style={[styles.segmentWrap, { backgroundColor: theme.card }]}>
@@ -257,7 +252,7 @@ export default function HistoryScreen() {
           return (
             <TouchableOpacity
               key={t.key}
-              style={[styles.segment, active && { backgroundColor: theme.cardAlt, borderColor: accent + '55', borderWidth: 1 }]}
+              style={[styles.segment, active && { backgroundColor: theme.cardAlt }]}
               onPress={() => switchTab(t.key)}
               activeOpacity={0.75}
             >
@@ -290,13 +285,6 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: {
-    flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  backBtn: { fontSize: 17, fontWeight: '600', marginBottom: 2 },
-  headerTitle: { fontSize: 18, fontWeight: '800' },
-
   // Segmented tabs
   segmentWrap: {
     flexDirection: 'row', marginHorizontal: 16, marginTop: 12,

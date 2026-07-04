@@ -19,6 +19,7 @@ import {
 } from '../utils/storage';
 import { Accelerator, ResponseLength } from '../types';
 import ConfigSlider from '../components/ConfigSlider';
+import ScreenHeader from '../components/ScreenHeader';
 import { getInferenceLogs, logsToCSV } from '../utils/auditLogger';
 
 const appVersion = Constants.expoConfig?.version ?? '1.0';
@@ -123,13 +124,7 @@ export default function SettingsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <View style={[styles.topBar, { borderBottomColor: theme.border, paddingTop: insets.top + 14 }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <Text style={[styles.backText, { color: accent }]}>‹ Back</Text>
-        </TouchableOpacity>
-        <Text style={[styles.topBarTitle, { color: theme.text }]}>Settings</Text>
-        <View style={{ width: 50 }} />
-      </View>
+      <ScreenHeader title="Settings" />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
 
@@ -262,7 +257,7 @@ export default function SettingsScreen() {
             />
           </View>
           <TextInput
-            style={[styles.keyInput, { backgroundColor: theme.cardAlt, borderColor: fdKey && fdEnabled ? accent + '50' : theme.border, color: theme.text }]}
+            style={[styles.keyInput, { backgroundColor: theme.cardAlt, color: theme.text }, fdKey && fdEnabled ? { borderWidth: 1, borderColor: accent + '50' } : null]}
             placeholder="Paste API key (leave empty to use free data)"
             placeholderTextColor={theme.textSecondary}
             value={fdKey}
@@ -396,12 +391,6 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 20, paddingBottom: 14, borderBottomWidth: 1,
-  },
-  backText: { fontSize: 17, fontWeight: '600' },
-  topBarTitle: { fontSize: 18, fontWeight: '800' },
   scroll: { paddingHorizontal: 20, paddingBottom: 60, gap: 6 },
   sectionLabel: {
     fontSize: 11, fontWeight: '700', letterSpacing: 1,

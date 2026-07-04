@@ -11,7 +11,8 @@ import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconCamera, IconPhoto, IconStop, IconBack } from '../components/Icons';
+import { IconCamera, IconPhoto, IconStop } from '../components/Icons';
+import ScreenHeader from '../components/ScreenHeader';
 import { llmManager } from '../utils/modelManager';
 import { syncModelsFromDisk, toPath } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
@@ -248,25 +249,18 @@ export default function ScoutLensScreen() {
       style={[styles.root, { backgroundColor: theme.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <View style={styles.headerLeft}>
+      <ScreenHeader
+        title="Scout Lens"
+        subtitle={modelId ? 'On-device · Private' : 'No vision model'}
+        rightSlot={
           <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            style={styles.backBtn}
+            onPress={() => navigation.navigate('History', { tab: 'scoutlens' })}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <IconBack size={22} color={theme.text} />
+            <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
           </TouchableOpacity>
-          <View style={[styles.headerDot, { backgroundColor: accent }]} />
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Scout Lens</Text>
-        </View>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('History', { tab: 'scoutlens' })}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
-        </TouchableOpacity>
-      </View>
+        }
+      />
 
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
@@ -425,14 +419,6 @@ export default function ScoutLensScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 12,
-  },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  backBtn: { padding: 2, marginLeft: -6 },
-  headerDot: { width: 7, height: 7, borderRadius: 3.5 },
-  headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   historyBtn: { fontSize: 12, fontWeight: '600' },
   content: { padding: 16, gap: 14 },
   noModelCard: { borderRadius: 10, padding: 14 },

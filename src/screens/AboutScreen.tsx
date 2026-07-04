@@ -1,10 +1,10 @@
 import React, { useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, ScrollView } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { View, Text, StyleSheet, Animated, ScrollView } from 'react-native';
 import Constants from 'expo-constants';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconBack, IconBall, IconTarget, IconCamera } from '../components/Icons';
+import { IconBall, IconTarget, IconCamera } from '../components/Icons';
+import ScreenHeader from '../components/ScreenHeader';
 
 const appVersion = Constants.expoConfig?.version ?? '1.0';
 
@@ -33,7 +33,6 @@ const MODULES = [
 ];
 
 export default function AboutScreen() {
-  const navigation = useNavigation<any>();
   const themeMode = useTheme();
   const theme = getTheme(themeMode);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -46,16 +45,7 @@ export default function AboutScreen() {
 
   return (
     <Animated.View style={[styles.root, { backgroundColor: theme.background, opacity: fadeAnim }]}>
-      <View style={[styles.header, { borderBottomColor: theme.border }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <IconBack size={18} color={accent} />
-        </TouchableOpacity>
-        <View style={styles.brand}>
-          <View style={[styles.brandDot, { backgroundColor: accent }]} />
-          <Text style={[styles.brandName, { color: theme.text }]}>Scout</Text>
-        </View>
-        <View style={{ width: 44 }} />
-      </View>
+      <ScreenHeader title="About" />
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Hero */}
@@ -67,7 +57,7 @@ export default function AboutScreen() {
           <Text style={[styles.tagline, { color: theme.textSecondary }]}>On-Device Football AI</Text>
           <View style={styles.badgeRow}>
             {['Private', 'On-Device', 'No Cloud'].map(b => (
-              <View key={b} style={[styles.badge, { backgroundColor: accent + '18', borderColor: accent + '40' }]}>
+              <View key={b} style={[styles.badge, { backgroundColor: accent + '18' }]}>
                 <Text style={[styles.badgeText, { color: accent }]}>{b}</Text>
               </View>
             ))}
@@ -75,7 +65,7 @@ export default function AboutScreen() {
         </View>
 
         {/* About */}
-        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View style={[styles.card, { backgroundColor: theme.card }]}>
           <Text style={[styles.cardTitle, { color: theme.text }]}>What is Scout?</Text>
           <Text style={[styles.cardBody, { color: theme.textSecondary }]}>
             A complete football companion where every AI feature — chat, match prediction, image recognition — runs 100% on your phone through the QVAC SDK. No cloud AI, no accounts, works offline. Built for the FIFA World Cup 2026 moment: live fixtures, form-grounded predictions with a real track record, and a vision scanner for match-day moments.
@@ -92,7 +82,7 @@ export default function AboutScreen() {
             <View style={styles.featureBody}>
               <View style={styles.featureTitleRow}>
                 <Text style={[styles.featureTitle, { color: theme.text }]}>{m.title}</Text>
-                <View style={[styles.featureTag, { backgroundColor: m.tagColor + '18', borderColor: m.tagColor + '40' }]}>
+                <View style={[styles.featureTag, { backgroundColor: m.tagColor + '20' }]}>
                   <Text style={[styles.featureTagText, { color: m.tagColor }]}>{m.tag}</Text>
                 </View>
               </View>
@@ -102,7 +92,7 @@ export default function AboutScreen() {
         ))}
 
         {/* Privacy */}
-        <View style={[styles.privacyCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View style={[styles.privacyCard, { backgroundColor: theme.card }]}>
           <View style={[styles.privacyBar, { backgroundColor: accent }]} />
           <Text style={[styles.privacyText, { color: theme.textSecondary }]}>
             All AI inference runs on your device via the QVAC SDK. Your photos, messages, and conversations never leave your phone — no servers, no telemetry, no accounts required.
@@ -111,7 +101,7 @@ export default function AboutScreen() {
 
         {/* Tech */}
         <Text style={[styles.sectionLabel, { color: theme.textSecondary, marginTop: 8 }]}>Built with</Text>
-        <View style={[styles.techCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View style={[styles.techCard, { backgroundColor: theme.card }]}>
           {[
             { name: 'QVAC SDK', note: 'All inference on-device: LLM, vision, tool calling, streaming' },
             { name: 'Custom QVAC worker', note: 'Rebuilt LLM-only: 918 MB of native engines trimmed to 145 MB' },
@@ -128,7 +118,7 @@ export default function AboutScreen() {
 
         {/* Third-party disclosures */}
         <Text style={[styles.sectionLabel, { color: theme.textSecondary, marginTop: 8 }]}>Third-party disclosures</Text>
-        <View style={[styles.techCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View style={[styles.techCard, { backgroundColor: theme.card }]}>
           {[
             { name: 'TheSportsDB', note: 'Fixture data for Predictor · thesportsdb.com · Free public API · No account required' },
             { name: 'Gemma 4 E2B', note: 'Google model weights via HuggingFace (bartowski/google_gemma-4-E2B-it-GGUF)' },
@@ -153,13 +143,6 @@ export default function AboutScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingTop: 56, paddingHorizontal: 20, paddingBottom: 13, borderBottomWidth: 1,
-  },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  brandDot: { width: 7, height: 7, borderRadius: 3.5 },
-  brandName: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 20, paddingTop: 28 },
   hero: { alignItems: 'center', gap: 8, marginBottom: 28 },
@@ -168,9 +151,9 @@ const styles = StyleSheet.create({
   appName: { fontSize: 34, fontWeight: '900', letterSpacing: -1, marginTop: 4 },
   tagline: { fontSize: 14 },
   badgeRow: { flexDirection: 'row', gap: 8, marginTop: 4, flexWrap: 'wrap', justifyContent: 'center' },
-  badge: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, borderWidth: 1 },
+  badge: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 },
   badgeText: { fontSize: 12, fontWeight: '700' },
-  card: { borderRadius: 14, borderWidth: 1, padding: 16, marginBottom: 20, gap: 8 },
+  card: { borderRadius: 14, padding: 16, marginBottom: 20, gap: 8 },
   cardTitle: { fontSize: 15, fontWeight: '700' },
   cardBody: { fontSize: 14, lineHeight: 21 },
   sectionLabel: {
@@ -182,16 +165,16 @@ const styles = StyleSheet.create({
   featureBody: { flex: 1, gap: 4 },
   featureTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   featureTitle: { fontSize: 14, fontWeight: '700' },
-  featureTag: { borderWidth: 1, borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
+  featureTag: { borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
   featureTagText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.4 },
   featureDesc: { fontSize: 13, lineHeight: 19 },
   privacyCard: {
-    borderRadius: 14, borderWidth: 1, flexDirection: 'row',
+    borderRadius: 14, flexDirection: 'row',
     overflow: 'hidden', marginBottom: 20, marginTop: 8,
   },
   privacyBar: { width: 4 },
   privacyText: { flex: 1, fontSize: 13, lineHeight: 19, padding: 14 },
-  techCard: { borderRadius: 14, borderWidth: 1, marginBottom: 20, overflow: 'hidden' },
+  techCard: { borderRadius: 14, marginBottom: 20, overflow: 'hidden' },
   techRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 14 },
   techName: { fontSize: 14, fontWeight: '700' },
   techNote: { fontSize: 13 },

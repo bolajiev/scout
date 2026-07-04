@@ -26,6 +26,7 @@ import {
 import { ModelInfo, DownloadedModel } from '../types';
 import { llmManager } from '../utils/modelManager';
 import * as Device from 'expo-device';
+import ScreenHeader from '../components/ScreenHeader';
 
 type DownloadPhase = {
   phase: 'model' | 'mmproj';
@@ -415,20 +416,20 @@ export default function ModelsScreen() {
 
         {/* Chips row */}
         <View style={styles.chipsRow}>
-          <View style={[styles.chip, { borderColor: theme.border }]}>
+          <View style={[styles.chip, { backgroundColor: theme.cardAlt }]}>
             <Text style={[styles.chipText, { color: theme.textSecondary }]}>{model.size}</Text>
           </View>
           {isVision ? (
-            <View style={[styles.chip, { borderColor: theme.visionChip + '66', backgroundColor: theme.visionChip + '15' }]}>
+            <View style={[styles.chip, { backgroundColor: theme.visionChip + '18' }]}>
               <Text style={[styles.chipText, { color: theme.visionChip }]}>Vision</Text>
             </View>
           ) : (
-            <View style={[styles.chip, { borderColor: theme.border }]}>
+            <View style={[styles.chip, { backgroundColor: theme.cardAlt }]}>
               <Text style={[styles.chipText, { color: theme.textSecondary }]}>Text Only</Text>
             </View>
           )}
           {model.heavy && (
-            <View style={[styles.chip, { borderColor: '#e07000aa', backgroundColor: '#e0700012' }]}>
+            <View style={[styles.chip, { backgroundColor: '#e0700018' }]}>
               <Text style={[styles.chipText, { color: '#e07000' }]}>Needs 3 GB+ RAM</Text>
             </View>
           )}
@@ -443,11 +444,12 @@ export default function ModelsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
+      <ScreenHeader title="Models" subtitle="Download and manage on-device AI" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
 
         {/* Default text model selector — shown when 2+ text models are downloaded */}
         {downloadedTextModels.length >= 2 && (
-          <View style={[styles.defaultSection, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={[styles.defaultSection, { backgroundColor: theme.card }]}>
             <Text style={[styles.defaultTitle, { color: theme.text }]}>Default Text Model</Text>
             <Text style={[styles.defaultSub, { color: theme.textSecondary }]}>Used for AI Coach and Predictor</Text>
             <View style={styles.defaultRow}>
@@ -559,7 +561,7 @@ const styles = StyleSheet.create({
   modelDescription: { fontSize: 13, lineHeight: 18, marginBottom: 10, marginTop: 8 },
   chipsRow: { flexDirection: 'row', gap: 6 },
   chip: {
-    borderWidth: 1, borderRadius: 6,
+    borderRadius: 6,
     paddingHorizontal: 8, paddingVertical: 3,
   },
   chipText: { fontSize: 12, fontWeight: '500' },
@@ -572,7 +574,7 @@ const styles = StyleSheet.create({
   progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3 },
   defaultSection: {
-    borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 20,
+    borderRadius: 16, padding: 16, marginBottom: 20,
   },
   defaultTitle: { fontSize: 14, fontWeight: '700', marginBottom: 3 },
   defaultSub: { fontSize: 12, marginBottom: 12 },

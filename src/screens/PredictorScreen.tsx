@@ -10,7 +10,8 @@ import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconTarget, IconStop, IconBack } from '../components/Icons';
+import { IconTarget, IconStop } from '../components/Icons';
+import ScreenHeader from '../components/ScreenHeader';
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
 import { syncModelsFromDisk, getGenParams, getDefaultModelId } from '../utils/storage';
@@ -392,46 +393,38 @@ export default function PredictorScreen() {
       style={[styles.root, { backgroundColor: theme.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 12, }]}>
-        <View style={styles.headerLeft}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            style={styles.backBtn}
-          >
-            <IconBack size={22} color={theme.text} />
-          </TouchableOpacity>
-          <View style={[styles.headerIcon, { backgroundColor: accent + '22' }]}>
-            <IconTarget size={14} color={accent} />
-          </View>
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Predictor</Text>
-          {record && record.hits + record.misses > 0 && (
+      <ScreenHeader
+        title="Predictor"
+        subtitle={modelId ? 'On-device · Private' : modelLoading ? 'Loading model...' : 'No model'}
+        titleExtra={
+          record && record.hits + record.misses > 0 ? (
             <View style={[styles.recordChip, { backgroundColor: accent + '16' }]}>
               <Text style={[styles.recordChipText, { color: accent }]}>
                 {record.hits}W · {record.misses}L
               </Text>
             </View>
-          )}
-          {modelId && <View style={[styles.liveDot, { backgroundColor: accent }]} />}
-        </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            onPress={() => setThinkingOn(v => !v)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={[styles.thinkBtn, { backgroundColor: thinkingOn ? accent + '28' : theme.cardAlt }]}
-          >
-            <Text style={[styles.thinkBtnText, { color: thinkingOn ? accent : theme.textSecondary }]}>
-              {thinkingOn ? 'Think ON' : 'Think'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('History', { tab: 'predictor' })}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+          ) : undefined
+        }
+        rightSlot={
+          <>
+            <TouchableOpacity
+              onPress={() => setThinkingOn(v => !v)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={[styles.thinkBtn, { backgroundColor: thinkingOn ? accent + '28' : theme.cardAlt }]}
+            >
+              <Text style={[styles.thinkBtnText, { color: thinkingOn ? accent : theme.textSecondary }]}>
+                {thinkingOn ? 'Think ON' : 'Think'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('History', { tab: 'predictor' })}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
+            </TouchableOpacity>
+          </>
+        }
+      />
 
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
@@ -882,16 +875,6 @@ export default function PredictorScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 12,
-  },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  backBtn: { padding: 2, marginLeft: -6 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  headerIcon: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
-  liveDot: { width: 6, height: 6, borderRadius: 3 },
   recordChip: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   recordChipText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
   thinkBtn: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },

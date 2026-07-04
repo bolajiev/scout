@@ -12,7 +12,8 @@ import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconSend, IconStop, IconBall, IconBack } from '../components/Icons';
+import { IconSend, IconStop, IconBall } from '../components/Icons';
+import ScreenHeader from '../components/ScreenHeader';
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
 import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId } from '../utils/storage';
@@ -652,46 +653,35 @@ export default function MatchAIScreen() {
       // be handled in JS or it covers the input bar
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
-        <View style={styles.headerLeft}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            style={styles.backBtn}
-          >
-            <IconBack size={22} color={theme.text} />
-          </TouchableOpacity>
-          <View>
-            <Text style={[styles.headerTitle, { color: theme.text }]}>AI Coach</Text>
-            <Text style={[styles.headerSub, { color: modelId && !modelLoading ? accent : theme.textSecondary }]}>
-              {modelLoading ? 'Loading model...' : noModel ? 'No model' : 'On-device · Private'}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.headerRight}>
-          {(entries.length > 0 || slot) && !isGenerating && (
+      {/* Header — shared component so every screen matches exactly */}
+      <ScreenHeader
+        title="AI Coach"
+        subtitle={modelLoading ? 'Loading model...' : noModel ? 'No model' : 'On-device · Private'}
+        rightSlot={
+          <>
+            {(entries.length > 0 || slot) && !isGenerating && (
+              <TouchableOpacity
+                onPress={() => {
+                  setEntries([]);
+                  setSlot(null);
+                  sessionIdRef.current = null;
+                  setThoughtOpen({});
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <Text style={[styles.historyBtn, { color: accent }]}>New</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
-              onPress={() => {
-                setEntries([]);
-                setSlot(null);
-                sessionIdRef.current = null;
-                setThoughtOpen({});
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              }}
+              onPress={() => navigation.navigate('History', { tab: 'matchai' })}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             >
-              <Text style={[styles.historyBtn, { color: accent }]}>New</Text>
+              <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
             </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            onPress={() => navigation.navigate('History', { tab: 'matchai' })}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          >
-            <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+          </>
+        }
+      />
 
       {/* Feed */}
       <ScrollView
@@ -813,16 +803,7 @@ const mdStyles = (theme: ReturnType<typeof getTheme>) => ({
 const styles = StyleSheet.create({
   root: { flex: 1 },
 
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 14, paddingBottom: 11,
-  },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  backBtn: { padding: 2, marginRight: 2 },
-  headerTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.4 },
-  headerSub: { fontSize: 11, fontWeight: '500', marginTop: 1 },
   historyBtn: { fontSize: 13, fontWeight: '600' },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 18 },
 
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 14, paddingTop: 16, gap: 4 },
