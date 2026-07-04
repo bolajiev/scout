@@ -212,7 +212,7 @@ export default function MatchAIScreen() {
   const loadModel = async () => {
     try {
       const synced = await syncModelsFromDisk();
-      const model = pickTextCapable(synced, await getDefaultModelId());
+      const model = pickTextCapable(synced, await getDefaultModelId(), llmManager.getLoadedModelId());
       if (!model) {
         if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
         return;

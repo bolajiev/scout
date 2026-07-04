@@ -26,11 +26,11 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
   {
     id: MODEL_KEYS.TEXT_INSTANT,
     name: 'Qwen3 0.6B',
-    badge: 'RECOMMENDED',
-    badgeColor: '#22c55e',
+    badge: 'INSTANT',
+    badgeColor: '#f59e0b',
     modelType: 'text',
-    tagline: 'Instant — loads in seconds, answers fast.',
-    description: 'The speed pick: loads in seconds and streams several times faster than bigger models. Best first download — instant chat and predictions on any device.',
+    tagline: 'Fastest — loads in seconds.',
+    description: 'The speed option: loads in seconds and streams several times faster than bigger models. Great for quick questions and low-RAM devices.',
     size: '390 MB',
     sizeBytes: 382_156_480,
     modelSrc: QWEN3_600M_INST_Q4.src,
@@ -103,11 +103,20 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
   },
 ];
 
-// Best model for text screens (AI Coach, Predictor):
-// 1. the user's chosen default (set in Models) when it's downloaded
-// 2. any dedicated text model
-// 3. a multimodal model like Gemma 4 that also handles text
-export function pickTextCapable<T extends ModelInfo>(models: T[], preferredId?: string | null): T | undefined {
+// Best model for text screens (AI Coach, Predictor). The app never forces
+// a catalog favourite — it respects, in order:
+// 1. the model already loaded in memory (never swap under the user)
+// 2. the user's chosen default (Set Default in Models)
+// 3. any downloaded text model, then a multimodal one (e.g. Gemma 4)
+export function pickTextCapable<T extends ModelInfo>(
+  models: T[],
+  preferredId?: string | null,
+  loadedId?: string | null,
+): T | undefined {
+  if (loadedId) {
+    const loaded = models.find(m => m.id === loadedId && m.supports?.includes('text'));
+    if (loaded) return loaded;
+  }
   if (preferredId) {
     const pref = models.find(m => m.id === preferredId && m.supports?.includes('text'));
     if (pref) return pref;

@@ -197,7 +197,7 @@ export default function HomeScreen() {
     mountedRef.current = true;
     syncModelsFromDisk().then(async models => {
       if (!mountedRef.current) return;
-      const pick = pickTextCapable(models, await getDefaultModelId());
+      const pick = pickTextCapable(models, await getDefaultModelId(), llmManager.getLoadedModelId());
       setHasAnyModel(!!pick);
       const lid = llmManager.getLoadedModelId();
       setLoadedModel(lid);
@@ -235,7 +235,7 @@ export default function HomeScreen() {
     if (modelLoading) return;
     try {
       const models = await syncModelsFromDisk();
-      const text = pickTextCapable(models, await getDefaultModelId());
+      const text = pickTextCapable(models, await getDefaultModelId(), llmManager.getLoadedModelId());
       if (!text) { navigation.navigate('Models'); return; }
       const totalMem = Device.totalMemory ?? 0;
       if (text.heavy && totalMem > 0 && totalMem < 5.5e9) {

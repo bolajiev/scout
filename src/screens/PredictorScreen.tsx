@@ -171,12 +171,12 @@ export default function PredictorScreen() {
     try {
       const { fixtures: all, online } = await fetchAndCacheFixtures();
       if (!mountedRef.current) return;
-      // Compact matchday rail: every live match (with scores) + the next 3
-      // upcoming. World Cup outranks other leagues within each group.
-      const wcBias = (f: Fixture) => (isWorldCup(f) ? -0.5 : 0);
-      const sorted = [...all].sort(
-        (a, b) => (fixtureOrder(a) + wcBias(a)) - (fixtureOrder(b) + wcBias(b)),
-      );
+      // World Cup ONLY: every live WC match (with scores) + the next 3 WC
+      // kick-offs. Other leagues appear only when no WC fixtures exist at
+      // all, so the rail is never empty.
+      const wc = all.filter(isWorldCup);
+      const pool = wc.length > 0 ? wc : all;
+      const sorted = [...pool].sort((a, b) => fixtureOrder(a) - fixtureOrder(b));
       const liveNow = sorted.filter(isLive);
       const upcoming = sorted.filter(f => !isLive(f) && !isFinished(f)).slice(0, 3);
       setFixtures([...liveNow, ...upcoming]);
@@ -197,7 +197,7 @@ export default function PredictorScreen() {
   const loadModel = async () => {
     try {
       const synced = await syncModelsFromDisk();
-      const model = pickTextCapable(synced, await getDefaultModelId());
+      const model = pickTextCapable(synced, await getDefaultModelId(), llmManager.getLoadedModelId());
       if (!model) {
         if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
         return;
@@ -401,7 +401,7 @@ export default function PredictorScreen() {
           <View style={styles.fixturesHeader}>
             <View>
               <Text style={[styles.fixturesSectionLabel, { color: accent }]}>
-                {fixtures.some(isLive) ? 'MATCHDAY LIVE' : fixtures.some(isWorldCup) ? 'FIFA WORLD CUP 2026' : 'MATCHDAY'}
+                {fixtures.some(isWorldCup) ? (fixtures.some(isLive) ? 'WORLD CUP · LIVE' : 'FIFA WORLD CUP 2026') : fixtures.some(isLive) ? 'MATCHDAY LIVE' : 'MATCHDAY'}
               </Text>
               <Text style={[styles.fixturesTodayLabel, { color: theme.textSecondary }]}>
                 Live scores · today & upcoming

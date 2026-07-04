@@ -53,7 +53,7 @@ export default function ModelsScreen() {
   const theme = getTheme(useTheme());
   const [downloadedModels, setDownloadedModels] = useState<DownloadedModel[]>([]);
   const [downloading, setDownloading] = useState<Record<string, DownloadPhase>>({});
-  const [defaultTextModelId, setDefaultTextModelIdState] = useState<string>(MODEL_KEYS.TEXT_INSTANT);
+  const [defaultTextModelId, setDefaultTextModelIdState] = useState<string>('');
   const [loadedModelId, setLoadedModelId] = useState<string | null>(null);
   const [loadingModelId, setLoadingModelId] = useState<string | null>(null);
   const [loadProgress, setLoadProgress] = useState(0);
