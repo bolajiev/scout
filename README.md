@@ -10,7 +10,7 @@ Scout is a fully private football AI app for Android. Every AI feature — chat,
 
 | Feature | Engine | What it does |
 |---|---|---|
-| **AI Coach** | QVAC LLM | Football chat with live tool calling — the model decides when to fetch today's fixtures, a team's recent results (TheSportsDB), or football news to verify a claim/rumor (BBC Sport RSS), and grounds its answers in real data. Every fetch is disclosed with a tappable chip showing the raw data used. Streams tokens live; in Think mode the reasoning stream shows too, then collapses to a tappable "Thought for X.Xs" row. Answers render as markdown. |
+| **AI Coach** | QVAC LLM | Football chat with live tool calling — the model decides when to fetch today's fixtures, a team's recent results (TheSportsDB), or football news to verify a claim/rumor (BBC Sport, Sky Sports, The Guardian RSS), and grounds its answers in real data. Every fetch is disclosed with a tappable chip showing the raw data used. Streams tokens live; in Think mode the reasoning stream shows too, then collapses to a tappable "Thought for X.Xs" row. Answers render as markdown. |
 | **Predictor** | QVAC LLM | Pick a fixture (live World Cup 2026 matches with real team badges) or type any two teams. Recent form is fetched live and injected into the prompt; output is a structured scoreboard: winner, score, confidence, analysis. |
 | **Scout Lens** | QVAC Vision | Point the camera at a jersey, club badge, or scoreboard — the vision model identifies it on-device. Reasoning is disabled for scans so results come fast. |
 | **History** | SQLite | Every session (chat, prediction, scan) stored locally and replayable. |
@@ -41,7 +41,7 @@ for await (const event of run1.events) {
 }
 
 const toolCalls = await run1.toolCalls;
-// execute against TheSportsDB (fixtures/form) or BBC Sport RSS (news),
+// execute against TheSportsDB (fixtures/form) or football RSS feeds (news),
 // push { role: 'tool', content } messages, then run pass 2 for the
 // final grounded answer — the raw tool result is also kept for the UI
 // so the user can see exactly what data backed the answer
@@ -106,7 +106,7 @@ EAS Build reinstalls `node_modules`, which would silently revert these patches �
 
 [TheSportsDB](https://www.thesportsdb.com) free endpoints, no key: today's fixtures, FIFA World Cup 2026 schedule, team search, recent results, and team badge images. Fixtures are cached in SQLite keyed by date — offline you get today's cache, never a stale day. The home card refreshes every 5 minutes, shows live scores, and rotates finished matches to the next kick-off.
 
-[BBC Sport RSS](https://feeds.bbci.co.uk/sport/football/rss.xml) (public, no key) backs the AI Coach's `get_football_news` tool — used only to verify a specific claim, transfer, injury, or club news story, never for tactics/history/opinion questions.
+[BBC Sport](https://feeds.bbci.co.uk/sport/football/rss.xml), [Sky Sports](https://www.skysports.com/rss/11095), and [The Guardian](https://www.theguardian.com/football/rss) RSS feeds (all public, no key) back the AI Coach's `get_football_news` tool — used only to verify a specific claim, transfer, injury, or club news story, never for tactics/history/opinion questions.
 
 ---
 

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, Animated, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Animated, ScrollView, TouchableOpacity, Linking } from 'react-native';
 import Constants from 'expo-constants';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
@@ -7,6 +7,9 @@ import { IconBall, IconTarget, IconCamera } from '../components/Icons';
 import ScreenHeader from '../components/ScreenHeader';
 
 const appVersion = Constants.expoConfig?.version ?? '1.0';
+const buildId = Constants.expoConfig?.extra?.buildId ?? 'unknown';
+const buildDate = Constants.expoConfig?.extra?.buildDate ?? '';
+const REPO_URL = 'https://github.com/bolajiev/scout';
 
 const MODULES = [
   {
@@ -121,7 +124,7 @@ export default function AboutScreen() {
         <View style={[styles.techCard, { backgroundColor: theme.card }]}>
           {[
             { name: 'TheSportsDB', note: 'Fixture and form data · thesportsdb.com · Free public API · No account required' },
-            { name: 'BBC Sport RSS', note: "AI Coach's news-verification tool · feeds.bbci.co.uk · Public RSS feed" },
+            { name: 'BBC Sport, Sky Sports & The Guardian RSS', note: "AI Coach's news-verification tool · public RSS feeds, no key or account" },
             { name: 'Gemma 4 E2B', note: 'Google model weights via HuggingFace (bartowski/google_gemma-4-E2B-it-GGUF)' },
             { name: 'Qwen3 1.7B', note: 'Alibaba model weights via QVAC SDK registry' },
             { name: 'MedPsy 1.7B / 4B', note: 'QVAC model weights — inference on-device only' },
@@ -133,8 +136,21 @@ export default function AboutScreen() {
           ))}
         </View>
 
+        {/* Source & updates */}
+        <TouchableOpacity
+          style={[styles.updateBtn, { backgroundColor: theme.card }]}
+          onPress={() => Linking.openURL(`${REPO_URL}/releases/latest`)}
+          activeOpacity={0.75}
+        >
+          <Text style={[styles.updateBtnText, { color: theme.text }]}>Check for updates</Text>
+          <Text style={[styles.updateBtnSub, { color: theme.textSecondary }]}>Latest release on GitHub →</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => Linking.openURL(REPO_URL)} activeOpacity={0.7}>
+          <Text style={[styles.repoLink, { color: accent }]}>View source on GitHub</Text>
+        </TouchableOpacity>
+
         <Text style={[styles.version, { color: theme.textSecondary }]}>
-          {`Scout v${appVersion} · QVAC SDK · On-Device Football AI`}
+          {`Scout v${appVersion} · Build ${buildId}${buildDate ? ` · ${buildDate}` : ''}`}
         </Text>
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -179,5 +195,9 @@ const styles = StyleSheet.create({
   techRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 14 },
   techName: { fontSize: 14, fontWeight: '700' },
   techNote: { fontSize: 13 },
+  updateBtn: { borderRadius: 14, padding: 14, alignItems: 'center', marginBottom: 12, gap: 3 },
+  updateBtnText: { fontSize: 14, fontWeight: '700' },
+  updateBtnSub: { fontSize: 12 },
+  repoLink: { fontSize: 13, fontWeight: '600', textAlign: 'center', marginBottom: 20 },
   version: { fontSize: 11, textAlign: 'center', marginBottom: 8 },
 });

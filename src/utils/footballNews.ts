@@ -13,6 +13,8 @@ export interface NewsItem {
 
 const FEEDS: { name: string; url: string }[] = [
   { name: 'BBC Sport', url: 'https://feeds.bbci.co.uk/sport/football/rss.xml' },
+  { name: 'Sky Sports', url: 'https://www.skysports.com/rss/11095' },
+  { name: 'The Guardian', url: 'https://www.theguardian.com/football/rss' },
 ];
 
 const decodeEntities = (s: string): string =>
@@ -50,14 +52,20 @@ export const fetchFootballNews = async (query?: string, limit = 5): Promise<News
   }
   const q = query?.trim().toLowerCase();
   const filtered = q ? all.filter(i => (i.title + ' ' + i.summary).toLowerCase().includes(q)) : all;
-  return (filtered.length > 0 ? filtered : all).slice(0, limit);
+  const result = filtered.length > 0 ? filtered : all;
+  // Three feeds are pushed sequentially above (all of feed 1, then feed 2,
+  // ...) — sort by actual publish date so results read as one timeline
+  // instead of grouped by source
+  result.sort((a, b) => (Date.parse(b.pubDate) || 0) - (Date.parse(a.pubDate) || 0));
+  return result.slice(0, limit);
 };
 
 export const formatNewsContext = (items: NewsItem[], query?: string): string => {
   if (items.length === 0) return `No recent football news found${query ? ` for "${query}"` : ''}.`;
+  const sources = [...new Set(items.map(i => i.source))].join(', ');
   return [
-    `[FOOTBALL NEWS — via ${items[0].source}, use only if directly relevant to the question]`,
-    ...items.map(i => `• ${i.title}${i.pubDate ? ` — ${i.pubDate}` : ''}\n  ${i.summary}`),
+    `[FOOTBALL NEWS — via ${sources}, use only if directly relevant to the question]`,
+    ...items.map(i => `• ${i.title} (${i.source}${i.pubDate ? `, ${i.pubDate}` : ''})\n  ${i.summary}`),
     '[END NEWS]',
   ].join('\n');
 };

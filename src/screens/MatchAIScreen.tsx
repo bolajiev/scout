@@ -472,7 +472,7 @@ export default function MatchAIScreen() {
               setSlot(s => s ? { ...s, toolStatus: 'Checking football news...' } : s);
               const news = await fetchFootballNews(query);
               toolResult = formatNewsContext(news, query);
-              if (news.length > 0) liveSources.push(news[0].source);
+              news.forEach(n => liveSources.push(n.source));
             }
           } catch { toolResult = 'Unable to fetch live data.'; }
           toolHistory.push({ role: 'tool', content: toolResult });
