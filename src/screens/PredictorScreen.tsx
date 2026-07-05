@@ -881,7 +881,7 @@ const styles = StyleSheet.create({
   recordChip: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   recordChipText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
   historyBtn: { fontSize: 12, fontWeight: '600' },
-  content: { padding: 16, gap: 16 },
+  content: { flexGrow: 1, padding: 16, gap: 16 },
   loadingBar: {
     borderRadius: 10, padding: 12, alignItems: 'center',
   },

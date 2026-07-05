@@ -297,10 +297,10 @@ const styles = StyleSheet.create({
   segmentText: { fontSize: 13, fontWeight: '700' },
   segmentCount: { fontSize: 11, fontWeight: '700', opacity: 0.7 },
 
-  list: { padding: 16, gap: 10 },
+  list: { flexGrow: 1, padding: 16, gap: 10 },
 
   // Empty state
-  empty: { alignItems: 'center', marginTop: 80, gap: 10 },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 10 },
   emptyTitle: { fontSize: 18, fontWeight: '700' },
   emptySub: { fontSize: 14, textAlign: 'center', lineHeight: 20, maxWidth: 260 },
 

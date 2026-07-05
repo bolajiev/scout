@@ -423,7 +423,7 @@ export default function ScoutLensScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   historyBtn: { fontSize: 12, fontWeight: '600' },
-  content: { padding: 16, gap: 14 },
+  content: { flexGrow: 1, padding: 16, gap: 14 },
   noModelCard: { borderRadius: 10, padding: 14 },
   askRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   questionInput: {

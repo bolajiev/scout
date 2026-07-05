@@ -506,7 +506,7 @@ export default function ModelsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scrollContent: { paddingHorizontal: 16, paddingTop: 12 },
+  scrollContent: { flexGrow: 1, paddingHorizontal: 16, paddingTop: 12 },
   sectionHeader: {
     flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10,
   },

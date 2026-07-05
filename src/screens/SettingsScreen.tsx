@@ -391,7 +391,7 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scroll: { paddingHorizontal: 20, paddingBottom: 60, gap: 6 },
+  scroll: { flexGrow: 1, paddingHorizontal: 20, paddingBottom: 60, gap: 6 },
   sectionLabel: {
     fontSize: 11, fontWeight: '700', letterSpacing: 1,
     textTransform: 'uppercase', marginTop: 20, marginBottom: 6,

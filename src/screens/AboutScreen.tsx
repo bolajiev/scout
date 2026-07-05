@@ -145,7 +145,7 @@ export default function AboutScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 20, paddingTop: 28 },
+  scrollContent: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 28 },
   hero: { alignItems: 'center', gap: 8, marginBottom: 28 },
   logoMark: { width: 72, height: 72, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   logoLetter: { fontSize: 40, fontWeight: '900', color: '#fff', letterSpacing: -1 },

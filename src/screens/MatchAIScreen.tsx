@@ -863,10 +863,10 @@ const styles = StyleSheet.create({
   historyBtn: { fontSize: 13, fontWeight: '600' },
 
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 14, paddingTop: 16, gap: 4 },
+  scrollContent: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 16, gap: 4 },
 
   // ── Empty state ────────────────────────────────────────────────────────────
-  emptyWrap: { paddingTop: 40, paddingHorizontal: 2, gap: 14, alignItems: 'center' },
+  emptyWrap: { flex: 1, justifyContent: 'center', paddingHorizontal: 2, gap: 14, alignItems: 'center' },
   brandMark: { width: 80, height: 80, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   greeting: { fontSize: 14, fontWeight: '500', marginTop: -4 },
   emptyTitle: { fontSize: 24, fontWeight: '800', letterSpacing: -0.5, textAlign: 'center', marginTop: -6 },
