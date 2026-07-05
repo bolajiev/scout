@@ -13,6 +13,7 @@ export interface ModelInfo {
   modelType: 'vision' | 'text';
   supports: string[];
   supportsReasoning?: boolean; // model streams a thinking channel (Qwen3)
+  supportsTools?: boolean;     // model's chat template reliably handles function-calling (Qwen3, Gemma)
   isDownloaded?: boolean;
   downloadedPath?: string;
   isCustom?: boolean;

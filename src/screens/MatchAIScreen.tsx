@@ -296,9 +296,11 @@ export default function MatchAIScreen() {
         if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
         return;
       }
-      // Tool calling only for true text models — a multimodal fallback like
-      // Gemma has a chat template without reliable tool-call support
-      const supportsTools = model.modelType === 'text';
+      // Text models get tools by default; vision fallback models need an
+      // explicit supportsTools: true (see models.ts) since most multimodal
+      // chat templates don't reliably support function-calling — Gemma is
+      // marked true as an active experiment, SmolVLM2 is not.
+      const supportsTools = model.supportsTools ?? model.modelType === 'text';
       const mid = await llmManager.ensure(model, { ctx_size: model.modelType === 'vision' ? 2048 : 4096, device: 'auto', tools: supportsTools, projectionModelSrc: model.projectionModelSrc });
       modelNameRef.current = model.name;
       toolsEnabledRef.current = supportsTools;

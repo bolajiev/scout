@@ -86,6 +86,15 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
     modelSrc: GEMMA4_2B_MULTIMODAL_Q4_K_M.src,
     projectionModelSrc: MMPROJ_GEMMA4_2B_MULTIMODAL_Q8_0.src,
     supports: ['vision', 'text'],
+    // EXPERIMENT: previously denied tools entirely (modelType === 'vision'
+    // was excluded) after an earlier finding that Gemma's chat template
+    // didn't reliably support QVAC's function-calling format. Since Gemma
+    // is the "one model for everything" pick, having zero live-data
+    // access in Chat is a bigger practical gap than the tool-call risk —
+    // trying it explicitly enabled. Watch for malformed/garbled output
+    // when Gemma is loaded and Coach tries a tool call; revert this flag
+    // if so.
+    supportsTools: true,
     heavy: true,
   },
   {
