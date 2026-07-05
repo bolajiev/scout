@@ -50,6 +50,7 @@ export default function HistoryScreen() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [counts, setCounts] = useState<Record<ScreenType, number>>({ matchai: 0, predictor: 0, scoutlens: 0 });
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [thoughtsOpen, setThoughtsOpen] = useState<Record<string, boolean>>({});
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
 
   const load = useCallback((forTab: ScreenType) => {
@@ -116,6 +117,23 @@ export default function HistoryScreen() {
     <View style={[styles.msgList, { borderTopColor: theme.border }]}>
       {msgs.map(msg => (
         <View key={msg.id} style={msg.role === 'user' ? styles.chatUserRow : styles.chatAiRow}>
+          {msg.role === 'assistant' && msg.meta?.thinking && (
+            <TouchableOpacity
+              style={[styles.thoughtToggle, { backgroundColor: theme.cardAlt }]}
+              onPress={() => setThoughtsOpen(p => ({ ...p, [msg.id]: !p[msg.id] }))}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.thoughtToggleText, { color: theme.textSecondary }]}>
+                {msg.meta.thinkingMs ? `Thought for ${(msg.meta.thinkingMs / 1000).toFixed(1)}s` : 'Thought process'}
+                {thoughtsOpen[msg.id] ? ' ‹' : ' ›'}
+              </Text>
+              {thoughtsOpen[msg.id] && (
+                <Text selectable style={[styles.thoughtToggleBody, { color: theme.textSecondary }]}>
+                  {msg.meta.thinking}
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
           <View style={[
             styles.chatBubble,
             msg.role === 'user'
@@ -322,6 +340,9 @@ const styles = StyleSheet.create({
   chatBubble: { maxWidth: '85%', borderRadius: 16, paddingHorizontal: 13, paddingVertical: 9 },
   chatText: { fontSize: 14, lineHeight: 20 },
   chatStat: { fontSize: 9, marginTop: 5 },
+  thoughtToggle: { borderRadius: 10, padding: 9, marginBottom: 6, alignSelf: 'flex-start', maxWidth: '85%' },
+  thoughtToggleText: { fontSize: 10, fontWeight: '700' },
+  thoughtToggleBody: { fontSize: 11, lineHeight: 16, marginTop: 6, fontStyle: 'italic' },
   continueBtn: {
     borderRadius: 12, borderWidth: 1, paddingVertical: 11,
     alignItems: 'center', marginTop: 4,

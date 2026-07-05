@@ -30,9 +30,24 @@ const CARD_W = (SCREEN_W - 48) / 2;
 
 // Kept minimal on purpose: every system-prompt token costs CPU prompt-
 // processing time before the first visible token appears.
-const SYSTEM_PROMPT = `You are Scout's AI Coach — a veteran football coach, fully on-device.
+//
+// BUG FIX: this used to unconditionally describe tool-calling even when
+// the loaded model has no tools wired up (vision fallback models like
+// Gemma get toolsEnabled=false in Chat — see loadModel()). Told to
+// "always call a tool" with no actual tool access, the model either
+// parroted the tool descriptions back as prose or fell back to a flat
+// "I don't have real-time access" refusal — neither is useful. The
+// prompt is now built per-request based on real tool availability.
+const BASE_SYSTEM_PROMPT = `You are Scout's AI Coach — a veteran football coach, fully on-device.
 
-Rules: always commit — never refuse or say "I'm not sure"; back opinions with specific players, formations, scorelines; no filler or disclaimers. Tools — use at most one per question: get_today_fixtures ONLY for today's games/scores; get_team_form ONLY for a team's recent match RESULTS; get_football_news ONLY for transfers, injuries, club news, or verifying a specific claim/rumor. Never call a tool for tactics, history, or opinion questions — answer those from knowledge. Style: short paragraphs, **bold** key names, bullets for lists, concise English.`;
+Rules: always commit — never refuse or say "I'm not sure"; back opinions with specific players, formations, scorelines; no filler or disclaimers. Style: short paragraphs, **bold** key names, bullets for lists, concise English.`;
+
+const TOOLS_SYSTEM_SUFFIX = ` Your training data has a cutoff and does NOT know live scores, current squads, current top scorers, or anything happening now — NEVER answer those from memory, and NEVER say "I don't have real-time access." Tools — use at most one per question: get_today_fixtures for today's games/scores; get_team_form for a team's recent match RESULTS; get_football_news for anything else current — transfers, injuries, club news, top scorers, standings, or verifying any claim you're not 100% certain is still true. If a question is about anything happening now or recently, ALWAYS call a tool before answering — guessing from stale training data is worse than checking. Only skip tools for pure tactics/history/opinion questions with no time-sensitive facts.`;
+
+const NO_TOOLS_SYSTEM_SUFFIX = ` This session has no live data tools available. For anything truly current (today's scores, this week's news) say briefly that you're working from general knowledge rather than inventing specific recent numbers — but still commit to a real, useful answer from what you do know. Never say "I don't have real-time access" as a refusal.`;
+
+const buildSystemPrompt = (toolsEnabled: boolean) =>
+  BASE_SYSTEM_PROMPT + (toolsEnabled ? TOOLS_SYSTEM_SUFFIX : NO_TOOLS_SYSTEM_SUFFIX);
 
 const SCOUT_TOOLS: Tool[] = [
   {
@@ -56,7 +71,7 @@ const SCOUT_TOOLS: Tool[] = [
   {
     type: 'function',
     name: 'get_football_news',
-    description: "Get recent football news headlines from BBC Sport to verify a claim or check transfers, injuries, or club news. Use when asked to confirm/verify something, or about transfer rumors, injuries, manager changes, or recent club news that isn't a match result.",
+    description: "Get recent football news headlines from BBC Sport. Use this for ANY current-events question you can't answer from get_today_fixtures or get_team_form — transfers, injuries, manager changes, top scorers, standings, tournament stats, current squads, or verifying any claim. Never say you lack real-time access — call this instead.",
     parameters: {
       type: 'object',
       properties: {
@@ -235,6 +250,8 @@ export default function MatchAIScreen() {
               answer: next?.role === 'assistant' ? next.content : '',
               elapsed: next?.meta?.elapsed,
               toks: next?.meta?.toks,
+              thinking: next?.meta?.thinking,
+              thinkingMs: next?.meta?.thinkingMs,
             });
           }
         }
@@ -345,8 +362,15 @@ export default function MatchAIScreen() {
 
     try {
       const gp = await getGenParams();
+      // BUG FIX: thinking and the final answer share ONE token budget for
+      // models without native reasoning support (Gemma emits its "thinking"
+      // as regular text, not a cheaper separate channel). At the default
+      // 384-token cap, a long think (observed: 119s, hundreds of tokens)
+      // left almost nothing for the actual answer, cutting it off mid-
+      // sentence. Give Think mode a bigger ceiling so the answer still gets
+      // its normal full budget after thinking concludes.
       const genParams = {
-        predict: gp.maxTokens,
+        predict: thinkingOn ? gp.maxTokens + 500 : gp.maxTokens,
         temp: gp.temp,
         top_k: gp.top_k,
         top_p: gp.top_p,
@@ -358,7 +382,7 @@ export default function MatchAIScreen() {
       // ── Pass 1: completion with tools available ─────────────────────────
       const run1 = completion({
         modelId,
-        history: [{ role: 'system', content: SYSTEM_PROMPT }, ...history],
+        history: [{ role: 'system', content: buildSystemPrompt(toolsEnabledRef.current) }, ...history],
         stream: true,
         tools: toolsEnabledRef.current ? SCOUT_TOOLS : undefined,
         captureThinking: thinkingOn,
@@ -461,7 +485,7 @@ export default function MatchAIScreen() {
         // ── Pass 2: final answer incorporating tool results ─────────────────
         const run2 = completion({
           modelId,
-          history: [{ role: 'system', content: SYSTEM_PROMPT }, ...toolHistory],
+          history: [{ role: 'system', content: buildSystemPrompt(toolsEnabledRef.current) }, ...toolHistory],
           stream: true,
           captureThinking: false,
           generationParams: { ...genParams, reasoning_budget: 0 as 0 },
@@ -502,9 +526,14 @@ export default function MatchAIScreen() {
       logInference('matchai', modelNameRef.current, finalStats?.timeToFirstToken ?? 0, totalMs, finalStats?.generatedTokens ?? 0).catch(() => {});
 
       const elapsed = Math.round(totalMs / 100) / 10;
-      if (sessionIdRef.current && answerAcc) addMessage(sessionIdRef.current, 'assistant', answerAcc, { elapsed, toks: finalStats?.generatedTokens });
-
       if (thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
+      if (sessionIdRef.current && answerAcc) {
+        addMessage(sessionIdRef.current, 'assistant', answerAcc, {
+          elapsed, toks: finalStats?.generatedTokens,
+          thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined,
+        });
+      }
+
       if (mountedRef.current) {
         const finished: Entry = { id: entryId, question: q, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, liveSources: [...new Set(liveSources)], liveData: liveDataAcc || undefined };
         setSlot(null);
@@ -567,7 +596,7 @@ export default function MatchAIScreen() {
           )}
         </View>
         {isOpen && thought.length > 0 && (
-          <Text style={styles.thoughtText} numberOfLines={isStreaming ? undefined : 10}>
+          <Text style={styles.thoughtText}>
             {thought}
           </Text>
         )}

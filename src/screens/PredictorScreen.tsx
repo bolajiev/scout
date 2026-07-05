@@ -20,12 +20,14 @@ import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fm
 import { splitChannelThinking } from '../utils/thinkingSplit';
 import { createSession, addMessage, addPrediction } from '../utils/historyDb';
 import { settlePendingPredictions, getPredictionRecord } from '../utils/predictionTracker';
-import { fetchBothTeamForms, formatFormContext, type TeamForm } from '../utils/teamStats';
+import { fetchBothTeamForms, fetchBothSquads, formatFormContext, type TeamForm } from '../utils/teamStats';
 import { logInference } from '../utils/auditLogger';
 
 const SYSTEM_PROMPT = `You are Scout's Predictor — a veteran football analyst who ALWAYS calls the match. You never refuse, never hedge, never say you lack information. Pundits get paid to commit — so do you.
 
 When [LIVE FORM DATA] is present, treat it as ground truth for recent form — it comes from a real-time sports data source and overrides your training assumptions. Weight it heavily alongside tactical identity, squad quality, and head-to-head history.
+
+When [CURRENT SQUADS] is present, KEY HOME and KEY AWAY must name a player from those lists only — never a player from your training memory who may have retired, transferred, or aged out of the squad since. If a squad list is present but doesn't include the star you'd expect, pick the most dangerous player who IS listed rather than the one you remember.
 
 When no live data is present, commit anyway using historical record, playing style, squad depth, and tournament pedigree. Do NOT fabricate recent results — and do NOT complain about missing data. Express uncertainty ONLY through the CONFIDENCE field, never in the analysis text.
 
@@ -102,6 +104,8 @@ export default function PredictorScreen() {
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [formA, setFormA] = useState<TeamForm | null>(null);
   const [formB, setFormB] = useState<TeamForm | null>(null);
+  const [squadA, setSquadA] = useState<string[]>([]);
+  const [squadB, setSquadB] = useState<string[]>([]);
   const [formLoading, setFormLoading] = useState(false);
   const [record, setRecord] = useState<{ hits: number; misses: number; pending: number } | null>(null);
   const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
@@ -159,12 +163,17 @@ export default function PredictorScreen() {
       setFormLoading(true);
       try {
         const fdKey = await getActiveFdKey().catch(() => '');
-        const [fa, fb] = await fetchBothTeamForms(teamA.trim(), teamB.trim(), fdKey);
+        const [[fa, fb], [sa, sb]] = await Promise.all([
+          fetchBothTeamForms(teamA.trim(), teamB.trim(), fdKey),
+          fetchBothSquads(teamA.trim(), teamB.trim()),
+        ]);
         if (!mountedRef.current) return;
         setFormA(fa);
         setFormB(fb);
+        setSquadA(sa);
+        setSquadB(sb);
       } catch {
-        if (mountedRef.current) { setFormA(null); setFormB(null); }
+        if (mountedRef.current) { setFormA(null); setFormB(null); setSquadA([]); setSquadB([]); }
       } finally {
         if (mountedRef.current) setFormLoading(false);
       }
@@ -292,8 +301,18 @@ export default function PredictorScreen() {
     const formBlock = (formA || formB)
       ? formatFormContext(teamA.trim(), formA, teamB.trim(), formB) + '\n\n'
       : '';
+    // Real current squad names, so KEY HOME/KEY AWAY names a player who's
+    // actually still on the team instead of whoever the model remembers
+    // from training (verified: defaulted to Neymar for Brazil, who hasn't
+    // been part of the squad picture in years).
+    const squadBlock = (squadA.length > 0 || squadB.length > 0)
+      ? `[CURRENT SQUADS — pick KEY HOME/KEY AWAY only from these names]\n`
+        + `${teamA.trim()}: ${squadA.length > 0 ? squadA.join(', ') : 'not found'}\n`
+        + `${teamB.trim()}: ${squadB.length > 0 ? squadB.join(', ') : 'not found'}\n`
+        + `[END SQUADS]\n\n`
+      : '';
     const userContext = context.trim() ? `\n\nAdditional context: ${context.trim()}` : '';
-    const prompt = `${formBlock}Predict: ${teamA.trim()} vs ${teamB.trim()}${userContext}`;
+    const prompt = `${squadBlock}${formBlock}Predict: ${teamA.trim()} vs ${teamB.trim()}${userContext}`;
     const genStart = Date.now();
 
     try {

@@ -10,8 +10,10 @@ export interface Session {
 }
 
 export interface MessageMeta {
-  elapsed?: number;  // seconds
-  toks?: number;     // generated tokens
+  elapsed?: number;    // seconds
+  toks?: number;       // generated tokens
+  thinking?: string;   // the model's reasoning trace, if Think mode was on
+  thinkingMs?: number; // how long thinking took
 }
 
 export interface Message {

@@ -36,15 +36,7 @@ export default function AppNavigator() {
         <Stack.Screen name="MatchAI"    component={MatchAIScreen}   options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="Predictor"  component={PredictorScreen} options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="ScoutLens"  component={ScoutLensScreen} options={{ animation: 'slide_from_right' }} />
-        <Stack.Screen
-          name="Models"
-          component={ModelsScreen}
-          options={{
-            headerShown: true, title: 'Models', animation: 'slide_from_right',
-            headerStyle: { backgroundColor: theme.background }, headerTintColor: theme.text,
-            headerShadowVisible: false, headerBackTitle: '',
-          }}
-        />
+        <Stack.Screen name="Models" component={ModelsScreen} options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="Download" component={DownloadScreen} options={{ animation: 'slide_from_bottom' }} />
         <Stack.Screen name="About"    component={AboutScreen}   options={{ animation: 'slide_from_right' }} />

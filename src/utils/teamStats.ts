@@ -39,6 +39,34 @@ export const searchTeamId = async (name: string): Promise<string | null> => {
   }
 };
 
+// Real current squad list — grounds the model's "key player" callouts in
+// actual current names instead of stale training-data memory (verified:
+// a model asked to name Brazil's key player defaulted to Neymar, who
+// hasn't been part of the current national-team picture for years).
+// Free tier caps this at ~10 entries including staff, so it's a partial
+// squad, not the full roster — still far better than pure recall.
+export const fetchSquad = async (teamName: string): Promise<string[]> => {
+  const teamId = await searchTeamId(teamName);
+  if (!teamId) return [];
+  try {
+    const res = await fetchWithTimeout(`${BASE}/lookup_all_players.php?id=${teamId}`, 6000);
+    const data = await res.json();
+    const players: any[] = data.player ?? [];
+    return players
+      .filter(p => p.strPosition && !/manager|coach/i.test(p.strPosition))
+      .map(p => p.strPlayer)
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
+export const fetchBothSquads = async (
+  nameA: string,
+  nameB: string,
+): Promise<[string[], string[]]> =>
+  Promise.all([fetchSquad(nameA), fetchSquad(nameB)]);
+
 // Fetch last 5 events for a team and derive W/D/L
 export const fetchTeamForm = async (teamName: string): Promise<TeamForm | null> => {
   const teamId = await searchTeamId(teamName);
