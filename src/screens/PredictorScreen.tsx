@@ -298,21 +298,43 @@ export default function PredictorScreen() {
     setIsGenerating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    const formBlock = (formA || formB)
-      ? formatFormContext(teamA.trim(), formA, teamB.trim(), formB) + '\n\n'
+    // BUG FIX: form/squad data was fetched on a 700ms debounce tied to
+    // typing, but predict() just read whatever was in formA/squadA state
+    // at button-press time. Selecting a fixture from the rail fills both
+    // team names instantly, and tapping "Predict Match" right after — the
+    // natural, fast flow — routinely fired before that debounce finished,
+    // so the prediction ran with NO grounding data and the model fell
+    // back to pure hallucination (wrong "player to watch" calls). Fetch
+    // fresh, guaranteed-ready data here instead of trusting the preview
+    // state's timing.
+    const nameA = teamA.trim();
+    const nameB = teamB.trim();
+    setFormLoading(true);
+    const fdKey = await getActiveFdKey().catch(() => '');
+    const [[freshFormA, freshFormB], [freshSquadA, freshSquadB]] = await Promise.all([
+      fetchBothTeamForms(nameA, nameB, fdKey).catch(() => [formA, formB] as [TeamForm | null, TeamForm | null]),
+      fetchBothSquads(nameA, nameB).catch(() => [squadA, squadB] as [string[], string[]]),
+    ]);
+    setFormA(freshFormA); setFormB(freshFormB);
+    setSquadA(freshSquadA); setSquadB(freshSquadB);
+    setFormLoading(false);
+    if (!mountedRef.current) return;
+
+    const formBlock = (freshFormA || freshFormB)
+      ? formatFormContext(nameA, freshFormA, nameB, freshFormB) + '\n\n'
       : '';
     // Real current squad names, so KEY HOME/KEY AWAY names a player who's
     // actually still on the team instead of whoever the model remembers
     // from training (verified: defaulted to Neymar for Brazil, who hasn't
     // been part of the squad picture in years).
-    const squadBlock = (squadA.length > 0 || squadB.length > 0)
+    const squadBlock = (freshSquadA.length > 0 || freshSquadB.length > 0)
       ? `[CURRENT SQUADS — pick KEY HOME/KEY AWAY only from these names]\n`
-        + `${teamA.trim()}: ${squadA.length > 0 ? squadA.join(', ') : 'not found'}\n`
-        + `${teamB.trim()}: ${squadB.length > 0 ? squadB.join(', ') : 'not found'}\n`
+        + `${nameA}: ${freshSquadA.length > 0 ? freshSquadA.join(', ') : 'not found'}\n`
+        + `${nameB}: ${freshSquadB.length > 0 ? freshSquadB.join(', ') : 'not found'}\n`
         + `[END SQUADS]\n\n`
       : '';
     const userContext = context.trim() ? `\n\nAdditional context: ${context.trim()}` : '';
-    const prompt = `${squadBlock}${formBlock}Predict: ${teamA.trim()} vs ${teamB.trim()}${userContext}`;
+    const prompt = `${squadBlock}${formBlock}Predict: ${nameA} vs ${nameB}${userContext}`;
     const genStart = Date.now();
 
     try {

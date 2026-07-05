@@ -352,6 +352,13 @@ export default function SettingsScreen() {
         {/* ── Actions ──────────────────────────────────────────── */}
         <TouchableOpacity
           style={[styles.actionBtn, { borderColor: theme.border, backgroundColor: theme.card }]}
+          onPress={() => navigation.navigate('About')}
+        >
+          <Text style={[styles.actionText, { color: theme.text }]}>About Scout</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionBtn, { borderColor: theme.border, backgroundColor: theme.card }]}
           onPress={handleExportLogs}
         >
           <Text style={[styles.actionText, { color: theme.text }]}>Export Inference Log (CSV)</Text>

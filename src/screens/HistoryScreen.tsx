@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   Alert, Image,
@@ -47,38 +47,43 @@ export default function HistoryScreen() {
   const accent = theme.accent;
 
   const [tab, setTab] = useState<ScreenType>(route.params?.tab ?? 'matchai');
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [counts, setCounts] = useState<Record<ScreenType, number>>({ matchai: 0, predictor: 0, scoutlens: 0 });
+  const [refreshTick, setRefreshTick] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [thoughtsOpen, setThoughtsOpen] = useState<Record<string, boolean>>({});
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
 
-  const load = useCallback((forTab: ScreenType) => {
+  // BUG FIX: sessions/counts used to be separate state, synced by a
+  // useEffect that ran AFTER tab changed — a real gap where `tab` had
+  // already updated (e.g. switching to "Lens") but `sessions` still held
+  // the previous tab's rows for one render, showing the wrong tab's
+  // history under the new tab's header. getSessions() is a synchronous
+  // SQLite call, so there's no reason for this to be separate state at
+  // all — deriving it directly means it's IMPOSSIBLE for tab and
+  // sessions to disagree, by construction, not by timing luck.
+  const sessions = useMemo(() => {
+    try { return getSessions(tab); } catch { return []; }
+  }, [tab, refreshTick]);
+
+  const counts = useMemo((): Record<ScreenType, number> => {
     try {
-      setSessions(getSessions(forTab));
-      setCounts({
+      return {
         matchai: getSessions('matchai').length,
         predictor: getSessions('predictor').length,
         scoutlens: getSessions('scoutlens').length,
-      });
-    } catch {}
-  }, []);
+      };
+    } catch { return { matchai: 0, predictor: 0, scoutlens: 0 }; }
+  }, [refreshTick]);
 
-  // BUG FIX: React Navigation reuses an already-mounted 'History' screen
-  // instance instead of remounting it, so `useState(route.params?.tab)`'s
-  // initializer only ever ran once — opening History from Predictor after
-  // already having opened it from Chat kept showing Chat's tab and
-  // sessions. Re-sync from route.params on every focus instead.
+  // React Navigation reuses an already-mounted 'History' screen instance
+  // instead of remounting it, so a useState(route.params?.tab) initializer
+  // only ever runs once — re-sync from route.params on every focus instead.
   useFocusEffect(
     useCallback(() => {
-      const wanted: ScreenType = route.params?.tab ?? 'matchai';
-      setTab(wanted);
+      setTab(route.params?.tab ?? 'matchai');
       setExpanded(null);
-      load(wanted);
-    }, [route.params?.tab, load])
+      setRefreshTick(t => t + 1);
+    }, [route.params?.tab])
   );
-
-  useEffect(() => { load(tab); }, [tab, load]);
 
   const switchTab = (t: ScreenType) => {
     setTab(t);
@@ -102,8 +107,7 @@ export default function HistoryScreen() {
         text: 'Delete', style: 'destructive',
         onPress: () => {
           try { deleteSession(sessionId); } catch {}
-          setSessions(prev => prev.filter(s => s.id !== sessionId));
-          setCounts(prev => ({ ...prev, [tab]: Math.max(0, prev[tab] - 1) }));
+          setRefreshTick(t => t + 1);
           setMessages(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
           if (expanded === sessionId) setExpanded(null);
         },
@@ -113,7 +117,7 @@ export default function HistoryScreen() {
 
   // ── Per-type expanded content ─────────────────────────────────────────────
 
-  const renderChatMessages = (sessionId: string, msgs: Message[]) => (
+  const renderChatMessages = (msgs: Message[]) => (
     <View style={[styles.msgList, { borderTopColor: theme.border }]}>
       {msgs.map(msg => (
         <View key={msg.id} style={msg.role === 'user' ? styles.chatUserRow : styles.chatAiRow}>
@@ -151,13 +155,6 @@ export default function HistoryScreen() {
           </View>
         </View>
       ))}
-      <TouchableOpacity
-        style={[styles.continueBtn, { backgroundColor: accent + '14', borderColor: accent + '45' }]}
-        onPress={() => navigation.navigate('MatchAI', { resumeSessionId: sessionId })}
-        activeOpacity={0.8}
-      >
-        <Text style={[styles.continueBtnText, { color: accent }]}>Continue this conversation</Text>
-      </TouchableOpacity>
     </View>
   );
 
@@ -245,10 +242,26 @@ export default function HistoryScreen() {
           </View>
         </TouchableOpacity>
 
+        {/* Continue button lives here, not after the message list — for a
+            long chat, scrolling through the whole thing just to find it
+            was the exact complaint. Visible the instant you expand. */}
+        {isOpen && session.screen === 'matchai' && (
+          <TouchableOpacity
+            style={[styles.continueBtn, { backgroundColor: accent + '14', borderColor: accent + '45' }]}
+            onPress={() => navigation.navigate('MatchAI', { resumeSessionId: session.id })}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.continueBtnText, { color: accent }]}>Continue this conversation</Text>
+          </TouchableOpacity>
+        )}
+
         {isOpen && (
-          tab === 'predictor' ? renderPrediction(session, msgs)
-          : tab === 'scoutlens' ? renderScan(msgs)
-          : renderChatMessages(session.id, msgs)
+          // session.screen (the row's own stored type), never the ambient
+          // `tab` — ties the renderer choice to the data itself so a wrong
+          // card can't render even if tab/sessions were ever out of sync
+          session.screen === 'predictor' ? renderPrediction(session, msgs)
+          : session.screen === 'scoutlens' ? renderScan(msgs)
+          : renderChatMessages(msgs)
         )}
       </View>
     );
@@ -345,7 +358,7 @@ const styles = StyleSheet.create({
   thoughtToggleBody: { fontSize: 11, lineHeight: 16, marginTop: 6, fontStyle: 'italic' },
   continueBtn: {
     borderRadius: 12, borderWidth: 1, paddingVertical: 11,
-    alignItems: 'center', marginTop: 4,
+    alignItems: 'center', marginHorizontal: 12, marginBottom: 10,
   },
   continueBtnText: { fontSize: 13, fontWeight: '700' },
 
