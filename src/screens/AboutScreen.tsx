@@ -7,7 +7,8 @@ import { IconBall, IconTarget, IconCamera } from '../components/Icons';
 import ScreenHeader from '../components/ScreenHeader';
 
 const appVersion = Constants.expoConfig?.version ?? '1.0';
-const buildId = Constants.expoConfig?.extra?.buildId ?? 'unknown';
+const buildNumber = Constants.expoConfig?.extra?.buildNumber ?? '0';
+const buildHash = Constants.expoConfig?.extra?.buildHash ?? 'unknown';
 const buildDate = Constants.expoConfig?.extra?.buildDate ?? '';
 const REPO_URL = 'https://github.com/bolajiev/scout';
 
@@ -150,7 +151,7 @@ export default function AboutScreen() {
         </TouchableOpacity>
 
         <Text style={[styles.version, { color: theme.textSecondary }]}>
-          {`Scout v${appVersion} · Build ${buildId}${buildDate ? ` · ${buildDate}` : ''}`}
+          {`Scout v${appVersion} · Build ${buildNumber} (${buildHash})${buildDate ? ` · ${buildDate}` : ''}`}
         </Text>
         <View style={{ height: 40 }} />
       </ScrollView>
