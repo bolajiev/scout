@@ -17,6 +17,7 @@ import { pickTextCapable } from '../utils/models';
 import { syncModelsFromDisk, getGenParams, getDefaultModelId } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, todayISO, type Fixture } from '../utils/fixtures';
+import { splitChannelThinking } from '../utils/thinkingSplit';
 import { createSession, addMessage, addPrediction } from '../utils/historyDb';
 import { settlePendingPredictions, getPredictionRecord } from '../utils/predictionTracker';
 import { fetchBothTeamForms, formatFormContext, type TeamForm } from '../utils/teamStats';
@@ -90,7 +91,6 @@ export default function PredictorScreen() {
   const [teamB, setTeamB] = useState('');
   const [context, setContext] = useState('');
   const [prediction, setPrediction] = useState('');
-  const [thought, setThought] = useState('');
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [fixturesLoading, setFixturesLoading] = useState(true);
   const [noInternet, setNoInternet] = useState(false);
@@ -100,7 +100,6 @@ export default function PredictorScreen() {
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel] = useState(false);
   const [elapsed, setElapsed] = useState<number | null>(null);
-  const [thinkingOn, setThinkingOn] = useState(false);
   const [formA, setFormA] = useState<TeamForm | null>(null);
   const [formB, setFormB] = useState<TeamForm | null>(null);
   const [formLoading, setFormLoading] = useState(false);
@@ -220,13 +219,21 @@ export default function PredictorScreen() {
       const byKickoff = (a: Fixture, b: Fixture) => fixtureOrder(a) - fixtureOrder(b);
       const wc = all.filter(isWorldCup).sort(byKickoff);
       const others = all.filter(f => !isWorldCup(f)).sort(byKickoff);
+      // BUG FIX: a live match used to vanish from the rail entirely the
+      // moment it crossed out of the live window — it's neither "playing"
+      // nor "upcoming", and finished matches were never added to `rail` at
+      // all, even though the card below already has "FT" styling ready.
+      // Now: live, then upcoming, then recently finished (most recent first).
       const playing = (f: Fixture) => isLive(f);
       const upcoming = (f: Fixture) => !isLive(f) && !isFinished(f);
+      const finished = (f: Fixture) => isFinished(f);
       const rail = [
         ...wc.filter(playing),
         ...wc.filter(upcoming),
         ...others.filter(playing),
         ...others.filter(upcoming),
+        ...wc.filter(finished).reverse(),
+        ...others.filter(finished).reverse(),
       ].slice(0, 10);
       setFixtures(rail);
       // Arriving from the Home match card: preselect that fixture once
@@ -276,7 +283,6 @@ export default function PredictorScreen() {
   const predict = async () => {
     if (!teamA.trim() || !teamB.trim() || isGenerating || !modelId) return;
     setPrediction('');
-    setThought('');
     setParsed(null);
     setElapsed(null);
     setIsGenerating(true);
@@ -298,14 +304,14 @@ export default function PredictorScreen() {
           { role: 'user', content: prompt },
         ],
         stream: true,
-        captureThinking: thinkingOn,
+        captureThinking: false,
         generationParams: {
           predict: 380,
           temp: gp.temp,
           top_k: gp.top_k,
           top_p: gp.top_p,
           repeat_penalty: gp.repeat_penalty,
-          reasoning_budget: thinkingOn ? -1 as -1 : 0 as 0,
+          reasoning_budget: 0 as 0,
         },
       });
       currentRunRef.current = run;
@@ -314,26 +320,23 @@ export default function PredictorScreen() {
       });
       showRunningNotification('Predictor');
 
-      let streamed = '';
-      let thoughtAcc = '';
+      // Predictor has no Think mode, but some models (Gemma) still emit
+      // reasoning as literal "<|channel>thought...channel|>" text even with
+      // reasoning_budget: 0 — strip it so it never pollutes the prediction.
+      let raw = '';
       let lastFlush = 0;
       for await (const event of run.events) {
-        if (event.type === 'thinkingDelta') {
-          thoughtAcc += event.text;
+        if (event.type === 'contentDelta') {
+          raw += event.text;
+          const { answer } = splitChannelThinking(raw);
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 100) {
             lastFlush = now;
-            setThought(thoughtAcc);
-          }
-        } else if (event.type === 'contentDelta') {
-          streamed += event.text;
-          const now = Date.now();
-          if (mountedRef.current && now - lastFlush > 100) {
-            lastFlush = now;
-            setPrediction(streamed);
+            setPrediction(answer);
           }
         }
       }
+      const streamed = splitChannelThinking(raw).answer;
       if (mountedRef.current) setPrediction(streamed);
       const [, stats] = await Promise.all([run.final, run.stats]);
       currentRunRef.current = null;
@@ -407,15 +410,6 @@ export default function PredictorScreen() {
         }
         rightSlot={
           <>
-            <TouchableOpacity
-              onPress={() => setThinkingOn(v => !v)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={[styles.thinkBtn, { backgroundColor: thinkingOn ? accent + '28' : theme.cardAlt }]}
-            >
-              <Text style={[styles.thinkBtnText, { color: thinkingOn ? accent : theme.textSecondary }]}>
-                {thinkingOn ? 'Think ON' : 'Think'}
-              </Text>
-            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => navigation.navigate('History', { tab: 'predictor' })}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -645,10 +639,14 @@ export default function PredictorScreen() {
                         <Text style={[styles.formNotFound, { color: theme.textSecondary }]}>not found</Text>
                       )}
                     </View>
-                    {form && form.events[0] ? (
-                      <Text style={[styles.formLastResult, { color: theme.textSecondary }]} numberOfLines={1}>
-                        {form.events[0].score} vs {form.events[0].opponent}
-                      </Text>
+                    {form && form.events.length > 0 ? (
+                      <View style={styles.formResultsCol}>
+                        {form.events.slice(0, 3).map((e, i) => (
+                          <Text key={i} style={[styles.formLastResult, { color: theme.textSecondary }]} numberOfLines={1}>
+                            {e.score} vs {e.opponent}
+                          </Text>
+                        ))}
+                      </View>
                     ) : null}
                   </View>
                 ))}
@@ -710,12 +708,10 @@ export default function PredictorScreen() {
 
         {/* Immediate feedback — visible from the instant Predict is pressed
             until the first token arrives, so the wait never looks frozen */}
-        {isGenerating && thought.length === 0 && prediction.length === 0 && (
+        {isGenerating && prediction.length === 0 && (
           <Animated.View style={[styles.resultCard, { backgroundColor: theme.card, opacity: pulsAnim }]}>
             <View style={styles.resultContent}>
-              <Text style={[styles.resultLabel, { color: accent }]}>
-                {thinkingOn ? 'THINKING IT THROUGH...' : 'ANALYZING THE MATCHUP...'}
-              </Text>
+              <Text style={[styles.resultLabel, { color: accent }]}>ANALYZING THE MATCHUP...</Text>
               <Text style={[styles.resultText, { color: theme.textSecondary }]}>
                 {formA || formB
                   ? 'Weighing live form, tactical matchup, and squad quality.'
@@ -723,16 +719,6 @@ export default function PredictorScreen() {
               </Text>
             </View>
           </Animated.View>
-        )}
-
-        {/* Deep-mode thinking stream */}
-        {isGenerating && thinkingOn && thought.length > 0 && prediction.length === 0 && (
-          <View style={[styles.resultCard, { backgroundColor: '#1a1200' }]}>
-            <View style={styles.resultContent}>
-              <Text style={[styles.resultLabel, { color: '#f59e0b' }]}>READING THE GAME...</Text>
-              <Text style={styles.thoughtText} numberOfLines={8}>{thought}</Text>
-            </View>
-          </View>
         )}
 
         {/* Streaming result — parsed live so raw WINNER:/SCORE: lines never
@@ -877,8 +863,6 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   recordChip: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   recordChipText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
-  thinkBtn: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  thinkBtnText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   historyBtn: { fontSize: 12, fontWeight: '600' },
   content: { padding: 16, gap: 16 },
   loadingBar: {
@@ -962,7 +946,8 @@ const styles = StyleSheet.create({
   },
   formDotText: { fontSize: 10, fontWeight: '800', color: '#fff' },
   formNotFound: { fontSize: 11, fontStyle: 'italic' },
-  formLastResult: { flex: 1, fontSize: 11, textAlign: 'right' },
+  formResultsCol: { flex: 1, gap: 2 },
+  formLastResult: { fontSize: 11, textAlign: 'right' },
   vsBox: {
     width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
   },
@@ -978,7 +963,6 @@ const styles = StyleSheet.create({
   resultContent: { flex: 1, padding: 16, gap: 8 },
   resultLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
   resultText: { fontSize: 15, lineHeight: 24 },
-  thoughtText: { fontSize: 12, lineHeight: 18, color: '#a8a29e', fontStyle: 'italic' },
   stat: { fontSize: 10 },
   analysisHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   analysisActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },

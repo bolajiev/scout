@@ -18,6 +18,7 @@ import { syncModelsFromDisk, toPath } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage } from '../utils/historyDb';
 import { logInference } from '../utils/auditLogger';
+import { splitChannelThinking } from '../utils/thinkingSplit';
 
 const VISION_PROMPT = `You are Scout Lens — an on-device football vision AI. Identify any football-related content in the image: player jerseys and their numbers/teams, club badges/crests, stadium features, scoreboard text, player cards, trophies.
 
@@ -189,18 +190,20 @@ export default function ScoutLensScreen() {
         if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
       });
 
-      let streamed = '';
+      let raw = '';
       let lastFlush = 0;
       for await (const event of run.events) {
         if (event.type === 'contentDelta') {
-          streamed += event.text;
+          raw += event.text;
+          const { answer } = splitChannelThinking(raw);
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 100) {
             lastFlush = now;
-            setResult(streamed);
+            setResult(answer);
           }
         }
       }
+      const streamed = splitChannelThinking(raw).answer;
       const [, stats] = await Promise.all([run.final, run.stats]);
       currentRunRef.current = null;
       clearNotification();

@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView,
+  View, Text, StyleSheet, TouchableOpacity,
   Animated, StatusBar, Dimensions, Image, Alert,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -8,8 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Device from 'expo-device';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconSettings, IconModels, IconBall, IconTarget, IconCamera } from '../components/Icons';
-import { getSessions, type Session, type ScreenType } from '../utils/historyDb';
+import { IconSettings, IconModels } from '../components/Icons';
 import {
   fetchAndCacheFixtures, findClosestMatch, isLive,
   fmtMatchTime, teamAbbr, isWorldCup, badgeUrl,
@@ -196,36 +195,6 @@ export default function HomeScreen() {
     return () => { mountedRef.current = false; };
   }, [refreshFixtures]));
 
-  const [recent, setRecent] = useState<Session[]>([]);
-
-  // Recent Activity — fills the dead space below the feature cards with
-  // real, useful content instead of empty screen, and doubles as a quick
-  // way back into a session without going through Settings/History first
-  useFocusEffect(useCallback(() => {
-    try {
-      const merged = [
-        ...getSessions('matchai', 5),
-        ...getSessions('predictor', 5),
-        ...getSessions('scoutlens', 5),
-      ].sort((a, b) => b.createdAt - a.createdAt).slice(0, 3);
-      setRecent(merged);
-    } catch { setRecent([]); }
-  }, []));
-
-  const RECENT_META: Record<ScreenType, { label: string; Icon: typeof IconBall; color: string }> = {
-    matchai: { label: 'AI Coach', Icon: IconBall, color: '#22c55e' },
-    predictor: { label: 'Predictor', Icon: IconTarget, color: '#f97316' },
-    scoutlens: { label: 'Scout Lens', Icon: IconCamera, color: '#34d399' },
-  };
-
-  const relativeTime = (ts: number): string => {
-    const mins = Math.max(1, Math.round((Date.now() - ts) / 60000));
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.round(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.round(hrs / 24)}d ago`;
-  };
-
   const accent = '#22c55e';
 
   const go = (tab: string, prefill?: string) =>
@@ -280,7 +249,7 @@ export default function HomeScreen() {
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       <StatusBar barStyle={themeMode === 'dark' ? 'light-content' : 'dark-content'} />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 36 }}>
+      <View style={styles.body}>
 
         {/* ── TOP BAR ──────────────────────────────────────────────── */}
         <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
@@ -347,6 +316,10 @@ export default function HomeScreen() {
             )}
           </View>
         )}
+
+        {/* Middle content fills whatever space is left between the model
+            strip and the footer — no scrolling, cards flex to the screen */}
+        <View style={styles.middleFlex}>
 
         {/* ── AI COACH CARD ─────────────────────────────────────────── */}
         <Animated.View style={[styles.fullCardWrap, { opacity: c1.op, transform: [{ translateY: c1.ty }] }]}>
@@ -483,50 +456,22 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Recent Activity — real content instead of dead space, and a
-            shortcut straight back into a past session */}
-        {recent.length > 0 && (
-          <View style={styles.recentSection}>
-            <Text style={[styles.recentLabel, { color: theme.textSecondary }]}>RECENT ACTIVITY</Text>
-            {recent.map(session => {
-              const meta = RECENT_META[session.screen];
-              return (
-                <TouchableOpacity
-                  key={session.id}
-                  style={[styles.recentRow, { backgroundColor: theme.card }]}
-                  onPress={() => navigation.navigate('History', { tab: session.screen })}
-                  activeOpacity={0.75}
-                >
-                  <View style={[styles.recentIconWrap, { backgroundColor: meta.color + '18' }]}>
-                    <meta.Icon size={16} color={meta.color} />
-                  </View>
-                  <View style={styles.recentTextCol}>
-                    <Text style={[styles.recentTitle, { color: theme.text }]} numberOfLines={1}>
-                      {session.title}
-                    </Text>
-                    <Text style={[styles.recentMeta, { color: theme.textSecondary }]}>
-                      {meta.label} · {relativeTime(session.createdAt)}
-                    </Text>
-                  </View>
-                  <Text style={[styles.recentChevron, { color: theme.textSecondary }]}>›</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        )}
+        </View>
 
-        <TouchableOpacity onPress={() => navigation.navigate('About')} style={styles.footer}>
+        <TouchableOpacity onPress={() => navigation.navigate('About')} style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           <Text style={[styles.footerText, { color: theme.textSecondary }]}>
             Scout · 100% on-device football AI
           </Text>
         </TouchableOpacity>
-      </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  body: { flex: 1 },
+  middleFlex: { flex: 1, justifyContent: 'center', gap: 10 },
 
   // Top bar
   topBar: {
@@ -559,10 +504,11 @@ const styles = StyleSheet.create({
   modelStripBtnText: { fontSize: 12, fontWeight: '700' },
 
   // Full-width card wrapper
-  fullCardWrap: { paddingHorizontal: 14, marginTop: 12 },
+  fullCardWrap: { flex: 3, paddingHorizontal: 14, marginTop: 12 },
 
   // AI Coach card
   coachCard: {
+    flex: 1, justifyContent: 'space-between',
     backgroundColor: '#0c1f0c', borderRadius: 24, padding: 22, gap: 18, overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(34,197,94,0.22)',
   },
@@ -598,12 +544,12 @@ const styles = StyleSheet.create({
 
   // Two-column row
   twoColRow: {
-    flexDirection: 'row', paddingHorizontal: 14, marginTop: 10, gap: 10,
+    flex: 2, flexDirection: 'row', paddingHorizontal: 14, marginTop: 10, gap: 10,
   },
 
   // Predictor card
   predictCard: {
-    flex: 1, backgroundColor: '#1a0d00', borderRadius: 24, padding: 18, gap: 10, overflow: 'hidden',
+    flex: 1, justifyContent: 'space-between', backgroundColor: '#1a0d00', borderRadius: 24, padding: 18, gap: 10, overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(249,115,22,0.22)',
   },
   predictModLabel: { fontSize: 9, fontWeight: '800', color: '#f97316', letterSpacing: 1.6 },
@@ -638,7 +584,7 @@ const styles = StyleSheet.create({
 
   // Scout Lens card
   lensCard: {
-    flex: 1, backgroundColor: '#0a0e18', borderRadius: 24, padding: 18, gap: 8, overflow: 'hidden',
+    flex: 1, justifyContent: 'space-between', backgroundColor: '#0a0e18', borderRadius: 24, padding: 18, gap: 8, overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(52,211,153,0.22)',
   },
   lensModLabel: { fontSize: 9, fontWeight: '800', color: '#34d399', letterSpacing: 1.6 },
@@ -647,22 +593,6 @@ const styles = StyleSheet.create({
   lensCta: { fontSize: 13, fontWeight: '800', color: '#34d399', marginTop: 2 },
 
   // Footer
-  // Recent Activity
-  recentSection: { paddingHorizontal: 14, marginTop: 22, gap: 9 },
-  recentLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.6, paddingHorizontal: 6, marginBottom: 2 },
-  recentRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    borderRadius: 14, padding: 12,
-  },
-  recentIconWrap: {
-    width: 32, height: 32, borderRadius: 16,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  recentTextCol: { flex: 1, gap: 2 },
-  recentTitle: { fontSize: 13, fontWeight: '700' },
-  recentMeta: { fontSize: 11 },
-  recentChevron: { fontSize: 18, fontWeight: '600' },
-
-  footer: { alignItems: 'center', marginTop: 24 },
+  footer: { alignItems: 'center', marginTop: 10, paddingBottom: 10 },
   footerText: { fontSize: 11 },
 });

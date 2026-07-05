@@ -33,13 +33,17 @@ const timeToMins = (t: string): number | null => {
 };
 
 export const isLive = (f: Fixture): boolean => {
-  if (f.dateEvent && f.dateEvent !== todayISO()) return false;
+  if (!f.dateEvent) return false;
   const mins = timeToMins(f.strTime);
   if (mins === null) return false;
-  const now = new Date();
-  const nowMins = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const elapsed = nowMins - mins;
-  return elapsed >= 0 && elapsed <= 105;
+  // Compare full timestamps, not just minute-of-day — a same-day-only
+  // check broke any match still playing after midnight UTC (kickoff
+  // 23:xx, still live at 00:3x the next calendar day) by comparing
+  // against the wrong day's minute count. Also widened 90+15 -> 130 to
+  // cover real matches with heavy stoppage time before they're finished.
+  const kickoff = Date.parse(`${f.dateEvent}T00:00:00Z`) + mins * 60_000;
+  const elapsed = (Date.now() - kickoff) / 60_000;
+  return elapsed >= 0 && elapsed <= 130;
 };
 
 // Scores present and the match is no longer running → final result

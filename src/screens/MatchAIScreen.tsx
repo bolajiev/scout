@@ -21,6 +21,7 @@ import { registerInferenceCancel, showRunningNotification, clearInferenceNotific
 import { createSession, addMessage, getMessages } from '../utils/historyDb';
 import { formatFixtureContext, fetchTeamForm } from '../utils/teamStats';
 import { fetchFootballNews, formatNewsContext } from '../utils/footballNews';
+import { splitChannelThinking } from '../utils/thinkingSplit';
 import { fetchAndCacheFixtures } from '../utils/fixtures';
 import { logInference } from '../utils/auditLogger';
 
@@ -370,6 +371,7 @@ export default function MatchAIScreen() {
       showRunningNotification('AI Coach');
 
       let pass1Answer = '';
+      let pass1Raw = '';
       for await (const event of run1.events) {
         if (event.type === 'thinkingDelta') {
           if (!thinkStart) thinkStart = Date.now();
@@ -381,12 +383,22 @@ export default function MatchAIScreen() {
             throttledScroll();
           }
         } else if (event.type === 'contentDelta') {
-          if (thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
-          pass1Answer += event.text;
+          // Some models (Gemma in Think mode) don't use QVAC's thinkingDelta
+          // channel at all — they emit reasoning as literal
+          // "<|channel>thought...channel|>" text inside contentDelta itself.
+          // Split it client-side so it never renders as the visible answer.
+          pass1Raw += event.text;
+          const split = splitChannelThinking(pass1Raw);
+          if (split.thought) {
+            if (!thinkStart) thinkStart = Date.now();
+            thoughtAcc = split.thought;
+          }
+          if (split.answer && thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
+          pass1Answer = split.answer;
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 100) {
             lastFlush = now;
-            setSlot(s => s ? { ...s, answer: pass1Answer, isThinking: false } : s);
+            setSlot(s => s ? { ...s, answer: pass1Answer, thought: thoughtAcc, isThinking: !!split.thought && !split.answer } : s);
             throttledScroll();
           }
         }
@@ -456,11 +468,15 @@ export default function MatchAIScreen() {
         });
         currentRunRef.current = run2;
 
+        let pass2Raw = '';
         answerAcc = '';
         lastFlush = 0;
         for await (const event of run2.events) {
           if (event.type === 'contentDelta') {
-            answerAcc += event.text;
+            pass2Raw += event.text;
+            const split = splitChannelThinking(pass2Raw);
+            answerAcc = split.answer;
+            if (split.thought) thoughtAcc = split.thought;
             const now = Date.now();
             if (mountedRef.current && now - lastFlush > 100) {
               lastFlush = now;
