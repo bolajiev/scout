@@ -87,12 +87,100 @@ export const fetchTeamForm = async (teamName: string): Promise<TeamForm | null> 
   }
 };
 
-// Fetch form for two teams in parallel
+// football-data.org (optional user key, set in Settings) — TheSportsDB's
+// free eventslast.php hard-caps at 1 past match per team; football-data's
+// /v4/matches isn't capped that way, but it IS capped at a 10-day window
+// per call, so recent form means walking backward in 10-day windows. One
+// call covers BOTH teams at once (unlike TheSportsDB's per-team calls),
+// so this is also more rate-limit-friendly for a 2-team prediction.
+const normTeam = (s: string) => s.trim().toLowerCase();
+const teamInMatch = (home: string, away: string, target: string): 'home' | 'away' | null => {
+  const h = normTeam(home), a = normTeam(away);
+  if (h.includes(target) || target.includes(h)) return 'home';
+  if (a.includes(target) || target.includes(a)) return 'away';
+  return null;
+};
+
+const fetchFdRecentMatches = async (
+  key: string,
+  teamAName: string,
+  teamBName: string,
+): Promise<{ a: TeamEvent[]; b: TeamEvent[] }> => {
+  const a: TeamEvent[] = [];
+  const b: TeamEvent[] = [];
+  const nameA = normTeam(teamAName);
+  const nameB = normTeam(teamBName);
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  const today = new Date();
+
+  for (let w = 0; w < 5 && (a.length < 5 || b.length < 5); w++) {
+    const to = new Date(today.getTime() - w * 10 * 86_400_000);
+    const from = new Date(to.getTime() - 9 * 86_400_000);
+    try {
+      const res = await fetchWithTimeout(
+        `https://api.football-data.org/v4/matches?dateFrom=${fmt(from)}&dateTo=${fmt(to)}&status=FINISHED`,
+        8000,
+        { headers: { 'X-Auth-Token': key } },
+      );
+      if (!res.ok) break; // bad key or rate-limited — stop, fall back below
+      const data = await res.json();
+      const matches: any[] = (data.matches ?? [])
+        .sort((x: any, y: any) => Date.parse(y.utcDate) - Date.parse(x.utcDate));
+
+      for (const m of matches) {
+        const home = m.homeTeam?.name || m.homeTeam?.shortName || '';
+        const away = m.awayTeam?.name || m.awayTeam?.shortName || '';
+        const hs = m.score?.fullTime?.home;
+        const as_ = m.score?.fullTime?.away;
+        if (hs == null || as_ == null) continue;
+        const event = (isHome: boolean): TeamEvent => ({
+          opponent: isHome ? away : home,
+          result: isHome
+            ? (hs > as_ ? 'W' : hs < as_ ? 'L' : 'D')
+            : (as_ > hs ? 'W' : as_ < hs ? 'L' : 'D'),
+          score: `${hs}-${as_}`,
+          date: m.utcDate?.split('T')[0] ?? '',
+          league: m.competition?.name ?? '',
+        });
+        const sideA = teamInMatch(home, away, nameA);
+        if (sideA && a.length < 5) a.push(event(sideA === 'home'));
+        const sideB = teamInMatch(home, away, nameB);
+        if (sideB && b.length < 5) b.push(event(sideB === 'home'));
+      }
+    } catch { break; }
+  }
+  return { a, b };
+};
+
+// Fetch form for two teams in parallel. With a football-data.org key
+// configured, tries that first (richer history for teams in its ~12
+// supported competitions), falling back to TheSportsDB per team when a
+// team isn't covered (free-tier competitions only) or no key is set.
 export const fetchBothTeamForms = async (
   nameA: string,
   nameB: string,
-): Promise<[TeamForm | null, TeamForm | null]> =>
-  Promise.all([fetchTeamForm(nameA), fetchTeamForm(nameB)]);
+  fdKey?: string,
+): Promise<[TeamForm | null, TeamForm | null]> => {
+  if (fdKey) {
+    try {
+      const { a, b } = await fetchFdRecentMatches(fdKey, nameA, nameB);
+      const [fallbackA, fallbackB] = await Promise.all([
+        a.length === 0 ? fetchTeamForm(nameA) : Promise.resolve(null),
+        b.length === 0 ? fetchTeamForm(nameB) : Promise.resolve(null),
+      ]);
+      const formA: TeamForm | null = a.length > 0
+        ? { teamId: 'fd', teamName: nameA, form: a.map(e => e.result), events: a }
+        : fallbackA;
+      const formB: TeamForm | null = b.length > 0
+        ? { teamId: 'fd', teamName: nameB, form: b.map(e => e.result), events: b }
+        : fallbackB;
+      return [formA, formB];
+    } catch {
+      // fall through to TheSportsDB-only path below
+    }
+  }
+  return Promise.all([fetchTeamForm(nameA), fetchTeamForm(nameB)]);
+};
 
 // Format as a compact context block for injection into prompt
 export const formatFormContext = (
@@ -111,7 +199,7 @@ export const formatFormContext = (
     return `${name} last ${form.form.length}: ${dots} — ${detail}`;
   };
   return [
-    '[LIVE FORM DATA — TheSportsDB]',
+    '[LIVE FORM DATA]',
     fmt(teamA, formA),
     fmt(teamB, formB),
     '[END FORM DATA]\nUse this real recent form as a strong signal in your prediction.',

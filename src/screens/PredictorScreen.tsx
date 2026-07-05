@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, TextInput, Image,
-  KeyboardAvoidingView, Platform, Share,
+  KeyboardAvoidingView, Platform, Share, Linking,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,7 +14,7 @@ import { IconTarget, IconStop } from '../components/Icons';
 import ScreenHeader from '../components/ScreenHeader';
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
-import { syncModelsFromDisk, getGenParams, getDefaultModelId } from '../utils/storage';
+import { syncModelsFromDisk, getGenParams, getDefaultModelId, getActiveFdKey } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, todayISO, type Fixture } from '../utils/fixtures';
 import { splitChannelThinking } from '../utils/thinkingSplit';
@@ -25,7 +25,7 @@ import { logInference } from '../utils/auditLogger';
 
 const SYSTEM_PROMPT = `You are Scout's Predictor — a veteran football analyst who ALWAYS calls the match. You never refuse, never hedge, never say you lack information. Pundits get paid to commit — so do you.
 
-When [LIVE FORM DATA] is present, treat it as ground truth for recent form — it comes directly from TheSportsDB and overrides your training assumptions. Weight it heavily alongside tactical identity, squad quality, and head-to-head history.
+When [LIVE FORM DATA] is present, treat it as ground truth for recent form — it comes from a real-time sports data source and overrides your training assumptions. Weight it heavily alongside tactical identity, squad quality, and head-to-head history.
 
 When no live data is present, commit anyway using historical record, playing style, squad depth, and tournament pedigree. Do NOT fabricate recent results — and do NOT complain about missing data. Express uncertainty ONLY through the CONFIDENCE field, never in the analysis text.
 
@@ -158,7 +158,8 @@ export default function PredictorScreen() {
       if (!mountedRef.current) return;  // unmounted before timeout fired
       setFormLoading(true);
       try {
-        const [fa, fb] = await fetchBothTeamForms(teamA.trim(), teamB.trim());
+        const fdKey = await getActiveFdKey().catch(() => '');
+        const [fa, fb] = await fetchBothTeamForms(teamA.trim(), teamB.trim(), fdKey);
         if (!mountedRef.current) return;
         setFormA(fa);
         setFormB(fb);
@@ -617,7 +618,9 @@ export default function PredictorScreen() {
             <View style={styles.formHeader}>
               <View style={[styles.formDot, { backgroundColor: formLoading ? theme.textSecondary : '#22c55e' }]} />
               <Text style={[styles.formLabel, { color: formLoading ? theme.textSecondary : '#22c55e' }]}>
-                {formLoading ? 'Fetching live form...' : 'Live form · TheSportsDB'}
+                {formLoading
+                  ? 'Fetching live form...'
+                  : `Live form · ${formA?.teamId === 'fd' || formB?.teamId === 'fd' ? 'football-data.org' : 'TheSportsDB'}`}
               </Text>
             </View>
             {!formLoading && (
@@ -651,6 +654,20 @@ export default function PredictorScreen() {
                   </View>
                 ))}
               </View>
+            )}
+            {/* TheSportsDB's free tier caps recent-match history at 1 game —
+                only true when neither team's form came from football-data.org
+                (that source isn't limited this way, just competition-scoped) */}
+            {!formLoading && formA?.teamId !== 'fd' && formB?.teamId !== 'fd' &&
+              ((formA && formA.events.length <= 1) || (formB && formB.events.length <= 1)) && (
+              <TouchableOpacity
+                onPress={() => Linking.openURL('https://www.football-data.org/client/register')}
+                style={styles.fdUpsell}
+              >
+                <Text style={[styles.fdUpsellText, { color: theme.textSecondary }]}>
+                  Free data shows only 1 recent match. <Text style={{ color: accent, fontWeight: '700' }}>Get a free football-data.org key →</Text>
+                </Text>
+              </TouchableOpacity>
             )}
           </View>
         )}
@@ -936,6 +953,8 @@ const styles = StyleSheet.create({
   formHeader: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   formDot: { width: 6, height: 6, borderRadius: 3 },
   formLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
+  fdUpsell: { marginTop: 4 },
+  fdUpsellText: { fontSize: 11, lineHeight: 16 },
   formRows: { gap: 8 },
   formRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   formTeamName: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8, width: 78 },
