@@ -504,11 +504,10 @@ const styles = StyleSheet.create({
   modelStripBtnText: { fontSize: 12, fontWeight: '700' },
 
   // Full-width card wrapper
-  fullCardWrap: { flex: 3, paddingHorizontal: 14, marginTop: 12 },
+  fullCardWrap: { paddingHorizontal: 14, marginTop: 12 },
 
   // AI Coach card
   coachCard: {
-    flex: 1, justifyContent: 'space-between',
     backgroundColor: '#0c1f0c', borderRadius: 24, padding: 22, gap: 18, overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(34,197,94,0.22)',
   },
@@ -544,12 +543,12 @@ const styles = StyleSheet.create({
 
   // Two-column row
   twoColRow: {
-    flex: 2, flexDirection: 'row', paddingHorizontal: 14, marginTop: 10, gap: 10,
+    flexDirection: 'row', paddingHorizontal: 14, marginTop: 10, gap: 10,
   },
 
   // Predictor card
   predictCard: {
-    flex: 1, justifyContent: 'space-between', backgroundColor: '#1a0d00', borderRadius: 24, padding: 18, gap: 10, overflow: 'hidden',
+    flex: 1, backgroundColor: '#1a0d00', borderRadius: 24, padding: 18, gap: 10, overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(249,115,22,0.22)',
   },
   predictModLabel: { fontSize: 9, fontWeight: '800', color: '#f97316', letterSpacing: 1.6 },
@@ -584,7 +583,7 @@ const styles = StyleSheet.create({
 
   // Scout Lens card
   lensCard: {
-    flex: 1, justifyContent: 'space-between', backgroundColor: '#0a0e18', borderRadius: 24, padding: 18, gap: 8, overflow: 'hidden',
+    flex: 1, backgroundColor: '#0a0e18', borderRadius: 24, padding: 18, gap: 8, overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(52,211,153,0.22)',
   },
   lensModLabel: { fontSize: 9, fontWeight: '800', color: '#34d399', letterSpacing: 1.6 },

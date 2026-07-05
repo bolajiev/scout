@@ -1,5 +1,3 @@
-import { ThemeMode } from '../types';
-
 export interface Theme {
   // Surfaces
   background: string;
@@ -37,20 +35,8 @@ export const darkTheme: Theme = {
   visionChip:    '#3b82f6',
 };
 
-export const lightTheme: Theme = {
-  background:    '#f9fafb',
-  card:          '#ffffff',
-  cardAlt:       '#f3f4f6',
-  accent:        '#16a34a',
-  accentFg:      '#ffffff',
-  text:          '#0a0a0a',
-  textSecondary: '#6b7280',
-  border:        '#e5e7eb',
-  error:         '#ef4444',
-  success:       '#16a34a',
-  visionChip:    '#3b82f6',
-};
-
-export function getTheme(mode: ThemeMode): Theme {
-  return mode === 'dark' ? darkTheme : lightTheme;
+// Dark only, by design — every screen calls getTheme(useTheme()), so this
+// keeps that call shape working without a light theme to fall back to.
+export function getTheme(_mode?: 'dark'): Theme {
+  return darkTheme;
 }

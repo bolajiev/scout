@@ -10,7 +10,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { useNavigation } from '@react-navigation/native';
 import { getTheme } from '../theme';
-import { useTheme, useThemeToggle } from '../navigation/AppNavigator';
+import { useTheme } from '../navigation/AppNavigator';
 import { pickTextCapable } from '../utils/models';
 import {
   getSettings, setAccelerator, setResponseLength, clearAllData,
@@ -26,10 +26,7 @@ const appVersion = Constants.expoConfig?.version ?? '1.0';
 
 export default function SettingsScreen() {
   const navigation = useNavigation<any>();
-  const themeMode = useTheme();
-  const toggleTheme = useThemeToggle();
-  const theme = getTheme(themeMode);
-  const isDark = themeMode === 'dark';
+  const theme = getTheme(useTheme());
   const insets = useSafeAreaInsets();
 
   const [accelerator, setAccelState] = useState<Accelerator>('cpu');
@@ -148,20 +145,6 @@ export default function SettingsScreen() {
           </View>
           <Text style={[styles.chevron, { color: theme.textSecondary }]}>›</Text>
         </TouchableOpacity>
-
-        {/* ── Appearance ───────────────────────────────────────── */}
-        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Appearance</Text>
-        <View style={[styles.card, { backgroundColor: theme.card }]}>
-          <View style={styles.cardRow}>
-            <Text style={[styles.rowLabel, { color: theme.text }]}>Dark Mode</Text>
-            <Switch
-              value={isDark}
-              onValueChange={() => toggleTheme()}
-              trackColor={{ false: theme.border, true: accent + '80' }}
-              thumbColor={isDark ? accent : theme.textSecondary}
-            />
-          </View>
-        </View>
 
         {/* ── AI Behavior ──────────────────────────────────────── */}
         <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>AI Behavior</Text>

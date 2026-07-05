@@ -281,16 +281,6 @@ export async function setDefaultModelId(modelId: string): Promise<void> {
   await AsyncStorage.setItem('@scout_default_model', modelId);
 }
 
-export async function getThemeOverride(): Promise<'dark' | 'light' | null> {
-  const val = await AsyncStorage.getItem('@scout_theme_override');
-  if (val === 'dark' || val === 'light') return val;
-  return null;
-}
-
-export async function setThemeOverride(mode: 'dark' | 'light'): Promise<void> {
-  await AsyncStorage.setItem('@scout_theme_override', mode);
-}
-
 export async function clearAllData(): Promise<void> {
   const keys = [
     ...Object.values(KEYS),
