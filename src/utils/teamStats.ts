@@ -56,10 +56,9 @@ export const fetchTeamForm = async (teamName: string): Promise<TeamForm | null> 
       const away = ev.strAwayTeam ?? '';
       const hs = parseInt(ev.intHomeScore ?? '-1', 10);
       const as_ = parseInt(ev.intAwayScore ?? '-1', 10);
-      // Use exact substring match only — the slice(0,5) heuristic caused false positives
       const homeLower = home.toLowerCase();
       const nameLower = teamName.toLowerCase();
-      const isHome = homeLower.includes(nameLower) || nameLower.includes(homeLower);
+      const isHome = matchesTeamName(homeLower, nameLower);
 
       let result: FormResult = 'D';
       if (hs >= 0 && as_ >= 0) {
@@ -94,10 +93,18 @@ export const fetchTeamForm = async (teamName: string): Promise<TeamForm | null> 
 // call covers BOTH teams at once (unlike TheSportsDB's per-team calls),
 // so this is also more rate-limit-friendly for a 2-team prediction.
 const normTeam = (s: string) => s.trim().toLowerCase();
+// `target.includes(name)` is the dangerous direction: a short API team
+// name/code (e.g. "AZ", from Dutch club AZ Alkmaar) can be an accidental
+// substring of a longer search name — "brazil" contains "az". Verified
+// live: this pulled an unrelated Eredivisie match into Brazil's form.
+// Only trust that direction when the API name is long enough not to be
+// noise; the other direction (target inside a full team name) is safe
+// since the user-typed search name is always a real team name, not a code.
+const matchesTeamName = (name: string, target: string): boolean =>
+  name === target || name.includes(target) || (name.length >= 4 && target.includes(name));
 const teamInMatch = (home: string, away: string, target: string): 'home' | 'away' | null => {
-  const h = normTeam(home), a = normTeam(away);
-  if (h.includes(target) || target.includes(h)) return 'home';
-  if (a.includes(target) || target.includes(a)) return 'away';
+  if (matchesTeamName(normTeam(home), target)) return 'home';
+  if (matchesTeamName(normTeam(away), target)) return 'away';
   return null;
 };
 
