@@ -228,7 +228,7 @@ export default function HistoryScreen() {
       <View key={session.id} style={[styles.sessionCard, { backgroundColor: theme.card }, isOpen ? { borderWidth: 1, borderColor: accent + '50' } : null]}>
         <TouchableOpacity style={styles.sessionRow} onPress={() => expand(session.id)} activeOpacity={0.75}>
           <View style={styles.sessionLeft}>
-            <Text style={[styles.sessionTitle, { color: theme.text }]} numberOfLines={1}>{session.title}</Text>
+            <Text style={[styles.sessionTitle, { color: theme.text }]} numberOfLines={1}>{session.title.trim() || 'Untitled session'}</Text>
             <Text style={[styles.sessionDate, { color: theme.textSecondary }]}>{fmtDate(session.createdAt)}</Text>
           </View>
           <View style={styles.sessionRight}>

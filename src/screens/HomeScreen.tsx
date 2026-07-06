@@ -336,10 +336,14 @@ export default function HomeScreen() {
               <Waveform color="#22c55e" count={10} />
             </View>
             <View style={styles.coachPills}>
-              {['High press tactics?', 'Best striker ever?', 'Explain offside'].map((s) => (
-                <View key={s} style={styles.coachPill}>
-                  <Text style={styles.coachPillText}>{s}</Text>
-                </View>
+              {[
+                { label: 'High press tactics?', q: 'How does a high press work in modern football?' },
+                { label: 'Best striker ever?', q: 'Best striker in football history and why?' },
+                { label: 'Explain offside', q: 'Explain the offside rule with a simple example.' },
+              ].map(({ label, q }) => (
+                <TouchableOpacity key={label} style={styles.coachPill} onPress={() => go('MatchAI', q)} activeOpacity={0.7}>
+                  <Text style={styles.coachPillText}>{label}</Text>
+                </TouchableOpacity>
               ))}
             </View>
             <View style={styles.coachFooter}>
@@ -471,7 +475,12 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   body: { flex: 1 },
-  middleFlex: { flex: 1, justifyContent: 'center', gap: 10 },
+  // flex-start, not center: centering left equal dead gaps above AND below
+  // the cards (looked broken, like content hadn't loaded). Top-anchoring
+  // means any leftover space collects in one place, below the cards and
+  // above the footer — the normal, unsurprising "breathing room" pattern
+  // most screens have, instead of a void before the first thing on screen.
+  middleFlex: { flex: 1, justifyContent: 'flex-start', gap: 10 },
 
   // Top bar
   topBar: {

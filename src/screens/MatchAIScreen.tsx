@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { completion, cancel, InferenceCancelledError, type Tool } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
@@ -234,10 +234,33 @@ export default function MatchAIScreen() {
   useEffect(() => {
     mountedRef.current = true;
     loadModel();
-    // Resume a past conversation from History: restore its messages as
-    // finished entries and keep writing into the same session
-    const resumeId: string | undefined = route.params?.resumeSessionId;
-    if (resumeId) {
+    // Sync Think mode default from global settings
+    getSettings().then(s => {
+      if (mountedRef.current) setThinkingOn(s.deepReasoning ?? false);
+    }).catch(() => {});
+    return () => {
+      mountedRef.current = false;
+      clearNotification();
+      loadLoopRef.current?.stop();
+      if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
+    };
+  }, []);
+
+  // BUG FIX: this used to be a mount-once effect, but React Navigation
+  // reuses an already-mounted 'MatchAI' screen instance instead of always
+  // remounting it (same issue found in History) — resuming a conversation,
+  // leaving without fully unmounting the screen, then resuming again (or
+  // any re-focus that doesn't recreate the component) meant this restore
+  // logic never ran a second time, so the chat looked wiped even though
+  // the messages were safely saved in SQLite the whole time. Re-sync on
+  // every focus instead, guarded so it only reloads when the target
+  // session actually changes (never clobbers an active conversation).
+  const lastResumedIdRef = useRef<string | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      const resumeId: string | undefined = route.params?.resumeSessionId;
+      if (!resumeId || resumeId === lastResumedIdRef.current) return;
+      lastResumedIdRef.current = resumeId;
       try {
         const msgs = getMessages(resumeId);
         const restored: Entry[] = [];
@@ -261,18 +284,8 @@ export default function MatchAIScreen() {
           setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 120);
         }
       } catch {}
-    }
-    // Sync Think mode default from global settings
-    getSettings().then(s => {
-      if (mountedRef.current) setThinkingOn(s.deepReasoning ?? false);
-    }).catch(() => {});
-    return () => {
-      mountedRef.current = false;
-      clearNotification();
-      loadLoopRef.current?.stop();
-      if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
-    };
-  }, []);
+    }, [route.params?.resumeSessionId])
+  );
 
   useEffect(() => {
     if (modelLoading && !noModel) {

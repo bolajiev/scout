@@ -5,6 +5,7 @@ import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { initModelsDirectory, syncModelsFromDisk, shouldShowWelcome } from '../utils/storage';
 import { requestNotificationPermission } from '../utils/bgNotification';
+import { cleanupOrphanedSessions } from '../utils/historyDb';
 
 const ICON = require('../../assets/icon.png');
 
@@ -19,6 +20,7 @@ export default function SplashScreen() {
     try {
       await initModelsDirectory();
       await syncModelsFromDisk();
+      try { cleanupOrphanedSessions(); } catch {}
       requestNotificationPermission().catch(() => {});
       const showWelcome = await shouldShowWelcome();
       navigation.replace(showWelcome ? 'Onboarding' : 'Main');

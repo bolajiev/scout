@@ -122,6 +122,24 @@ export const deleteSession = (sessionId: string): void => {
   });
 };
 
+// One-time cleanup for sessions with no title and/or no messages — these
+// render as blank rows in History with nothing to expand. Never observed
+// a code path that creates one going forward (every createSession() call
+// is guarded by a non-empty question/title before it runs), so this is
+// almost certainly leftover from an earlier build's bug, still sitting in
+// SQLite since app data survives an APK update. Safe to run on every
+// startup: a no-op once the backlog is gone.
+export const cleanupOrphanedSessions = (): void => {
+  const db = getDb();
+  db.withTransactionSync(() => {
+    db.runSync(`
+      DELETE FROM sessions
+      WHERE TRIM(COALESCE(title, '')) = ''
+         OR id NOT IN (SELECT DISTINCT session_id FROM messages)
+    `);
+  });
+};
+
 // ── Messages ──────────────────────────────────────────────────────────────────
 
 export const addMessage = (
