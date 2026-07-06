@@ -22,17 +22,21 @@ export interface TeamForm {
 
 const BASE = 'https://www.thesportsdb.com/api/v1/json/3';
 
-// Search for a team by name → return first matching team ID
+// Search for a team by name → return the matching FOOTBALL team's ID.
+// BUG FIX: this used to fall back to teams[0] (the first result of ANY
+// sport) when nothing matched the soccer/football check. Verified live:
+// searching "Jordan" (a real 2026 World Cup debutant) returns exactly one
+// TheSportsDB result — a defunct 1991-2005 Formula One team also named
+// "Jordan" — and the old fallback would silently hand that team's ID back,
+// pulling Formula One data into a football prediction. Returning null
+// (honest "not found," model falls back to its own knowledge) is a far
+// better failure mode than confidently wrong-sport data.
 export const searchTeamId = async (name: string): Promise<string | null> => {
   try {
     const res = await fetchWithTimeout(`${BASE}/searchteams.php?t=${encodeURIComponent(name)}`, 6000);
     const data = await res.json();
     const teams: any[] = data.teams ?? [];
-    // Prefer soccer/football teams
-    const soccer = teams.find(t =>
-      /soccer|football/i.test(t.strSport ?? '') ||
-      /national|international/i.test(t.strTeamShort ?? '')
-    ) ?? teams[0];
+    const soccer = teams.find(t => /soccer|football/i.test(t.strSport ?? ''));
     return soccer?.idTeam ?? null;
   } catch {
     return null;
