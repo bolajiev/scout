@@ -49,7 +49,6 @@ export default function HistoryScreen() {
   const [tab, setTab] = useState<ScreenType>(route.params?.tab ?? 'matchai');
   const [refreshTick, setRefreshTick] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [thoughtsOpen, setThoughtsOpen] = useState<Record<string, boolean>>({});
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
 
   // BUG FIX: sessions/counts used to be separate state, synced by a
@@ -116,47 +115,10 @@ export default function HistoryScreen() {
   };
 
   // ── Per-type expanded content ─────────────────────────────────────────────
-
-  const renderChatMessages = (msgs: Message[]) => (
-    <View style={[styles.msgList, { borderTopColor: theme.border }]}>
-      {msgs.map(msg => (
-        <View key={msg.id} style={msg.role === 'user' ? styles.chatUserRow : styles.chatAiRow}>
-          {msg.role === 'assistant' && msg.meta?.thinking && (
-            <TouchableOpacity
-              style={[styles.thoughtToggle, { backgroundColor: theme.cardAlt }]}
-              onPress={() => setThoughtsOpen(p => ({ ...p, [msg.id]: !p[msg.id] }))}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.thoughtToggleText, { color: theme.textSecondary }]}>
-                {msg.meta.thinkingMs ? `Thought for ${(msg.meta.thinkingMs / 1000).toFixed(1)}s` : 'Thought process'}
-                {thoughtsOpen[msg.id] ? ' ‹' : ' ›'}
-              </Text>
-              {thoughtsOpen[msg.id] && (
-                <Text selectable style={[styles.thoughtToggleBody, { color: theme.textSecondary }]}>
-                  {msg.meta.thinking}
-                </Text>
-              )}
-            </TouchableOpacity>
-          )}
-          <View style={[
-            styles.chatBubble,
-            msg.role === 'user'
-              ? { backgroundColor: accent, borderBottomRightRadius: 5 }
-              : { backgroundColor: theme.cardAlt, borderBottomLeftRadius: 5 },
-          ]}>
-            <Text selectable style={[styles.chatText, { color: msg.role === 'user' ? '#fff' : theme.text }]}>
-              {msg.content}
-            </Text>
-            {msg.role === 'assistant' && msg.meta?.elapsed != null && (
-              <Text style={[styles.chatStat, { color: theme.textSecondary }]}>
-                {msg.meta.elapsed}s{msg.meta.toks ? ` · ${Math.round(msg.meta.toks / (msg.meta.elapsed || 1))} tok/s` : ''} · on-device
-              </Text>
-            )}
-          </View>
-        </View>
-      ))}
-    </View>
-  );
+  // Chat sessions no longer expand in place at all — tapping one jumps
+  // straight into live AI Coach (see renderSession), so there's no
+  // preview renderer needed here anymore. Predictor/Lens still preview
+  // in place since there's no "continue" flow for a one-shot result.
 
   const renderPrediction = (session: Session, msgs: Message[]) => {
     const answer = msgs.find(m => m.role === 'assistant')?.content ?? '';
@@ -222,11 +184,20 @@ export default function HistoryScreen() {
   // ── Session card ──────────────────────────────────────────────────────────
 
   const renderSession = (session: Session) => {
-    const isOpen = expanded === session.id;
+    // Chat sessions skip the preview entirely — tap goes straight into
+    // live AI Coach with the conversation restored, no expand-then-tap-
+    // continue step. Predictor/Lens still preview in place since a
+    // one-shot result has no "continue" flow to jump into.
+    const isChat = session.screen === 'matchai';
+    const isOpen = !isChat && expanded === session.id;
     const msgs = messages[session.id] ?? [];
     return (
       <View key={session.id} style={[styles.sessionCard, { backgroundColor: theme.card }, isOpen ? { borderWidth: 1, borderColor: accent + '50' } : null]}>
-        <TouchableOpacity style={styles.sessionRow} onPress={() => expand(session.id)} activeOpacity={0.75}>
+        <TouchableOpacity
+          style={styles.sessionRow}
+          onPress={() => isChat ? navigation.navigate('MatchAI', { resumeSessionId: session.id }) : expand(session.id)}
+          activeOpacity={0.75}
+        >
           <View style={styles.sessionLeft}>
             <Text style={[styles.sessionTitle, { color: theme.text }]} numberOfLines={1}>{session.title.trim() || 'Untitled session'}</Text>
             <Text style={[styles.sessionDate, { color: theme.textSecondary }]}>{fmtDate(session.createdAt)}</Text>
@@ -238,30 +209,15 @@ export default function HistoryScreen() {
             >
               <Text style={[styles.deleteBtn, { color: theme.error }]}>Delete</Text>
             </TouchableOpacity>
-            <Text style={[styles.chevron, { color: theme.textSecondary }]}>{isOpen ? '‹' : '›'}</Text>
+            <Text style={[styles.chevron, { color: theme.textSecondary }]}>{isChat ? '›' : isOpen ? '‹' : '›'}</Text>
           </View>
         </TouchableOpacity>
-
-        {/* Continue button lives here, not after the message list — for a
-            long chat, scrolling through the whole thing just to find it
-            was the exact complaint. Visible the instant you expand. */}
-        {isOpen && session.screen === 'matchai' && (
-          <TouchableOpacity
-            style={[styles.continueBtn, { backgroundColor: accent + '14', borderColor: accent + '45' }]}
-            onPress={() => navigation.navigate('MatchAI', { resumeSessionId: session.id })}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.continueBtnText, { color: accent }]}>Continue this conversation</Text>
-          </TouchableOpacity>
-        )}
 
         {isOpen && (
           // session.screen (the row's own stored type), never the ambient
           // `tab` — ties the renderer choice to the data itself so a wrong
           // card can't render even if tab/sessions were ever out of sync
-          session.screen === 'predictor' ? renderPrediction(session, msgs)
-          : session.screen === 'scoutlens' ? renderScan(msgs)
-          : renderChatMessages(msgs)
+          session.screen === 'predictor' ? renderPrediction(session, msgs) : renderScan(msgs)
         )}
       </View>
     );
@@ -346,21 +302,6 @@ const styles = StyleSheet.create({
   deleteBtn: { fontSize: 11, fontWeight: '600' },
 
   msgList: { borderTopWidth: StyleSheet.hairlineWidth, padding: 12, gap: 8 },
-
-  // Chat replay — mirrors the live chat bubbles
-  chatUserRow: { alignItems: 'flex-end' },
-  chatAiRow: { alignItems: 'flex-start' },
-  chatBubble: { maxWidth: '85%', borderRadius: 16, paddingHorizontal: 13, paddingVertical: 9 },
-  chatText: { fontSize: 14, lineHeight: 20 },
-  chatStat: { fontSize: 9, marginTop: 5 },
-  thoughtToggle: { borderRadius: 10, padding: 9, marginBottom: 6, alignSelf: 'flex-start', maxWidth: '85%' },
-  thoughtToggleText: { fontSize: 10, fontWeight: '700' },
-  thoughtToggleBody: { fontSize: 11, lineHeight: 16, marginTop: 6, fontStyle: 'italic' },
-  continueBtn: {
-    borderRadius: 12, borderWidth: 1, paddingVertical: 11,
-    alignItems: 'center', marginHorizontal: 12, marginBottom: 10,
-  },
-  continueBtnText: { fontSize: 13, fontWeight: '700' },
 
   // Prediction replay — mini scoreboard
   predBoard: { borderRadius: 12, padding: 14, gap: 10 },
