@@ -72,7 +72,7 @@ export default function AboutScreen() {
         <View style={[styles.card, { backgroundColor: theme.card }]}>
           <Text style={[styles.cardTitle, { color: theme.text }]}>What is Scout?</Text>
           <Text style={[styles.cardBody, { color: theme.textSecondary }]}>
-            A complete football companion where every AI feature — chat, match prediction, image recognition — runs 100% on your phone through the QVAC SDK. No cloud AI, no accounts, works offline. Built for the FIFA World Cup 2026 moment: live fixtures, form-grounded predictions with a real track record, and a vision scanner for match-day moments.
+            A complete football companion where every AI feature — chat, match prediction, image recognition — runs 100% on your phone through the QVAC SDK. No cloud AI, no accounts; the model never leaves your device. Live fixtures, team form, and news still need a connection to fetch. Built for the FIFA World Cup 2026 moment: live fixtures, form-grounded predictions with a real track record, and a vision scanner for match-day moments.
           </Text>
         </View>
 

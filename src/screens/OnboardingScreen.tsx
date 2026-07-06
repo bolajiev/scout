@@ -141,7 +141,7 @@ export default function OnboardingScreen() {
               <View style={styles.infoCardContent}>
                 <Text style={[styles.infoCardTitle, { color: theme.text }]}>On-device inference</Text>
                 <Text style={[styles.infoCardBody, { color: theme.textSecondary }]}>
-                  Scout uses the QVAC SDK. AI runs entirely on your device — download a model once and it works fully offline. No API keys, no subscriptions.
+                  Scout uses the QVAC SDK. Download a model once — every answer it generates runs entirely on your device, no API keys, no subscriptions. (Live match data below still needs a connection to fetch.)
                 </Text>
               </View>
             </View>
