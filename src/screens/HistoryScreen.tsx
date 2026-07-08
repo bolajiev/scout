@@ -10,10 +10,12 @@ import { useTheme } from '../navigation/AppNavigator';
 import { getSessions, getMessages, deleteSession, type Session, type Message, type ScreenType } from '../utils/historyDb';
 import ScreenHeader from '../components/ScreenHeader';
 
+// Scout Lens was removed as a feature entirely — any old scan sessions
+// from before that removal stay in the database (never destructively
+// deleted), but there's no reason to keep giving them their own tab.
 const TABS: { key: ScreenType; label: string }[] = [
   { key: 'matchai', label: 'Coach' },
   { key: 'predictor', label: 'Predict' },
-  { key: 'scoutlens', label: 'Lens' },
 ];
 
 const fmtDate = (ts: number) => {
@@ -46,7 +48,19 @@ export default function HistoryScreen() {
   const insets = useSafeAreaInsets();
   const accent = theme.accent;
 
-  const [tab, setTab] = useState<ScreenType>(route.params?.tab ?? 'matchai');
+  // BUG FIX: this used to be a single `tab` state seeded once from
+  // route.params?.tab and re-synced via a useFocusEffect keyed on that
+  // param — but React Navigation reuses an already-mounted 'History'
+  // instance (pushed from Coach, then later from Predictor) and the
+  // reported symptom (Predictor's history showing while the header still
+  // said Coach, or vice versa) points at that re-sync not reliably firing
+  // in every navigation path. Reading route.params?.tab directly on every
+  // render removes the possibility of the two disagreeing — a local
+  // override exists only for the in-screen tab buttons, and gets cleared
+  // whenever we're freshly navigated to (with a real tab param).
+  const routeTab: ScreenType = route.params?.tab ?? 'matchai';
+  const [tabOverride, setTabOverride] = useState<ScreenType | null>(null);
+  const tab = tabOverride ?? routeTab;
   const [refreshTick, setRefreshTick] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
@@ -73,19 +87,19 @@ export default function HistoryScreen() {
     } catch { return { matchai: 0, predictor: 0, scoutlens: 0 }; }
   }, [refreshTick]);
 
-  // React Navigation reuses an already-mounted 'History' screen instance
-  // instead of remounting it, so a useState(route.params?.tab) initializer
-  // only ever runs once — re-sync from route.params on every focus instead.
+  // Every fresh navigation into History (a real tab param arriving) drops
+  // any leftover in-screen tab-button override, so the tab always starts
+  // matching whichever screen's "History" link was actually tapped.
   useFocusEffect(
     useCallback(() => {
-      setTab(route.params?.tab ?? 'matchai');
+      setTabOverride(null);
       setExpanded(null);
       setRefreshTick(t => t + 1);
     }, [route.params?.tab])
   );
 
   const switchTab = (t: ScreenType) => {
-    setTab(t);
+    setTabOverride(t);
     setExpanded(null);
   };
 
@@ -195,7 +209,7 @@ export default function HistoryScreen() {
       <View key={session.id} style={[styles.sessionCard, { backgroundColor: theme.card }, isOpen ? { borderWidth: 1, borderColor: accent + '50' } : null]}>
         <TouchableOpacity
           style={styles.sessionRow}
-          onPress={() => isChat ? navigation.navigate('MatchAI', { resumeSessionId: session.id }) : expand(session.id)}
+          onPress={() => isChat ? navigation.navigate('MainTabs', { screen: 'MatchAI', params: { resumeSessionId: session.id } }) : expand(session.id)}
           activeOpacity={0.75}
         >
           <View style={styles.sessionLeft}>

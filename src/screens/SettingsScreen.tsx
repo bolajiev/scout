@@ -15,7 +15,8 @@ import { pickTextCapable } from '../utils/models';
 import {
   getSettings, setAccelerator, setResponseLength, clearAllData,
   saveSettings, syncModelsFromDisk, getFdApiKey, setFdApiKey,
-  getFdKeyEnabled, setFdKeyEnabled,
+  getFdKeyEnabled, setFdKeyEnabled, getBzApiKey, setBzApiKey,
+  getBzKeyEnabled, setBzKeyEnabled,
 } from '../utils/storage';
 import { Accelerator, ResponseLength } from '../types';
 import ConfigSlider from '../components/ConfigSlider';
@@ -39,6 +40,8 @@ export default function SettingsScreen() {
   const [maxTokens, setMaxTokensState] = useState(1024);
   const [fdKey, setFdKeyState] = useState('');
   const [fdEnabled, setFdEnabledState] = useState(true);
+  const [bzKey, setBzKeyState] = useState('');
+  const [bzEnabled, setBzEnabledState] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [textModelName, setTextModelName] = useState<string | null>(null);
   const [deviceModel, setDeviceModel] = useState('');
@@ -49,6 +52,8 @@ export default function SettingsScreen() {
     loadAll();
     getFdApiKey().then(setFdKeyState).catch(() => {});
     getFdKeyEnabled().then(setFdEnabledState).catch(() => {});
+    getBzApiKey().then(setBzKeyState).catch(() => {});
+    getBzKeyEnabled().then(setBzEnabledState).catch(() => {});
   }, []);
 
   const loadAll = async () => {
@@ -218,16 +223,16 @@ export default function SettingsScreen() {
         </View>
 
         {/* ── Live Data ────────────────────────────────────────── */}
-        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Live Data</Text>
+        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Match Data</Text>
         <View style={[styles.card, { backgroundColor: theme.card }]}>
           <View style={styles.cardRow}>
             <View style={styles.behaviorLeft}>
-              <Text style={[styles.rowLabel, { color: theme.text }]}>Premium live data</Text>
+              <Text style={[styles.rowLabel, { color: theme.text }]}>Premium match data</Text>
               <Text style={[styles.rowHint, { color: fdKey && fdEnabled ? accent : theme.textSecondary }]}>
                 {!fdKey.trim()
                   ? 'Using free data. Paste a free football-data.org key below to unlock 12 leagues.'
                   : fdEnabled
-                    ? 'ON — football-data.org: WC, PL, UCL + 9 leagues, live scores'
+                    ? 'ON — football-data.org: WC, PL, UCL + 9 leagues'
                     : 'OFF — key saved, using the free source (TheSportsDB)'}
               </Text>
             </View>
@@ -245,6 +250,39 @@ export default function SettingsScreen() {
             placeholderTextColor={theme.textSecondary}
             value={fdKey}
             onChangeText={t => { setFdKeyState(t); setFdApiKey(t).catch(() => {}); }}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+
+        {/* ── Bzzoiro ML predictions ───────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Match Predictions</Text>
+        <View style={[styles.card, { backgroundColor: theme.card }]}>
+          <View style={styles.cardRow}>
+            <View style={styles.behaviorLeft}>
+              <Text style={[styles.rowLabel, { color: theme.text }]}>Real prediction odds</Text>
+              <Text style={[styles.rowHint, { color: bzKey && bzEnabled ? accent : theme.textSecondary }]}>
+                {!bzKey.trim()
+                  ? 'ON by default — real 1X2 probabilities from Bzzoiro Sports when a match is found. Paste your own key below to use your own quota instead of the shared one.'
+                  : bzEnabled
+                    ? 'ON — using your own Bzzoiro Sports key'
+                    : 'Using the shared default key instead of yours'}
+              </Text>
+            </View>
+            <Switch
+              value={bzKey.trim().length === 0 ? true : bzEnabled}
+              disabled={bzKey.trim().length === 0}
+              onValueChange={v => { setBzEnabledState(v); setBzKeyEnabled(v).catch(() => {}); }}
+              trackColor={{ true: accent + '80', false: theme.border }}
+              thumbColor={(bzKey.trim().length === 0 || bzEnabled) ? accent : theme.textSecondary}
+            />
+          </View>
+          <TextInput
+            style={[styles.keyInput, { backgroundColor: theme.cardAlt, color: theme.text }, bzKey && bzEnabled ? { borderWidth: 1, borderColor: accent + '50' } : null]}
+            placeholder="Paste Bzzoiro Sports key (register free at sports.bzzoiro.com)"
+            placeholderTextColor={theme.textSecondary}
+            value={bzKey}
+            onChangeText={t => { setBzKeyState(t); setBzApiKey(t).catch(() => {}); }}
             autoCapitalize="none"
             autoCorrect={false}
           />

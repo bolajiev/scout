@@ -23,7 +23,7 @@ export default function SplashScreen() {
       try { cleanupOrphanedSessions(); } catch {}
       requestNotificationPermission().catch(() => {});
       const showWelcome = await shouldShowWelcome();
-      navigation.replace(showWelcome ? 'Onboarding' : 'Main');
+      navigation.replace(showWelcome ? 'Onboarding' : 'MainTabs');
     } catch (e: any) {
       setBootError(e?.message || 'Startup error. Tap Retry to try again.');
     }
@@ -55,11 +55,11 @@ export default function SplashScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: '#0A0A0A' }]}>
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
       <Animated.View style={[styles.logoWrap, { opacity: fadeAnim, transform: [{ scale: scaleAnim }] }]}>
         <Image source={ICON} style={styles.icon} resizeMode="contain" />
-        <Text style={[styles.wordmark, { color: '#fff' }]}>SCOUT</Text>
-        <Text style={[styles.tagline, { color: 'rgba(255,255,255,0.45)' }]}>On-Device Football AI</Text>
+        <Text style={[styles.wordmark, { color: theme.text }]}>SCOUT</Text>
+        <Text style={[styles.tagline, { color: theme.textSecondary }]}>On-Device Football AI</Text>
       </Animated.View>
     </View>
   );

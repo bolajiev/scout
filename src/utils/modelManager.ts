@@ -75,6 +75,11 @@ class LLMManager {
   }
 
   getLoadedModelId(): string | null { return this.storageId; }
+  // The ID actually used for completion() calls (QVAC SDK's own model ID,
+  // NOT storageId — a different ID space entirely). Screens hold this
+  // value in their own `modelId` state, so anything checking "is the model
+  // I loaded still resident" must compare against this, not getLoadedModelId().
+  getLoadedQvacId(): string | null { return this.qvacId; }
 
   async release(): Promise<void> {
     if (this.qvacId) {

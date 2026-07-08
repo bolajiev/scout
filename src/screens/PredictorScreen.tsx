@@ -1,26 +1,34 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, TextInput, Image,
-  KeyboardAvoidingView, Platform, Share, Linking,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, TextInput,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { fonts } from '../theme/fonts';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconTarget, IconStop } from '../components/Icons';
 import ScreenHeader from '../components/ScreenHeader';
+import ModelStatusPill from '../components/ModelStatusPill';
+import ReportBugLink from '../components/ReportBugLink';
+import Glow from '../components/Glow';
+import { TAB_BAR_HEIGHT } from '../components/TabBar';
+import TeamBadge from '../components/TeamBadge';
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
-import { syncModelsFromDisk, getGenParams, getDefaultModelId, getActiveFdKey } from '../utils/storage';
+import { syncModelsFromDisk, getGenParams, getDefaultModelId, getActiveFdKey, getActiveBzKey } from '../utils/storage';
+import { findBzPrediction } from '../utils/bzzoiro';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
-import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, todayISO, type Fixture } from '../utils/fixtures';
+import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, teamAbbr, todayISO, type Fixture } from '../utils/fixtures';
 import { splitChannelThinking } from '../utils/thinkingSplit';
 import { createSession, addMessage, addPrediction } from '../utils/historyDb';
 import { settlePendingPredictions, getPredictionRecord } from '../utils/predictionTracker';
 import { fetchBothTeamForms, fetchBothSquads, formatFormContext, type TeamForm } from '../utils/teamStats';
+import { matchClubs } from '../utils/topClubs';
 import { logInference } from '../utils/auditLogger';
 
 const SYSTEM_PROMPT = `You are Scout's Predictor — a veteran football analyst who ALWAYS calls the match. You never refuse, never hedge, never say you lack information. Pundits get paid to commit — so do you.
@@ -35,7 +43,7 @@ Always respond in EXACTLY this format, no deviation:
 
 WINNER: [team name or Draw]
 SCORE: [e.g. 2-1]
-CONFIDENCE: [Low/Medium/High]
+CONFIDENCE: [a number 40-90, the percent chance your call is right — e.g. 72]
 KEY HOME: [home team's most dangerous player — why he decides this match, one short clause]
 KEY AWAY: [away team's most dangerous player — why he decides this match, one short clause]
 ---
@@ -65,6 +73,39 @@ interface ParsedPrediction {
   keyHome: string; keyAway: string; analysis: string;
 }
 
+// Confidence renders as three outcome chips. The prompt asks for a number,
+// but small models drift back to words — map either form, never render raw.
+function confidenceParts(raw: string): { pct: number | null; word: string } {
+  const m = raw.match(/(\d{1,3})/);
+  let pct = m ? Math.min(95, Math.max(5, parseInt(m[1], 10))) : null;
+  if (pct == null) {
+    const w = raw.toLowerCase();
+    pct = w.includes('high') ? 80 : w.includes('med') ? 62 : w.includes('low') ? 45 : null;
+  }
+  const word = pct == null ? raw : pct >= 72 ? 'High' : pct >= 55 ? 'Medium' : 'Low';
+  return { pct, word };
+}
+
+// Three-way outcome split for the verdict chips, derived deterministically
+// from the model's single confidence number — the winner gets the model's
+// own certainty, the remainder splits draw-light. Not real probabilities
+// (the model doesn't produce a 3-way distribution) but anchored to what it
+// actually said rather than invented from nothing.
+function outcomeSplit(confRaw: string, winnerIsDraw: boolean): { home: number; draw: number; away: number; } {
+  const pct = confidenceParts(confRaw).pct ?? 55;
+  const rem = 100 - pct;
+  if (winnerIsDraw) {
+    const side = Math.round(rem / 2);
+    return { home: side, draw: pct, away: rem - side };
+  }
+  const draw = Math.round(rem * 0.45);
+  return { home: pct, draw, away: rem - draw };
+}
+
+// "Mbappé — pace in behind" → "Mbappé". Splits on the first spaced dash or
+// comma so hyphenated surnames (Oxlade-Chamberlain) survive intact.
+const playerName = (s: string) => s.split(/\s[—–-]\s|,\s|\s\(/)[0].trim();
+
 function parsePrediction(text: string): ParsedPrediction {
   const clean = (s: string) => s.replace(STARS_RE, '').trim();
   const field = (name: keyof typeof FIELD_PATTERNS) => {
@@ -91,8 +132,20 @@ export default function PredictorScreen() {
 
   const [teamA, setTeamA] = useState('');
   const [teamB, setTeamB] = useState('');
+  // Quick-pick suggestions while typing a manual team name — hidden once
+  // the field already exactly matches one of the picks (nothing left to
+  // shortcut) or once the field is empty.
+  const aSuggest = useMemo(() => {
+    const m = matchClubs(teamA);
+    return m.some(c => c.toLowerCase() === teamA.trim().toLowerCase()) ? [] : m;
+  }, [teamA]);
+  const bSuggest = useMemo(() => {
+    const m = matchClubs(teamB);
+    return m.some(c => c.toLowerCase() === teamB.trim().toLowerCase()) ? [] : m;
+  }, [teamB]);
   const [context, setContext] = useState('');
   const [prediction, setPrediction] = useState('');
+  const [predictError, setPredictError] = useState<string | null>(null);
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [fixturesLoading, setFixturesLoading] = useState(true);
   const [noInternet, setNoInternet] = useState(false);
@@ -101,6 +154,8 @@ export default function PredictorScreen() {
   const [modelId, setModelId] = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadPct, setLoadPct] = useState(0);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [formA, setFormA] = useState<TeamForm | null>(null);
   const [formB, setFormB] = useState<TeamForm | null>(null);
@@ -109,12 +164,79 @@ export default function PredictorScreen() {
   const [formLoading, setFormLoading] = useState(false);
   const [record, setRecord] = useState<{ hits: number; misses: number; pending: number } | null>(null);
   const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
-  const handoffDoneRef = useRef(false);
+  const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const lastHandoffRef = useRef<string | null>(null);
+  const allFixturesRef = useRef<Fixture[]>([]);
+
+  // Select a fixture handed over from the Matches tab. Runs both when
+  // fixtures finish loading AND on every focus (tab screens don't remount,
+  // so route.params changing is the only signal a new tap happened).
+  const applyHandoff = (fixtureId: string | null | undefined) => {
+    if (!fixtureId || fixtureId === lastHandoffRef.current) return;
+    const f = allFixturesRef.current.find(x => x.idEvent === fixtureId);
+    if (!f) return;
+    lastHandoffRef.current = fixtureId;
+    setTeamA(f.strHomeTeam);
+    setTeamB(f.strAwayTeam);
+    setSelectedFixture(f);
+    setParsed(null);
+    setPrediction('');
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      applyHandoff(route.params?.fixtureId);
+    }, [route.params?.fixtureId])
+  );
+
+  // Coach and Predictor each track their own modelId, but there's only one
+  // resident model app-wide — if it was stopped from Coach while this tab
+  // wasn't focused, this would otherwise keep claiming "Model ready" for a
+  // model that's no longer loaded.
+  useFocusEffect(useCallback(() => {
+    if (modelId && llmManager.getLoadedQvacId() !== modelId) {
+      setModelId(null);
+    }
+  }, [modelId]));
+
+  // Distinct leagues present in today's fixtures, in first-seen order (which
+  // is already World-Cup-first per fixtureOrder) — pure client-side derive,
+  // no new fetch. "All" is represented as selectedLeague === null.
+  const leagueChips = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const f of fixtures) {
+      if (f.strLeague && !seen.has(f.strLeague)) { seen.add(f.strLeague); list.push(f.strLeague); }
+    }
+    return list;
+  }, [fixtures]);
+  const visibleFixtures = useMemo(
+    () => selectedLeague ? fixtures.filter(f => f.strLeague === selectedLeague) : fixtures,
+    [fixtures, selectedLeague],
+  );
 
   const currentRunRef  = useRef<any>(null);
+  // Same pattern as Coach's Stop button: the SDK's cancel() can take real
+  // wall-clock time to actually halt llama.cpp, so a loop-local flag makes
+  // Stop feel instant regardless of how long the underlying cancel takes.
+  const abortRef = useRef(false);
   const mountedRef     = useRef(true);
   const formDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modelNameRef   = useRef<string>('');
+  const scrollRef      = useRef<ScrollView>(null);
+  const resultYRef     = useRef(0);
+
+  // Bring the finished result into view — it renders above the CTA now,
+  // but after a long form card it can still land below the fold.
+  useEffect(() => {
+    if (!isGenerating && parsed) {
+      const t = setTimeout(() => {
+        scrollRef.current?.scrollTo({ y: Math.max(0, resultYRef.current - 12), animated: true });
+      }, 250);
+      return () => clearTimeout(t);
+    }
+  }, [isGenerating, parsed]);
 
   // Predict button pulse while generating
   const pulsAnim = useRef(new Animated.Value(1)).current;
@@ -122,8 +244,6 @@ export default function PredictorScreen() {
   const resultScale = useRef(new Animated.Value(0.92)).current;
   const resultOpacity = useRef(new Animated.Value(0)).current;
   // Loading pulse for model warm-up
-  const loadPulse = useRef(new Animated.Value(0.4)).current;
-  const loadLoop = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -145,7 +265,6 @@ export default function PredictorScreen() {
       mountedRef.current = false;
       clearInterval(ticker);
       clearNotification();
-      loadLoop.current?.stop();
       if (formDebounceRef.current) clearTimeout(formDebounceRef.current);
       if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
     };
@@ -162,9 +281,12 @@ export default function PredictorScreen() {
       if (!mountedRef.current) return;  // unmounted before timeout fired
       setFormLoading(true);
       try {
-        const fdKey = await getActiveFdKey().catch(() => '');
+        const [fdKey, bzKeyForForm] = await Promise.all([
+          getActiveFdKey().catch(() => ''),
+          getActiveBzKey().catch(() => ''),
+        ]);
         const [[fa, fb], [sa, sb]] = await Promise.all([
-          fetchBothTeamForms(teamA.trim(), teamB.trim(), fdKey),
+          fetchBothTeamForms(teamA.trim(), teamB.trim(), fdKey, bzKeyForForm),
           fetchBothSquads(teamA.trim(), teamB.trim()),
         ]);
         if (!mountedRef.current) return;
@@ -180,20 +302,6 @@ export default function PredictorScreen() {
     }, 700);
   }, [teamA, teamB]);
 
-
-  useEffect(() => {
-    if (modelLoading && !noModel) {
-      const loop = Animated.loop(Animated.sequence([
-        Animated.timing(loadPulse, { toValue: 1, duration: 750, useNativeDriver: true }),
-        Animated.timing(loadPulse, { toValue: 0.3, duration: 750, useNativeDriver: true }),
-      ]));
-      loadLoop.current = loop;
-      loop.start();
-    } else {
-      loadLoop.current?.stop();
-      Animated.timing(loadPulse, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-    }
-  }, [modelLoading, noModel]);
 
   useEffect(() => {
     if (isGenerating) {
@@ -246,18 +354,12 @@ export default function PredictorScreen() {
         ...others.filter(finished).reverse(),
       ].slice(0, 10);
       setFixtures(rail);
-      // Arriving from the Home match card: preselect that fixture once
-      // (ref guards against the 60s ticker re-selecting after a manual clear)
-      const want = !handoffDoneRef.current ? route.params?.fixtureId : null;
-      if (want) {
-        handoffDoneRef.current = true;
-        const f = all.find(x => x.idEvent === want);
-        if (f) {
-          setTeamA(f.strHomeTeam);
-          setTeamB(f.strAwayTeam);
-          setSelectedFixture(f);
-        }
-      }
+      allFixturesRef.current = all;
+      // Arriving from Matches: preselect the tapped fixture. Keyed by the
+      // specific fixture id, not a one-shot boolean — the old boolean made
+      // "quick predict" work exactly ONCE and silently ignore every later
+      // tap from the Matches tab.
+      applyHandoff(route.params?.fixtureId);
       setNoInternet(!online);
     } catch {
       if (mountedRef.current) setNoInternet(true);
@@ -273,6 +375,9 @@ export default function PredictorScreen() {
   };
 
   const loadModel = async () => {
+    setLoadError(null);
+    setModelLoading(true);
+    setLoadPct(0);
     try {
       const synced = await syncModelsFromDisk();
       const model = pickTextCapable(synced, await getDefaultModelId(), llmManager.getLoadedModelId());
@@ -282,20 +387,38 @@ export default function PredictorScreen() {
       }
       // projectionModelSrc keeps a multimodal model (Gemma) consistent with
       // Scout Lens — the single resident model must be loaded with its mmproj
-      const mid = await llmManager.ensure(model, { ctx_size: 2048, device: 'auto', projectionModelSrc: model.projectionModelSrc });
+      const mid = await llmManager.ensure(
+        model,
+        { ctx_size: 2048, device: 'auto', projectionModelSrc: model.projectionModelSrc },
+        pct => { if (mountedRef.current) setLoadPct(Math.round(pct)); },
+      );
       modelNameRef.current = model.name;
       if (mountedRef.current) { setModelId(mid); setModelLoading(false); }
-    } catch {
-      if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
+    } catch (e: any) {
+      // A model exists but failed to load — NOT "no model downloaded".
+      if (mountedRef.current) {
+        setLoadError(e?.message || 'Could not load the model. Close other apps to free memory and try again.');
+        setModelLoading(false);
+      }
     }
+  };
+
+  // Coach and Predictor each track their own modelId, but there's only one
+  // resident model app-wide — stopping here needs to actually free it.
+  const stopModel = async () => {
+    await llmManager.release();
+    setModelId(null);
   };
 
   const predict = async () => {
     if (!teamA.trim() || !teamB.trim() || isGenerating || !modelId) return;
     setPrediction('');
+    setPredictError(null);
     setParsed(null);
     setElapsed(null);
+    setAnalysisOpen(false);
     setIsGenerating(true);
+    abortRef.current = false;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     // BUG FIX: form/squad data was fetched on a 700ms debounce tied to
@@ -310,10 +433,42 @@ export default function PredictorScreen() {
     const nameA = teamA.trim();
     const nameB = teamB.trim();
     setFormLoading(true);
-    const fdKey = await getActiveFdKey().catch(() => '');
+    const [fdKey, bzKey] = await Promise.all([
+      getActiveFdKey().catch(() => ''),
+      getActiveBzKey().catch(() => ''),
+    ]);
+    // Kicked off now, awaited just before navigating — a couple of quick
+    // REST calls that easily finish inside the several seconds the LLM
+    // spends streaming its own verdict, so this never adds visible wait.
+    // Without a selected fixture's date, default to today — an unbounded
+    // team-name search could otherwise resolve to the wrong historical
+    // meeting between the same two teams from a past season.
+    const bzPredPromise = bzKey
+      ? findBzPrediction(bzKey, nameA, nameB, selectedFixture?.dateEvent ?? todayISO()).catch(() => null)
+      : Promise.resolve(null);
+    // Hard ceiling on grounding data — fetchBothTeamForms can chain through
+    // three fallback sources (Bzzoiro, football-data.org, TheSportsDB),
+    // and TheSportsDB's own path alone is three sequential 6s-timeout
+    // calls per team. For a team none of them cover (youth/lower-league),
+    // that stacks up to 20-30s of dead air before the model call even
+    // starts — which is indistinguishable from "predictor is broken" even
+    // though it's just grounding data quietly exhausting every fallback.
+    // Racing against a fixed timeout means the model always starts
+    // promptly; the underlying calls still finish in the background and
+    // get picked up naturally next time, they just don't block this run.
+    const withDeadline = <T,>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+      Promise.race([p, new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))]);
     const [[freshFormA, freshFormB], [freshSquadA, freshSquadB]] = await Promise.all([
-      fetchBothTeamForms(nameA, nameB, fdKey).catch(() => [formA, formB] as [TeamForm | null, TeamForm | null]),
-      fetchBothSquads(nameA, nameB).catch(() => [squadA, squadB] as [string[], string[]]),
+      withDeadline(
+        fetchBothTeamForms(nameA, nameB, fdKey, bzKey).catch(() => [formA, formB] as [TeamForm | null, TeamForm | null]),
+        6000,
+        [formA, formB] as [TeamForm | null, TeamForm | null],
+      ),
+      withDeadline(
+        fetchBothSquads(nameA, nameB).catch(() => [squadA, squadB] as [string[], string[]]),
+        6000,
+        [squadA, squadB] as [string[], string[]],
+      ),
     ]);
     setFormA(freshFormA); setFormB(freshFormB);
     setSquadA(freshSquadA); setSquadB(freshSquadB);
@@ -358,6 +513,7 @@ export default function PredictorScreen() {
       });
       currentRunRef.current = run;
       registerInferenceCancel(() => {
+        abortRef.current = true;
         if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
       });
       showRunningNotification('Predictor');
@@ -368,6 +524,7 @@ export default function PredictorScreen() {
       let raw = '';
       let lastFlush = 0;
       for await (const event of run.events) {
+        if (abortRef.current) break;
         if (event.type === 'contentDelta') {
           raw += event.text;
           const { answer } = splitChannelThinking(raw);
@@ -378,11 +535,18 @@ export default function PredictorScreen() {
           }
         }
       }
+      currentRunRef.current = null;
+      clearNotification();
+      if (abortRef.current) {
+        // Stopped mid-stream — no result page, no history entry, just
+        // back to a clean idle state (matches the disabled/Predict Again
+        // spot the button would be in otherwise).
+        if (mountedRef.current) { setIsGenerating(false); setPrediction(''); }
+        return;
+      }
       const streamed = splitChannelThinking(raw).answer;
       if (mountedRef.current) setPrediction(streamed);
       const [, stats] = await Promise.all([run.final, run.stats]);
-      currentRunRef.current = null;
-      clearNotification();
 
       const totalMs = Date.now() - genStart;
       logInference('predictor', modelNameRef.current, stats?.timeToFirstToken ?? 0, totalMs, stats?.generatedTokens ?? 0).catch(() => {});
@@ -400,7 +564,8 @@ export default function PredictorScreen() {
       }
 
       if (mountedRef.current) {
-        setElapsed(Math.round((Date.now() - genStart) / 100) / 10);
+        const secs = Math.round((Date.now() - genStart) / 100) / 10;
+        setElapsed(secs);
         const p = parsePrediction(streamed);
         setParsed(p);
         // Record the call for the accountability track record
@@ -411,19 +576,38 @@ export default function PredictorScreen() {
           } catch {}
         }
         setIsGenerating(false);
+        setPrediction('');
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        const bzPrediction = await bzPredPromise;
+        // The result gets its own page — verdict + analysis with a back
+        // button, instead of rendering under the fold on this screen.
+        navigation.navigate('PredictionResult', {
+          teamA: teamA.trim(), teamB: teamB.trim(),
+          winner: p.winner, score: p.score, confidence: p.confidence,
+          keyHome: p.keyHome, keyAway: p.keyAway, analysis: p.analysis,
+          elapsed: secs,
+          bzPrediction,
+        });
       }
     } catch (err) {
       currentRunRef.current = null;
       clearNotification();
       if (mountedRef.current) {
-        if (!(err instanceof InferenceCancelledError)) setPrediction('Prediction failed. Try again.');
+        // BUG FIX: this used to setPrediction(...) with the error text, but
+        // every render path that shows `prediction` requires isGenerating
+        // to still be true — which it isn't by the time this runs — so the
+        // message was set but never actually appeared. The button just
+        // silently went back to "Predict Match" with zero explanation.
+        if (!(err instanceof InferenceCancelledError)) {
+          setPredictError(err instanceof Error ? err.message : 'Prediction failed. Try again.');
+        }
         setIsGenerating(false);
       }
     }
   };
 
   const stopPrediction = () => {
+    abortRef.current = true;
     if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
   };
 
@@ -440,7 +624,8 @@ export default function PredictorScreen() {
     >
       <ScreenHeader
         title="Predictor"
-        subtitle={modelId ? 'On-device · Private' : modelLoading ? 'Loading model...' : 'No model'}
+        centered
+        onBack={false}
         titleExtra={
           record && record.hits + record.misses > 0 ? (
             <View style={[styles.recordChip, { backgroundColor: accent + '16' }]}>
@@ -462,307 +647,117 @@ export default function PredictorScreen() {
         }
       />
 
+      <ModelStatusPill
+        noModel={noModel}
+        modelLoading={modelLoading}
+        loadError={loadError}
+        modelId={modelId}
+        loadPct={loadPct}
+        onLoad={loadModel}
+        onStop={stopModel}
+        onGetModel={() => navigation.navigate('Models')}
+      />
+
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
+        ref={scrollRef}
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + TAB_BAR_HEIGHT + 36 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Today's fixtures — World Cup first */}
-        <View style={styles.fixturesSection}>
-          <View style={styles.fixturesHeader}>
-            <View>
-              <Text style={[styles.fixturesSectionLabel, { color: accent }]}>
-                {fixtures.some(f => isWorldCup(f) && isLive(f)) ? 'WORLD CUP · LIVE' : fixtures.some(isWorldCup) ? 'WORLD CUP & MATCHDAY' : fixtures.some(isLive) ? 'MATCHDAY · LIVE' : 'MATCHDAY'}
-              </Text>
-              <Text style={[styles.fixturesTodayLabel, { color: theme.textSecondary }]}>
-                World Cup first · live scores · upcoming
-              </Text>
-            </View>
-            <View style={[styles.apiDisclosure, { backgroundColor: theme.cardAlt }]}>
-              <Text style={[styles.apiDisclosureText, { color: theme.textSecondary }]}>TheSportsDB</Text>
-            </View>
-          </View>
-
-          {fixturesLoading ? (
-            <Text style={[styles.fixturesLoading, { color: theme.textSecondary }]}>Loading fixtures...</Text>
-          ) : noInternet ? (
-            <TouchableOpacity
-              style={[styles.noInternetCard, { backgroundColor: theme.card }]}
-              onPress={retryFixtures}
-              activeOpacity={0.8}
-            >
-              <View style={[styles.noInternetDot, { backgroundColor: theme.border }]} />
-              <View style={styles.noInternetText}>
-                <Text style={[styles.noInternetTitle, { color: theme.text }]}>Turn on internet to load fixtures</Text>
-                <Text style={[styles.noInternetSub, { color: theme.textSecondary }]}>
-                  Tap to retry · AI prediction runs offline
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ) : fixtures.length === 0 ? (
-            <Text style={[styles.fixturesLoading, { color: theme.textSecondary }]}>
-              No matches today · Type any teams below to predict
-            </Text>
-          ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fixturesScroll}>
-              {fixtures.map(f => {
-                const isWC = /world cup/i.test(f.strLeague) || /fifa wc/i.test(f.strLeague);
-                const selected = teamA === f.strHomeTeam && teamB === f.strAwayTeam;
-                return (
-                  <TouchableOpacity
-                    key={f.idEvent}
-                    style={[styles.fixtureCard, {
-                      backgroundColor: theme.card,
-                      ...(selected ? { borderWidth: 1.5, borderColor: accent } : isWC ? { borderWidth: 1, borderColor: accent + '40' } : null),
-                    }]}
-                    onPress={() => {
-                      setTeamA(f.strHomeTeam);
-                      setTeamB(f.strAwayTeam);
-                      setSelectedFixture(f);
-                      setParsed(null);
-                      setPrediction('');
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }}
-                    activeOpacity={0.75}
-                  >
-                    {isWC && (
-                      <View style={[styles.wcBadge, { backgroundColor: accent + '20' }]}>
-                        <Text style={[styles.wcBadgeText, { color: accent }]}>WC 2026</Text>
-                      </View>
-                    )}
-                    <Text style={[styles.fixtureLeague, { color: theme.textSecondary }]} numberOfLines={1}>
-                      {f.strLeague}
-                    </Text>
-                    <View style={styles.fixtureTeamRow}>
-                      {badgeUrl(f.strHomeTeamBadge) ? (
-                        <Image source={{ uri: badgeUrl(f.strHomeTeamBadge)! }} style={styles.fixtureBadge} resizeMode="contain" />
-                      ) : (
-                        <View style={[styles.fixtureBadgeFallback, { backgroundColor: theme.cardAlt }]} />
-                      )}
-                      <Text style={[styles.fixtureHome, { color: theme.text }]} numberOfLines={1}>{f.strHomeTeam}</Text>
-                    </View>
-                    {f.intHomeScore != null && f.intAwayScore != null ? (
-                      <View style={styles.fixtureScoreRow}>
-                        {isLive(f) && <View style={styles.fixtureLiveDot} />}
-                        <Text style={[styles.fixtureScore, { color: isLive(f) ? '#ef4444' : theme.text }]}>
-                          {f.intHomeScore}-{f.intAwayScore}
-                        </Text>
-                        <Text style={[styles.fixtureStatus, { color: isLive(f) ? '#ef4444' : theme.textSecondary }]}>
-                          {isLive(f) ? 'LIVE' : 'FT'}
-                        </Text>
-                      </View>
-                    ) : (
-                      <Text style={[styles.fixtureVs, { color: theme.textSecondary }]}>vs</Text>
-                    )}
-                    <View style={styles.fixtureTeamRow}>
-                      {badgeUrl(f.strAwayTeamBadge) ? (
-                        <Image source={{ uri: badgeUrl(f.strAwayTeamBadge)! }} style={styles.fixtureBadge} resizeMode="contain" />
-                      ) : (
-                        <View style={[styles.fixtureBadgeFallback, { backgroundColor: theme.cardAlt }]} />
-                      )}
-                      <Text style={[styles.fixtureAway, { color: theme.text }]} numberOfLines={1}>{f.strAwayTeam}</Text>
-                    </View>
-                    {!isLive(f) && !isFinished(f) && fmtTime(f.strTime) ? (
-                      <Text style={[styles.fixtureTime, { color: accent }]}>
-                        {f.dateEvent && f.dateEvent !== todayISO()
-                          ? `${new Date(f.dateEvent).toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${fmtTime(f.strTime)}`
-                          : fmtTime(f.strTime)}
-                      </Text>
-                    ) : null}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          )}
-        </View>
-
-        {/* Model loading pulse */}
-        {modelLoading && !noModel && (
-          <Animated.View style={[styles.loadingBar, { backgroundColor: theme.card, opacity: loadPulse }]}>
-            <Text style={[styles.loadingText, { color: theme.textSecondary }]}>Warming up model...</Text>
-          </Animated.View>
-        )}
-
-        {/* Team inputs */}
-        <View style={styles.matchup}>
-          <View style={[styles.teamCard, { backgroundColor: theme.card }, teamA.trim() ? { borderWidth: 1.5, borderColor: accent } : null]}>
-            <Text style={[styles.teamCardLabel, { color: theme.textSecondary }]}>Home</Text>
-            <TextInput
-              style={[styles.teamInput, { color: theme.text }]}
-              placeholder="e.g. Arsenal"
-              placeholderTextColor={theme.textSecondary}
-              value={teamA}
-              onChangeText={t => { setTeamA(t); setParsed(null); setSelectedFixture(null); }}
-              returnKeyType="next"
-            />
-          </View>
-
-          <View style={[styles.vsBox, { backgroundColor: theme.cardAlt }]}>
-            <Text style={[styles.vsText, { color: theme.textSecondary }]}>VS</Text>
-          </View>
-
-          <View style={[styles.teamCard, { backgroundColor: theme.card }, teamB.trim() ? { borderWidth: 1.5, borderColor: accent } : null]}>
-            <Text style={[styles.teamCardLabel, { color: theme.textSecondary }]}>Away</Text>
-            <TextInput
-              style={[styles.teamInput, { color: theme.text }]}
-              placeholder="e.g. Real Madrid"
-              placeholderTextColor={theme.textSecondary}
-              value={teamB}
-              onChangeText={t => { setTeamB(t); setParsed(null); setSelectedFixture(null); }}
-              returnKeyType="done"
-            />
-          </View>
-        </View>
-
-        {/* Selected match details */}
-        {selectedFixture && (
-          <View style={[styles.matchDetails, { backgroundColor: theme.card }, isLive(selectedFixture) ? { borderWidth: 1, borderColor: '#ef444455' } : null]}>
-            <View style={styles.matchDetailsTop}>
-              <Text style={[styles.matchDetailsLeague, { color: theme.textSecondary }]} numberOfLines={1}>
+        {/* No fixture carousel here — Matches is where you browse fixtures;
+            tapping one there hands it over ("quick predict"). Either the
+            confirmation card shows (fixture picked) OR the manual inputs
+            show — never both, so the same matchup never appears twice. */}
+        {selectedFixture ? (
+          <View style={[styles.selCard, { backgroundColor: theme.card, borderColor: accent + '55' }]}>
+            <View style={styles.selTop}>
+              <Text style={[styles.selLeague, { color: theme.textTertiary }]} numberOfLines={1}>
                 {selectedFixture.strLeague}
               </Text>
-              {isLive(selectedFixture) ? (
-                <View style={styles.matchDetailsLiveRow}>
-                  <View style={styles.matchDetailsLiveDot} />
-                  <Text style={styles.matchDetailsLiveText}>
-                    LIVE {selectedFixture.intHomeScore}-{selectedFixture.intAwayScore}
-                  </Text>
-                </View>
-              ) : isFinished(selectedFixture) ? (
-                <Text style={[styles.matchDetailsTime, { color: theme.textSecondary }]}>
-                  FT {selectedFixture.intHomeScore}-{selectedFixture.intAwayScore}
-                </Text>
-              ) : (
-                <Text style={[styles.matchDetailsTime, { color: accent }]}>
+              {!isLive(selectedFixture) && !isFinished(selectedFixture) && fmtTime(selectedFixture.strTime) ? (
+                <Text style={[styles.selTime, { color: accent }]}>
                   {selectedFixture.dateEvent && selectedFixture.dateEvent !== todayISO()
-                    ? `${new Date(selectedFixture.dateEvent).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })} · ${fmtTime(selectedFixture.strTime)}`
+                    ? `${new Date(selectedFixture.dateEvent).toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${fmtTime(selectedFixture.strTime)}`
                     : `Today · ${fmtTime(selectedFixture.strTime)}`}
                 </Text>
-              )}
-            </View>
-            <View style={styles.matchDetailsTeams}>
-              {badgeUrl(selectedFixture.strHomeTeamBadge) ? (
-                <Image source={{ uri: badgeUrl(selectedFixture.strHomeTeamBadge)! }} style={styles.matchDetailsBadge} resizeMode="contain" />
+              ) : selectedFixture.intHomeScore != null ? (
+                <Text style={[styles.selTime, { color: theme.textSecondary }]}>
+                  {isFinished(selectedFixture) ? 'FT ' : ''}{selectedFixture.intHomeScore}-{selectedFixture.intAwayScore}
+                </Text>
               ) : null}
-              <Text style={[styles.matchDetailsVs, { color: theme.text }]} numberOfLines={1}>
+            </View>
+            <View style={styles.selTeams}>
+              <TeamBadge url={badgeUrl(selectedFixture.strHomeTeamBadge)} name={selectedFixture.strHomeTeam} abbr={teamAbbr(selectedFixture.strHomeTeam)} size={28} />
+              <Text style={[styles.selVs, { color: theme.text }]} numberOfLines={1}>
                 {selectedFixture.strHomeTeam}  vs  {selectedFixture.strAwayTeam}
               </Text>
-              {badgeUrl(selectedFixture.strAwayTeamBadge) ? (
-                <Image source={{ uri: badgeUrl(selectedFixture.strAwayTeamBadge)! }} style={styles.matchDetailsBadge} resizeMode="contain" />
-              ) : null}
+              <TeamBadge url={badgeUrl(selectedFixture.strAwayTeamBadge)} name={selectedFixture.strAwayTeam} abbr={teamAbbr(selectedFixture.strAwayTeam)} size={28} />
             </View>
+            <TouchableOpacity
+              onPress={() => { setSelectedFixture(null); setTeamA(''); setTeamB(''); setParsed(null); }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={[styles.selHint, { color: accent }]}>Not this match? Pick teams manually</Text>
+            </TouchableOpacity>
           </View>
-        )}
-
-        {/* Live form section — appears when both teams searched */}
-        {(formLoading || formA || formB) && (
-          <View style={[styles.formSection, { backgroundColor: theme.card }]}>
-            <View style={styles.formHeader}>
-              <View style={[styles.formDot, { backgroundColor: formLoading ? theme.textSecondary : '#22c55e' }]} />
-              <Text style={[styles.formLabel, { color: formLoading ? theme.textSecondary : '#22c55e' }]}>
-                {formLoading
-                  ? 'Fetching live form...'
-                  : `Live form · ${formA?.teamId === 'fd' || formB?.teamId === 'fd' ? 'football-data.org' : 'TheSportsDB'}`}
-              </Text>
+        ) : (
+          <View style={{ gap: 8 }}>
+            <View style={styles.matchup}>
+              <View style={[styles.teamCard, { backgroundColor: theme.card, borderWidth: 1, borderColor: teamA.trim() ? accent : theme.border }]}>
+                <Text style={[styles.teamCardLabel, { color: theme.textSecondary }]}>Home</Text>
+                <TextInput
+                  style={[styles.teamInput, { color: theme.text }]}
+                  placeholder="e.g. Arsenal"
+                  placeholderTextColor={theme.textTertiary}
+                  value={teamA}
+                  onChangeText={t => { setTeamA(t); setParsed(null); }}
+                  returnKeyType="next"
+                />
+              </View>
+              <Text style={[styles.vsChip, { color: theme.textTertiary }]}>VS</Text>
+              <View style={[styles.teamCard, { backgroundColor: theme.card, borderWidth: 1, borderColor: teamB.trim() ? accent : theme.border }]}>
+                <Text style={[styles.teamCardLabel, { color: theme.textSecondary }]}>Away</Text>
+                <TextInput
+                  style={[styles.teamInput, { color: theme.text }]}
+                  placeholder="e.g. Real Madrid"
+                  placeholderTextColor={theme.textTertiary}
+                  value={teamB}
+                  onChangeText={t => { setTeamB(t); setParsed(null); }}
+                  returnKeyType="done"
+                />
+              </View>
             </View>
-            {!formLoading && (
-              <View style={styles.formRows}>
-                {[{ name: teamA, form: formA }, { name: teamB, form: formB }].map(({ name, form }) => (
-                  <View key={name} style={styles.formRow}>
-                    <Text style={[styles.formTeamName, { color: theme.textSecondary }]} numberOfLines={1}>
-                      {name.slice(0, 12).toUpperCase()}
-                    </Text>
-                    <View style={styles.formDots}>
-                      {form ? form.form.map((r, i) => (
-                        <View key={i} style={[
-                          styles.formDotCircle,
-                          { backgroundColor: r === 'W' ? '#22c55e' : r === 'D' ? '#f59e0b' : '#ef4444' },
-                        ]}>
-                          <Text style={styles.formDotText}>{r}</Text>
-                        </View>
-                      )) : (
-                        <Text style={[styles.formNotFound, { color: theme.textSecondary }]}>not found</Text>
-                      )}
-                    </View>
-                    {form && form.events.length > 0 ? (
-                      <View style={styles.formResultsCol}>
-                        {form.events.slice(0, 3).map((e, i) => (
-                          <Text key={i} style={[styles.formLastResult, { color: theme.textSecondary }]} numberOfLines={1}>
-                            {e.score} vs {e.opponent}
-                          </Text>
-                        ))}
-                      </View>
-                    ) : null}
-                  </View>
+
+            {/* Quick-pick from a hardcoded top-club/national-team list —
+                filters as you type, tap to fill instead of spelling the
+                exact name. Hidden once the field already matches a pick. */}
+            {aSuggest.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestRow}>
+                {aSuggest.map(c => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[styles.suggestChip, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}
+                    onPress={() => { setTeamA(c); setParsed(null); }}
+                  >
+                    <Text style={[styles.suggestChipText, { color: theme.text }]}>{c}</Text>
+                  </TouchableOpacity>
                 ))}
-              </View>
+              </ScrollView>
             )}
-            {/* TheSportsDB's free tier caps recent-match history at 1 game —
-                only true when neither team's form came from football-data.org
-                (that source isn't limited this way, just competition-scoped) */}
-            {!formLoading && formA?.teamId !== 'fd' && formB?.teamId !== 'fd' &&
-              ((formA && formA.events.length <= 1) || (formB && formB.events.length <= 1)) && (
-              <TouchableOpacity
-                onPress={() => Linking.openURL('https://www.football-data.org/client/register')}
-                style={styles.fdUpsell}
-              >
-                <Text style={[styles.fdUpsellText, { color: theme.textSecondary }]}>
-                  Free data shows only 1 recent match. <Text style={{ color: accent, fontWeight: '700' }}>Get a free football-data.org key →</Text>
-                </Text>
-              </TouchableOpacity>
+            {bSuggest.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestRow}>
+                {bSuggest.map(c => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[styles.suggestChip, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}
+                    onPress={() => { setTeamB(c); setParsed(null); }}
+                  >
+                    <Text style={[styles.suggestChipText, { color: theme.text }]}>{c}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             )}
           </View>
         )}
-
-        {/* Optional context */}
-        <TextInput
-          style={[styles.contextInput, { backgroundColor: theme.card, color: theme.text }]}
-          placeholder="Add context: injuries, venue, pressure, head-to-head..."
-          placeholderTextColor={theme.textSecondary}
-          value={context}
-          onChangeText={setContext}
-          multiline
-          numberOfLines={2}
-        />
-
-        {/* Predict / Stop button */}
-        <Animated.View style={{ opacity: pulsAnim }}>
-          <TouchableOpacity
-            style={[styles.predictBtn, {
-              backgroundColor: isGenerating ? theme.error : accent,
-              opacity: (teamA.trim() && teamB.trim() && modelId) || isGenerating ? 1 : 0.38,
-            }]}
-            onPress={isGenerating ? stopPrediction : predict}
-            disabled={!isGenerating && (!teamA.trim() || !teamB.trim() || !modelId)}
-            activeOpacity={0.82}
-          >
-            {isGenerating ? (
-              <View style={styles.btnInner}>
-                <IconStop size={18} color="#fff" />
-                <Text style={[styles.predictBtnText, { color: '#fff' }]}>Stop</Text>
-              </View>
-            ) : (
-              <View style={styles.btnInner}>
-                <IconTarget size={18} color={theme.accentFg} />
-                <Text style={[styles.predictBtnText, { color: theme.accentFg }]}>Predict Match</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        </Animated.View>
-
-        {noModel && (
-          <View style={[styles.noModelCard, { backgroundColor: theme.card }]}>
-            <Text style={[styles.noModelText, { color: theme.textSecondary }]}>
-              No model downloaded. Go to Models to download one.
-            </Text>
-          </View>
-        )}
-
-        {/* Disclosure */}
-        <View style={styles.disclosureRow}>
-          <Text style={[styles.disclosureText, { color: theme.textSecondary }]}>
-            Fixtures: TheSportsDB (thesportsdb.com) · Prediction AI: QVAC SDK, on-device
-          </Text>
-        </View>
 
         {/* Immediate feedback — visible from the instant Predict is pressed
             until the first token arrives, so the wait never looks frozen */}
@@ -772,7 +767,7 @@ export default function PredictorScreen() {
               <Text style={[styles.resultLabel, { color: accent }]}>ANALYZING THE MATCHUP...</Text>
               <Text style={[styles.resultText, { color: theme.textSecondary }]}>
                 {formA || formB
-                  ? 'Weighing live form, tactical matchup, and squad quality.'
+                  ? 'Weighing recent form, tactical matchup, and squad quality.'
                   : 'Weighing tactical matchup, squad quality, and history.'}
               </Text>
             </View>
@@ -799,7 +794,9 @@ export default function PredictorScreen() {
                     ) : null}
                     {live.confidence ? (
                       <View style={[styles.liveFieldChip, { backgroundColor: theme.cardAlt }]}>
-                        <Text style={[styles.liveFieldChipText, { color: theme.textSecondary }]}>{live.confidence}</Text>
+                        <Text style={[styles.liveFieldChipText, { color: theme.textSecondary }]}>
+                          {confidenceParts(live.confidence).pct != null ? `${confidenceParts(live.confidence).pct}%` : live.confidence}
+                        </Text>
                       </View>
                     ) : null}
                   </View>
@@ -811,107 +808,52 @@ export default function PredictorScreen() {
             </View>
         )}
 
-        {/* Final result — spring reveal with scoreboard */}
-        {!isGenerating && parsed && (
-          <Animated.View style={{ opacity: resultOpacity, transform: [{ scale: resultScale }] }}>
-            {/* Scoreboard */}
-            <View style={[styles.scoreboard, { backgroundColor: theme.card }]}>
-              <View style={[styles.scoreboardTop, { borderBottomColor: theme.border }]}>
-                <Text style={[styles.scoreboardLabel, { color: accent }]}>PREDICTION</Text>
-                {parsed.confidence ? (
-                  <View style={[styles.confBadge, {
-                    backgroundColor: parsed.confidence === 'High' ? accent + '22' : theme.cardAlt,
-                  }]}>
-                    <Text style={[styles.confText, { color: parsed.confidence === 'High' ? accent : theme.textSecondary }]}>
-                      {parsed.confidence} confidence
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-              <View style={styles.scoreRow}>
-                <View style={styles.scoreTeam}>
-                  <Text style={[styles.scoreTeamName, { color: theme.text }]} numberOfLines={2}>{teamA}</Text>
-                  {parsed.winner === teamA && (
-                    <View style={[styles.winnerTag, { backgroundColor: accent }]}>
-                      <Text style={styles.winnerTagText}>WIN</Text>
-                    </View>
-                  )}
-                </View>
-                <View style={styles.scoreCenter}>
-                  {parsed.score ? (
-                    <Text style={[styles.scoreText, { color: theme.text }]}>{parsed.score}</Text>
-                  ) : (
-                    <Text style={[styles.scoreVs, { color: theme.textSecondary }]}>vs</Text>
-                  )}
-                </View>
-                <View style={[styles.scoreTeam, styles.scoreTeamRight]}>
-                  <Text style={[styles.scoreTeamName, { color: theme.text }]} numberOfLines={2}>{teamB}</Text>
-                  {parsed.winner === teamB && (
-                    <View style={[styles.winnerTag, { backgroundColor: accent }]}>
-                      <Text style={styles.winnerTagText}>WIN</Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-            </View>
-
-            {/* Players to watch */}
-            {(parsed.keyHome || parsed.keyAway) && (
-              <View style={[styles.keyPlayersCard, { backgroundColor: theme.card }]}>
-                <Text style={[styles.resultLabel, { color: accent }]}>PLAYERS TO WATCH</Text>
-                {parsed.keyHome ? (
-                  <View style={styles.keyPlayerRow}>
-                    <View style={[styles.keyPlayerDot, { backgroundColor: '#ef4444' }]} />
-                    <Text style={[styles.keyPlayerText, { color: theme.text }]}>{parsed.keyHome}</Text>
-                  </View>
-                ) : null}
-                {parsed.keyAway ? (
-                  <View style={styles.keyPlayerRow}>
-                    <View style={[styles.keyPlayerDot, { backgroundColor: '#3b82f6' }]} />
-                    <Text style={[styles.keyPlayerText, { color: theme.text }]}>{parsed.keyAway}</Text>
-                  </View>
-                ) : null}
-              </View>
-            )}
-
-            {/* Analysis */}
-            {parsed.analysis ? (
-              <View style={[styles.analysisCard, { backgroundColor: theme.card }]}>
-                <View style={styles.resultContent}>
-                  <View style={styles.analysisHeader}>
-                    <Text style={[styles.resultLabel, { color: accent }]}>ANALYSIS</Text>
-                    <View style={styles.analysisActions}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          const full = `${teamA} vs ${teamB}\n${parsed.winner ? `Winner: ${parsed.winner}` : ''} ${parsed.score}\n\n${parsed.analysis}`;
-                          Clipboard.setStringAsync(full.trim()).catch(() => {});
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Text style={[styles.copyBtn, { color: theme.textSecondary }]}>Copy</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => {
-                          const msg = `Scout calls it: ${parsed.winner} ${parsed.score ? `(${parsed.score})` : ''} — ${teamA} vs ${teamB}\n${parsed.confidence} confidence\n\n${parsed.analysis}\n\nPredicted 100% on-device by Scout`;
-                          Share.share({ message: msg }).catch(() => {});
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Text style={[styles.copyBtn, { color: accent }]}>Share</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <Text selectable style={[styles.resultText, { color: theme.text }]}>{parsed.analysis}</Text>
-                  {elapsed && (
-                    <Text style={[styles.stat, { color: theme.textSecondary }]}>{elapsed}s · on-device</Text>
-                  )}
-                </View>
-              </View>
-            ) : null}
-          </Animated.View>
+        {predictError && !isGenerating && (
+          <View style={[styles.predictErrorCard, { backgroundColor: theme.card, borderColor: theme.error + '40' }]}>
+            <Text style={[styles.predictErrorText, { color: theme.error }]}>{predictError}</Text>
+            <ReportBugLink prefill={`Predictor failed: ${predictError}`} />
+          </View>
         )}
+
+        {/* Predict / Stop button — label flips to Predict Again after a result */}
+        <Animated.View style={{ opacity: pulsAnim }}>
+          <TouchableOpacity
+            // Mock's off state: dim surface + mist text, not a faded volt
+            style={[styles.predictBtn,
+              isGenerating ? { backgroundColor: theme.error }
+              : (teamA.trim() && teamB.trim() && modelId) ? { backgroundColor: accent }
+              : { backgroundColor: theme.cardAlt, borderWidth: 1, borderColor: theme.border },
+            ]}
+            onPress={isGenerating ? stopPrediction : predict}
+            disabled={!isGenerating && (!teamA.trim() || !teamB.trim() || !modelId)}
+            activeOpacity={0.82}
+          >
+            {isGenerating ? (
+              <View style={styles.btnInner}>
+                <IconStop size={18} color="#fff" />
+                <Text style={[styles.predictBtnText, { color: '#fff' }]}>Stop</Text>
+              </View>
+            ) : (() => {
+              const ready = !!(teamA.trim() && teamB.trim() && modelId);
+              const fg = ready ? theme.accentFg : theme.textSecondary;
+              return (
+                <View style={styles.btnInner}>
+                  <IconTarget size={18} color={fg} />
+                  <Text style={[styles.predictBtnText, { color: fg }]}>
+                    {parsed ? 'Predict Again' : 'Predict Match'}
+                  </Text>
+                </View>
+              );
+            })()}
+          </TouchableOpacity>
+        </Animated.View>
+
+        {/* One attribution line, at the bottom */}
+        <View style={styles.disclosureRow}>
+          <Text style={[styles.disclosureText, { color: theme.textSecondary }]}>
+            Fixtures & badges: TheSportsDB · Form: football-data.org · AI: on-device (QVAC)
+          </Text>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -922,11 +864,11 @@ const styles = StyleSheet.create({
   recordChip: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   recordChipText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
   historyBtn: { fontSize: 12, fontWeight: '600' },
-  content: { flexGrow: 1, padding: 16, gap: 16 },
-  loadingBar: {
-    borderRadius: 10, padding: 12, alignItems: 'center',
-  },
-  loadingText: { fontSize: 13, fontWeight: '500' },
+  // No flexGrow: 1 — with the fixture carousel, form-guide dots, context
+  // input, and action row all removed, the content is now much shorter
+  // than the screen, and flexGrow forced it to stretch, leaving a stray
+  // block of empty space at the bottom. Sized to its own content instead.
+  content: { padding: 16, gap: 16 },
   matchup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   // Fixtures
   fixturesSection: { gap: 10 },
@@ -937,30 +879,24 @@ const styles = StyleSheet.create({
   apiDisclosureText: { fontSize: 9, fontWeight: '600' },
   fixturesLoading: { fontSize: 13, fontStyle: 'italic' },
   fixturesScroll: { gap: 8, paddingBottom: 2 },
+  leagueChipRow: { gap: 6, paddingBottom: 8 },
+  leagueChip: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, maxWidth: 160 },
+  leagueChipText: { fontSize: 11, fontWeight: '700' },
   fixtureCard: { width: 152, borderRadius: 12, padding: 12, gap: 3 },
   wcBadge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start', marginBottom: 2 },
   wcBadgeText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
   fixtureLeague: { fontSize: 9, fontWeight: '600', letterSpacing: 0.3 },
   fixtureTeamRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   fixtureBadge: { width: 20, height: 20 },
-  fixtureBadgeFallback: { width: 20, height: 20, borderRadius: 10 },
+  fixtureBadgeFallback: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  fixtureBadgeMono: { fontSize: 7, fontWeight: '800', letterSpacing: 0.2 },
   fixtureHome: { fontSize: 13, fontWeight: '700', flex: 1 },
   fixtureVs: { fontSize: 10, marginLeft: 26 },
   fixtureScoreRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginLeft: 26 },
-  fixtureLiveDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#ef4444' },
   fixtureScore: { fontSize: 14, fontWeight: '900', letterSpacing: 0.3 },
   fixtureStatus: { fontSize: 8, fontWeight: '800', letterSpacing: 0.8 },
   fixtureAway: { fontSize: 13, fontWeight: '700', flex: 1 },
   fixtureTime: { fontSize: 11, fontWeight: '700', marginTop: 2 },
-  noInternetCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    borderRadius: 12, padding: 14,
-  },
-  noInternetDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
-  noInternetText: { flex: 1, gap: 2 },
-  noInternetTitle: { fontSize: 14, fontWeight: '700' },
-  noInternetSub: { fontSize: 11 },
-
   // Disclosure
   disclosureRow: { paddingVertical: 4 },
   disclosureText: { fontSize: 10, lineHeight: 15, textAlign: 'center' },
@@ -975,50 +911,77 @@ const styles = StyleSheet.create({
     borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
     fontSize: 14, lineHeight: 20, minHeight: 60,
   },
-  // Selected match details
-  matchDetails: { borderRadius: 14, padding: 14, gap: 10 },
+  // The ONE prediction card
+  matchDetails: { borderRadius: 18, padding: 14, gap: 12 },
   matchDetailsTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   matchDetailsLeague: { flex: 1, fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' },
-  matchDetailsTime: { fontSize: 12, fontWeight: '700' },
-  matchDetailsLiveRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  matchDetailsLiveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444' },
-  matchDetailsLiveText: { fontSize: 12, fontWeight: '800', color: '#ef4444', letterSpacing: 0.4 },
+  matchDetailsTime: { fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] },
   matchDetailsTeams: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   matchDetailsBadge: { width: 26, height: 26 },
-  matchDetailsVs: { flex: 1, fontSize: 15, fontWeight: '800', textAlign: 'center' },
+  matchDetailsMono: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  matchDetailsVs: { flex: 1, fontSize: 15, fontFamily: fonts.displayExtraBold, textAlign: 'center' },
 
-  // Live form section
-  formSection: {
-    borderRadius: 14, padding: 14, gap: 10,
-  },
-  formHeader: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  formDot: { width: 6, height: 6, borderRadius: 3 },
+  // Selected-match confirmation card (handed over from Matches)
+  selCard: { borderRadius: 18, borderWidth: 1, padding: 14, gap: 10 },
+  selTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  selLeague: { flex: 1, fontSize: 10, fontFamily: fonts.bodySemiBold, letterSpacing: 0.6, textTransform: 'uppercase' },
+  selTime: { fontSize: 11, fontFamily: fonts.mono, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  selTeams: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  selVs: { flex: 1, fontSize: 15, fontFamily: fonts.displayExtraBold, textAlign: 'center' },
+  selHint: { fontSize: 11, fontFamily: fonts.bodySemiBold, textAlign: 'center' },
+  vsChip: { fontSize: 10, fontFamily: fonts.mono, fontWeight: '800' },
+  suggestRow: { gap: 6, paddingHorizontal: 2 },
+  suggestChip: { borderRadius: 999, borderWidth: 1, paddingVertical: 6, paddingHorizontal: 12 },
+  suggestChipText: { fontSize: 12, fontFamily: fonts.bodySemiBold },
+
+  // Verdict card (v3 — the call)
+  verdict: { borderRadius: 24, borderWidth: 1, padding: 20, overflow: 'hidden', marginBottom: 4 },
+  verdictTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center', gap: 14 },
+  verdictSide: { flex: 1, maxWidth: 110, alignItems: 'center', gap: 7 },
+  verdictDisc: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#f5f5f5', alignItems: 'center', justifyContent: 'center' },
+  verdictDiscText: { fontSize: 10, fontFamily: fonts.displayExtraBold, color: '#0b0b0b' },
+  verdictName: { fontSize: 10, fontFamily: fonts.displayBold, textTransform: 'uppercase', letterSpacing: 0.3, textAlign: 'center' },
+  verdictVs: { fontSize: 10, fontFamily: fonts.mono, fontWeight: '800', marginTop: 10 },
+  verdictEyebrow: { textAlign: 'center', fontSize: 10, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 2, marginTop: 18, marginBottom: 8 },
+  verdictHeadline: { fontSize: 26, fontFamily: fonts.displayBlack, lineHeight: 29, letterSpacing: -0.5, textAlign: 'center', marginBottom: 4 },
+  mlsLine: { textAlign: 'center', fontSize: 11, fontFamily: fonts.bodySemiBold, marginBottom: 16 },
+  mlsScore: { fontSize: 13, fontFamily: fonts.mono, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  outcomeRow: { flexDirection: 'row', gap: 8 },
+  outcomeChip: { flex: 1, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 4, alignItems: 'center' },
+  ocPct: { fontSize: 16, fontFamily: fonts.mono, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  ocLabel: { fontSize: 9, fontFamily: fonts.bodySemiBold, letterSpacing: 0.6, textTransform: 'uppercase', marginTop: 5 },
+
+  analysisLabel: { fontSize: 9.5, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 1.5, marginTop: 10, marginBottom: 8 },
+  keyLine: { fontSize: 11.5, lineHeight: 17, marginBottom: 8 },
+  actionsRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  actionBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 13, borderWidth: 1 },
+
+  // Form band (inside the prediction card)
+  formBand: { borderTopWidth: 1, paddingTop: 12, gap: 10 },
   formLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
   fdUpsell: { marginTop: 4 },
   fdUpsellText: { fontSize: 11, lineHeight: 16 },
   formRows: { gap: 8 },
-  formRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  formTeamName: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8, width: 78 },
-  formDots: { flexDirection: 'row', gap: 5, flexWrap: 'wrap' },
+  formRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 26 },
+  formTeamName: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8, width: 74 },
+  formDots: { flexDirection: 'row', gap: 5 },
   formDotCircle: {
-    width: 26, height: 26, borderRadius: 13,
+    width: 24, height: 24, borderRadius: 7,
     alignItems: 'center', justifyContent: 'center',
   },
-  formDotText: { fontSize: 10, fontWeight: '800', color: '#fff' },
-  formNotFound: { fontSize: 11, fontStyle: 'italic' },
-  formResultsCol: { flex: 1, gap: 2 },
-  formLastResult: { fontSize: 11, textAlign: 'right' },
+  formDotText: { fontSize: 10, fontWeight: '800' },
+  formLastResult: { flex: 1, fontSize: 11, textAlign: 'right', fontVariant: ['tabular-nums'] },
   vsBox: {
     width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
   },
   vsText: { fontSize: 11, fontWeight: '800' },
+  predictErrorCard: { borderRadius: 12, borderWidth: 1, padding: 12, gap: 4 },
+  predictErrorText: { fontSize: 13, fontFamily: fonts.bodyMedium },
   predictBtn: {
     borderRadius: 14, paddingVertical: 17, alignItems: 'center', justifyContent: 'center',
   },
   btnInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   predictBtnText: { fontSize: 16, fontWeight: '800' },
-  noModelCard: { borderRadius: 10, padding: 14 },
-  noModelText: { fontSize: 13, textAlign: 'center' },
   resultCard: { borderRadius: 14, overflow: 'hidden' },
   resultContent: { flex: 1, padding: 16, gap: 8 },
   resultLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
@@ -1034,18 +997,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12, borderBottomWidth: 1,
   },
   scoreboardLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
-  confBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  confText: { fontSize: 10, fontWeight: '700' },
+  confBlock: { paddingHorizontal: 16, paddingBottom: 14, gap: 6 },
+  confBar: { height: 6, borderRadius: 99, overflow: 'hidden' },
+  confBarFill: { height: '100%', borderRadius: 99 },
+  confText: { fontSize: 10.5, fontWeight: '700' },
   scoreRow: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 8 },
   scoreTeam: { flex: 1, alignItems: 'flex-start', gap: 6 },
   scoreTeamRight: { alignItems: 'flex-end' },
-  scoreTeamName: { fontSize: 14, fontWeight: '700', lineHeight: 19 },
+  scoreTeamName: { fontSize: 14, fontFamily: fonts.displayBold, lineHeight: 19 },
   winnerTag: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  winnerTagText: { fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 },
-  scoreCenter: { alignItems: 'center', minWidth: 60 },
-  scoreText: { fontSize: 32, fontWeight: '900', letterSpacing: -1 },
+  winnerTagText: { fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
+  scoreCenter: { alignItems: 'center', minWidth: 88 },
+  scoreText: { fontSize: 48, fontFamily: fonts.displayBlack, letterSpacing: -1.5, fontVariant: ['tabular-nums'] },
   scoreVs: { fontSize: 14, fontWeight: '700' },
-  analysisCard: { borderRadius: 14, overflow: 'hidden' },
+  analysisCard: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 8 },
   keyPlayersCard: { borderRadius: 14, padding: 14, gap: 9, marginBottom: 10 },
   liveChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   liveFieldChip: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },

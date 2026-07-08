@@ -1,117 +1,61 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  Animated, StatusBar, Dimensions, Image, Alert,
+  StatusBar, Image, ScrollView, RefreshControl,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Device from 'expo-device';
 import { getTheme } from '../theme';
+import { fonts } from '../theme/fonts';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconSettings, IconModels } from '../components/Icons';
+import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
+import { IconSettings, IconModels, IconClock } from '../components/Icons';
+import { TAB_BAR_HEIGHT } from '../components/TabBar';
+import { HalfwayDivider } from '../components/PitchLines';
+import TeamBadge from '../components/TeamBadge';
+
+const STADIUM = require('../../assets/stadium.jpg');
+const BALL = require('../../assets/ball.png');
+
+// Vertical scrim over the stadium backdrop: dark enough at the top for the
+// header text, clear in the middle so the stadium reads, then a smooth
+// fade into the solid #050505 page — "meet smoothly", no hard edge.
+function StadiumFade() {
+  return (
+    <Svg style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} pointerEvents="none">
+      <Defs>
+        <LinearGradient id="stadiumfade" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#050505" stopOpacity="0.6" />
+          <Stop offset="0.32" stopColor="#050505" stopOpacity="0.12" />
+          <Stop offset="0.66" stopColor="#050505" stopOpacity="0.62" />
+          <Stop offset="1" stopColor="#050505" stopOpacity="1" />
+        </LinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="100%" fill="url(#stadiumfade)" />
+    </Svg>
+  );
+}
 import {
-  fetchAndCacheFixtures, findClosestMatch, isLive,
-  fmtMatchTime, teamAbbr, isWorldCup, badgeUrl,
+  fetchAndCacheFixtures, fetchFdMatchDetail, findClosestMatch, isLive, isFinished,
+  fmtMatchTime, teamAbbr, isWorldCup, badgeUrl, fixtureOrder, todayISO, WC_NAME,
   type Fixture,
 } from '../utils/fixtures';
+import { getActiveFdKey, getActiveBzKey } from '../utils/storage';
+import { TOP_LEAGUES } from '../utils/bzzoiro';
+import FdKeyNudge from '../components/FdKeyNudge';
+import ReportBugLink from '../components/ReportBugLink';
+import { isOnline } from '../utils/network';
 
-// Team badge with graceful fallback to a colored abbreviation circle
-function TeamBadge({ url, abbr, fallbackColor }: { url: string | null; abbr: string; fallbackColor: string }) {
-  const [failed, setFailed] = useState(false);
-  if (url && !failed) {
-    return (
-      <View style={tbStyles.badgeWrap}>
-        <Image
-          source={{ uri: url }}
-          style={tbStyles.badgeImg}
-          resizeMode="contain"
-          onError={() => setFailed(true)}
-        />
-      </View>
-    );
-  }
-  return (
-    <View style={[tbStyles.circle, { backgroundColor: fallbackColor }]}>
-      <Text style={tbStyles.letter}>{abbr}</Text>
-    </View>
-  );
-}
-const tbStyles = StyleSheet.create({
-  badgeWrap: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  badgeImg: { width: 30, height: 30 },
-  circle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  letter: { fontSize: 11, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
-});
-import { llmManager } from '../utils/modelManager';
-import { pickTextCapable } from '../utils/models';
-import { syncModelsFromDisk, getDefaultModelId } from '../utils/storage';
-
-const { width: SW } = Dimensions.get('window');
 const HIT = { top: 10, bottom: 10, left: 10, right: 10 };
 
-// ── Animated AI waveform ────────────────────────────────────────────────────
-
-function Waveform({ color, count = 16 }: { color: string; count?: number }) {
-  const anims = useRef(
-    Array.from({ length: count }, () => new Animated.Value(0.2 + Math.random() * 0.7))
-  ).current;
-
-  useEffect(() => {
-    const loops = anims.map((a, i) => {
-      const dur = 320 + Math.random() * 480;
-      const loop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(a, { toValue: 0.15 + Math.random() * 0.85, duration: dur, useNativeDriver: true }),
-          Animated.timing(a, { toValue: 0.2 + Math.random() * 0.55, duration: dur * 0.85, useNativeDriver: true }),
-        ])
-      );
-      setTimeout(() => loop.start(), i * 28);
-      return loop;
-    });
-    return () => loops.forEach((l) => l.stop());
-  }, []);
-
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, height: 50 }}>
-      {anims.map((a, i) => (
-        <Animated.View
-          key={i}
-          style={{
-            width: 3.5, height: 50, borderRadius: 3,
-            backgroundColor: color,
-            transform: [{ scaleY: a }],
-          }}
-        />
-      ))}
-    </View>
-  );
+// "Today" / "Tomorrow" / "Sat 11 Jul" group label from a YYYY-MM-DD date
+function dateGroupLabel(dateEvent: string | null): string {
+  const today = todayISO();
+  if (!dateEvent || dateEvent === today) return 'Today';
+  const t = new Date(today); t.setDate(t.getDate() + 1);
+  if (dateEvent === t.toISOString().split('T')[0]) return 'Tomorrow';
+  return new Date(dateEvent).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
 }
-
-// ── Scan brackets (Scout Lens card visual) ──────────────────────────────────
-
-function ScanBrackets({ color }: { color: string }) {
-  return (
-    <View style={{ width: 52, height: 52 }}>
-      {/* TL */}
-      <View style={[sbStyles.corner, { top: 0, left: 0, borderTopWidth: 2.5, borderLeftWidth: 2.5, borderColor: color }]} />
-      {/* TR */}
-      <View style={[sbStyles.corner, { top: 0, right: 0, borderTopWidth: 2.5, borderRightWidth: 2.5, borderColor: color }]} />
-      {/* BL */}
-      <View style={[sbStyles.corner, { bottom: 0, left: 0, borderBottomWidth: 2.5, borderLeftWidth: 2.5, borderColor: color }]} />
-      {/* BR */}
-      <View style={[sbStyles.corner, { bottom: 0, right: 0, borderBottomWidth: 2.5, borderRightWidth: 2.5, borderColor: color }]} />
-    </View>
-  );
-}
-const sbStyles = StyleSheet.create({
-  corner: { position: 'absolute', width: 15, height: 15 },
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
   const navigation = useNavigation<any>();
@@ -119,354 +63,406 @@ export default function HomeScreen() {
   const theme = getTheme(themeMode);
   const insets = useSafeAreaInsets();
 
-  const [nextMatch, setNextMatch] = useState<Fixture | null>(null);
-  const [liveCount, setLiveCount] = useState(0);
+  const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [matchOnline, setMatchOnline] = useState(true);
   const [matchFromCache, setMatchFromCache] = useState(false);
-  const [loadedModel, setLoadedModel] = useState<string | null>(null);
-  const [hasAnyModel, setHasAnyModel] = useState<boolean | null>(null); // null = checking
-  const [readyModelName, setReadyModelName] = useState<string | null>(null);
-  const [modelLoading, setModelLoading] = useState(false);
-  const [loadPct, setLoadPct] = useState(0);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedComp, setSelectedComp] = useState<string | null>(null);
+  const [showFdNudge, setShowFdNudge] = useState(false);
+  const [bzActive, setBzActive] = useState(false);
+  // Distinguishes "still fetching for the first time" from "fetched and
+  // truly empty" — without this, the empty state (and its offline
+  // messaging) would flash for a moment on every cold start before the
+  // first fetch resolves, which reads as broken on a slow connection.
+  const [initialLoading, setInitialLoading] = useState(true);
+  // Set only when a fetch actually failed, by pinging a tiny external
+  // endpoint to tell "no internet at all" apart from "device is online but
+  // our data sources are slow/down" — two different messages, one bug
+  // worth reporting and one that isn't.
+  const [deviceOffline, setDeviceOffline] = useState<boolean | null>(null);
   const mountedRef = useRef(true);
   const lastFixtureFetchRef = useRef(0);
-  const hasMatchRef = useRef(false);
   const liveCountRef = useRef(0);
 
-  const c1 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
-  const c2 = useRef({ ty: new Animated.Value(28), op: new Animated.Value(0) }).current;
-
-  // Refetch fixtures so the card never shows a stale match: a finished game
-  // rotates to the next kick-off, live scores update, and a new day replaces
-  // yesterday's fixtures entirely.
   const refreshFixtures = useCallback((force = false) => {
     const stale = Date.now() - lastFixtureFetchRef.current > 3 * 60_000;
-    if (!force && !stale && hasMatchRef.current) return;
+    if (!force && !stale && fixtures.length > 0) return;
     lastFixtureFetchRef.current = Date.now();
-    fetchAndCacheFixtures().then(({ fixtures, fromCache, online }) => {
+    fetchAndCacheFixtures().then(({ fixtures: fx, fromCache, online }) => {
       if (!mountedRef.current) return;
-      const match = findClosestMatch(fixtures);
-      hasMatchRef.current = !!match;
-      const lc = fixtures.filter(isLive).length;
-      liveCountRef.current = lc;
-      setNextMatch(match);
-      setLiveCount(lc);
+      liveCountRef.current = fx.filter(isLive).length;
+      setFixtures(fx);
       setMatchOnline(online);
       setMatchFromCache(fromCache);
-    }).catch(() => {});
-  }, []);
+      if (online) { setLastSyncedAt(Date.now()); setDeviceOffline(null); }
+      else if (fx.length === 0) {
+        isOnline().then(v => { if (mountedRef.current) setDeviceOffline(!v); });
+      }
+    }).catch(() => {}).finally(() => { if (mountedRef.current) setInitialLoading(false); });
+  }, [fixtures.length]);
 
   useEffect(() => {
     mountedRef.current = true;
-
-    const animCard = (c: typeof c1, delay: number) => {
-      setTimeout(() => {
-        Animated.parallel([
-          Animated.spring(c.ty, { toValue: 0, friction: 9, tension: 85, useNativeDriver: true }),
-          Animated.timing(c.op, { toValue: 1, duration: 280, useNativeDriver: true }),
-        ]).start();
-      }, delay);
-    };
-    animCard(c1, 240);
-    animCard(c2, 360);
-
     refreshFixtures(true);
-    // Home is the root screen and never unmounts — keep the match fresh
-    // while the app sits open. Ticks every minute during live matches so
-    // the score updates; otherwise refetches only when >3 min stale.
+    // Tab screen stays mounted while the app is open — tick every minute
+    // during live matches so scores update; otherwise only when >3min stale.
     const interval = setInterval(() => refreshFixtures(liveCountRef.current > 0), 60_000);
-
     return () => { mountedRef.current = false; clearInterval(interval); };
   }, [refreshFixtures]);
 
-  // Refresh model status every time this screen is focused;
-  // refetch fixtures when stale or missing (e.g. came back online)
+  const checkFdNudge = useCallback(() => {
+    getActiveFdKey().then(k => { if (mountedRef.current) setShowFdNudge(!k); }).catch(() => {});
+  }, []);
+  const checkBzActive = useCallback(() => {
+    getActiveBzKey().then(k => { if (mountedRef.current) setBzActive(!!k); }).catch(() => {});
+  }, []);
+
   useFocusEffect(useCallback(() => {
     mountedRef.current = true;
-    syncModelsFromDisk().then(async models => {
-      if (!mountedRef.current) return;
-      const pick = pickTextCapable(models, await getDefaultModelId(), llmManager.getLoadedModelId());
-      setHasAnyModel(!!pick);
-      const lid = llmManager.getLoadedModelId();
-      setLoadedModel(lid);
-      setReadyModelName(models.find(m => m.id === lid)?.name ?? pick?.name ?? null);
-    }).catch(() => { setHasAnyModel(false); });
     refreshFixtures();
+    checkFdNudge();
+    checkBzActive();
     return () => { mountedRef.current = false; };
-  }, [refreshFixtures]));
+  }, [refreshFixtures, checkFdNudge, checkBzActive]));
 
-  const accent = '#22c55e';
+  // Live minute + goalscorer round-robin — football-data.org's bulk
+  // /v4/matches list (used above for the fixture list) never includes
+  // either field, only the per-match detail endpoint does. With the free
+  // tier capped at 10 req/min, one match every 6.5s stays safely under
+  // that even during a full slate of live matches, cycling through them so
+  // each one's minute/scorer refreshes roughly every (live count * 6.5s).
+  const fixturesRef = useRef<Fixture[]>([]);
+  useEffect(() => { fixturesRef.current = fixtures; }, [fixtures]);
 
-  const go = (tab: string, prefill?: string) =>
-    navigation.navigate(tab, prefill ? { prefill } : undefined);
+  useEffect(() => {
+    let cancelled = false;
+    let idx = 0;
+    const tick = async () => {
+      if (cancelled) return;
+      const key = await getActiveFdKey().catch(() => '');
+      if (!key) return;
+      const liveFd = fixturesRef.current.filter(f => f.idEvent.startsWith('fd-') && isLive(f));
+      if (liveFd.length === 0) return;
+      const target = liveFd[idx % liveFd.length];
+      idx++;
+      const detail = await fetchFdMatchDetail(key, target.idEvent);
+      if (cancelled || !mountedRef.current) return;
+      setFixtures(prev => prev.map(x => x.idEvent === target.idEvent ? {
+        ...x,
+        intHomeScore: detail.homeScore != null ? String(detail.homeScore) : x.intHomeScore,
+        intAwayScore: detail.awayScore != null ? String(detail.awayScore) : x.intAwayScore,
+        minute: detail.minute ?? x.minute,
+        lastScorer: detail.lastScorer ?? x.lastScorer,
+      } : x));
+    };
+    const interval = setInterval(tick, 6500);
+    tick();
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
 
-  const doQuickLoad = async (model: import('../types').DownloadedModel) => {
-    setModelLoading(true);
-    setLoadPct(0);
-    try {
-      await llmManager.ensure(model, {
-        // Vision models get the smaller context — a 4096 KV cache on a
-        // 3.5 GB model adds hundreds of MB of RAM pressure
-        ctx_size: model.modelType === 'vision' ? 2048 : 4096,
-        device: 'auto',
-        tools: model.modelType === 'text',
-        projectionModelSrc: model.projectionModelSrc,
-      }, pct => { if (mountedRef.current) setLoadPct(Math.round(pct)); });
-      setLoadedModel(llmManager.getLoadedModelId());
-    } catch {
-      Alert.alert('Load Failed', 'Could not load the model. Close other apps to free memory and try again.');
+  const onPullRefresh = useCallback(async () => {
+    setRefreshing(true);
+    lastFixtureFetchRef.current = 0;
+    refreshFixtures(true);
+    setTimeout(() => { if (mountedRef.current) setRefreshing(false); }, 900);
+  }, [refreshFixtures]);
+
+  // Hero = the closest match (live first, then next kickoff)
+  const hero = useMemo(() => findClosestMatch(fixtures), [fixtures]);
+
+  // Competition filter chips — World Cup always pinned first (its own
+  // dedicated tab, not dependent on today's fixtures happening to include
+  // it), then the big-5 European leagues (when Bzzoiro is active, so
+  // they're always tappable even with nothing on today), then whatever
+  // else actually has a fixture, in kickoff order. Without pinning, this
+  // list is just "whatever showed up" — how a NSW regional league ends up
+  // sitting next to the World Cup.
+  const comps = useMemo(() => {
+    const seen = new Set<string>([WC_NAME]);
+    const list: string[] = [WC_NAME];
+    if (bzActive) {
+      for (const l of TOP_LEAGUES) { if (!seen.has(l.name)) { seen.add(l.name); list.push(l.name); } }
     }
-    setModelLoading(false);
-  };
+    for (const f of [...fixtures].sort((a, b) => fixtureOrder(a) - fixtureOrder(b))) {
+      if (f.strLeague && !seen.has(f.strLeague)) { seen.add(f.strLeague); list.push(f.strLeague); }
+    }
+    return list;
+  }, [fixtures, bzActive]);
 
-  const quickLoad = async () => {
-    if (modelLoading) return;
-    try {
-      const models = await syncModelsFromDisk();
-      const text = pickTextCapable(models, await getDefaultModelId(), llmManager.getLoadedModelId());
-      if (!text) { navigation.navigate('Models'); return; }
-      const totalMem = Device.totalMemory ?? 0;
-      if (text.heavy && totalMem > 0 && totalMem < 5.5e9) {
-        Alert.alert(
-          'This model may be too big',
-          `${text.name} needs about 4 GB of free RAM. This device has ${(totalMem / 1e9).toFixed(1)} GB total, so loading can crash the app.`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Load Anyway', style: 'destructive', onPress: () => doQuickLoad(text) },
-          ],
-        );
-        return;
-      }
-      await doQuickLoad(text);
-    } catch {}
-  };
+  // World Cup is the default tab — set once on mount, not re-fired on every
+  // refetch, so it never fights the user's own later taps (including back
+  // to "All").
+  const defaultedCompRef = useRef(false);
+  useEffect(() => {
+    if (defaultedCompRef.current) return;
+    defaultedCompRef.current = true;
+    setSelectedComp(WC_NAME);
+  }, []);
 
-  const quickStop = async () => {
-    await llmManager.release();
-    setLoadedModel(null);
-  };
+  // Fixture list grouped by date ("Today" / "Tomorrow" / "Sat 11 Jul"),
+  // WC-first within each group, hero excluded (it has its own panel)
+  const groups = useMemo(() => {
+    const filtered = fixtures.filter(f =>
+      (!selectedComp || f.strLeague === selectedComp) && f.idEvent !== hero?.idEvent);
+    const byDate = new Map<string, Fixture[]>();
+    for (const f of filtered) {
+      const key = f.dateEvent ?? todayISO();
+      if (!byDate.has(key)) byDate.set(key, []);
+      byDate.get(key)!.push(f);
+    }
+    return [...byDate.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, list]) => ({
+        label: dateGroupLabel(date),
+        list: list.sort((a, b) => fixtureOrder(a) - fixtureOrder(b)),
+      }));
+  }, [fixtures, selectedComp, hero?.idEvent]);
+
+  const openInPredictor = (f: Fixture) =>
+    navigation.navigate('Predictor', { fixtureId: f.idEvent });
+
+  const updatedAgo = lastSyncedAt
+    ? Math.max(0, Math.round((Date.now() - lastSyncedAt) / 60_000))
+    : null;
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
-      <StatusBar barStyle={themeMode === 'dark' ? 'light-content' : 'dark-content'} />
-      <View style={styles.body}>
+      <StatusBar barStyle="light-content" />
 
-        {/* ── TOP BAR ──────────────────────────────────────────────── */}
-        <View style={[styles.topBar, { paddingTop: insets.top + 14 }]}>
-          <View style={styles.wordmarkRow}>
-            <View style={[styles.wDot, { backgroundColor: accent }]} />
-            <Text style={[styles.wordmark, { color: theme.text }]}>SCOUT</Text>
+      {/* Stadium backdrop — fades smoothly into the black page */}
+      <View style={styles.stadiumWrap} pointerEvents="none">
+        <Image source={STADIUM} style={styles.stadiumImg} resizeMode="cover" />
+        <StadiumFade />
+      </View>
+
+      {/* Match ball anchoring the bottom corner, behind everything */}
+      <View style={styles.ballWrap} pointerEvents="none">
+        <Image source={BALL} style={styles.ballInner} />
+      </View>
+
+      <View style={[styles.body, { paddingTop: insets.top + 14 }]}>
+
+        {/* Header */}
+        <View style={styles.topBar}>
+          <View>
+            <Text style={[styles.screenTitle, { color: theme.text }]}>Matches</Text>
           </View>
           <View style={styles.topActions}>
-            <TouchableOpacity style={[styles.iconChip, { backgroundColor: theme.cardAlt }]} onPress={() => navigation.navigate('Models')} hitSlop={HIT}>
+            <TouchableOpacity style={[styles.iconChip, { backgroundColor: theme.card, borderColor: theme.border }]} onPress={() => navigation.navigate('History')} hitSlop={HIT}>
+              <IconClock size={16} color={theme.textSecondary} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.iconChip, { backgroundColor: theme.card, borderColor: theme.border }]} onPress={() => navigation.navigate('Models')} hitSlop={HIT}>
               <IconModels size={17} color={theme.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.iconChip, { backgroundColor: theme.cardAlt }]} onPress={() => navigation.navigate('Settings')} hitSlop={HIT}>
+            <TouchableOpacity style={[styles.iconChip, { backgroundColor: theme.card, borderColor: theme.border }]} onPress={() => navigation.navigate('Settings')} hitSlop={HIT}>
               <IconSettings size={17} color={theme.textSecondary} />
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* ── MODEL STATUS STRIP ───────────────────────────────────── */}
-        {hasAnyModel !== null && (
-          <View style={[styles.modelStrip, { backgroundColor: theme.card }]}>
-            {loadedModel ? (
-              <>
-                <View style={styles.modelStripLeft}>
-                  <View style={[styles.modelStatusDot, { backgroundColor: accent }]} />
-                  <Text style={[styles.modelStatusText, { color: accent }]} numberOfLines={1}>
-                    {readyModelName ? `${readyModelName} running` : 'AI Ready'}
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={quickStop} style={[styles.modelStripBtn, { borderColor: '#ef444440' }]}>
-                  <Text style={[styles.modelStripBtnText, { color: '#ef4444' }]}>Stop</Text>
-                </TouchableOpacity>
-              </>
-            ) : hasAnyModel ? (
-              <>
-                <View style={styles.modelStripLeft}>
-                  <View style={[styles.modelStatusDot, { backgroundColor: theme.border }]} />
-                  <Text style={[styles.modelStatusText, { color: theme.textSecondary }]} numberOfLines={1}>
-                    {readyModelName ? `${readyModelName} ready` : 'Model not loaded'}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={quickLoad}
-                  style={[styles.modelStripBtn, { borderColor: accent + '50', backgroundColor: accent + '12' }]}
-                  disabled={modelLoading}
-                >
-                  <Text style={[styles.modelStripBtnText, { color: accent }]}>
-                    {modelLoading ? (loadPct > 0 ? `Loading ${loadPct}%` : 'Loading...') : 'Load Model'}
-                  </Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <View style={styles.modelStripLeft}>
-                  <View style={[styles.modelStatusDot, { backgroundColor: '#f59e0b' }]} />
-                  <Text style={[styles.modelStatusText, { color: '#f59e0b' }]}>No model downloaded</Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => navigation.navigate('Models')}
-                  style={[styles.modelStripBtn, { borderColor: '#f59e0b50', backgroundColor: '#f59e0b12' }]}
-                >
-                  <Text style={[styles.modelStripBtnText, { color: '#f59e0b' }]}>Get Model</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        )}
-
-        {/* Middle content fills whatever space is left between the model
-            strip and the footer — no scrolling, cards flex to the screen */}
-        <View style={styles.middleFlex}>
-
-        {/* ── AI COACH CARD ─────────────────────────────────────────── */}
-        <Animated.View style={[styles.fullCardWrap, { opacity: c1.op, transform: [{ translateY: c1.ty }] }]}>
-          <TouchableOpacity style={styles.coachCard} onPress={() => go('MatchAI')} activeOpacity={0.85}>
-            {/* Pitch markings — decorative center circle + halfway line */}
-            <View pointerEvents="none" style={styles.pitchCircleOuter} />
-            <View pointerEvents="none" style={styles.pitchCircleInner} />
-            <View pointerEvents="none" style={styles.pitchLine} />
-            <View style={styles.coachTop}>
-              <View style={styles.coachTopLeft}>
-                <Text style={styles.coachModLabel}>AI COACH</Text>
-                <Text style={styles.coachTitle}>World-class{'\n'}football analysis</Text>
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: insets.bottom + TAB_BAR_HEIGHT + 36 }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} tintColor={theme.accent} colors={[theme.accent]} />
+          }
+        >
+          {/* Hero — translucent card floating over the stadium backdrop,
+              big kickoff time center, LIVE pill when in play */}
+          {hero && (
+            <TouchableOpacity
+              style={styles.hero}
+              onPress={() => openInPredictor(hero)}
+              activeOpacity={0.88}
+            >
+              <View style={styles.heroTop}>
+                <Text style={[styles.heroEyebrow, { color: 'rgba(255,255,255,0.75)' }]} numberOfLines={1}>
+                  {isWorldCup(hero) ? 'FIFA WORLD CUP 2026' : hero.strLeague.toUpperCase()}
+                </Text>
+                {isLive(hero) ? (
+                  <View style={[styles.livePill, { backgroundColor: theme.live }]}>
+                    <View style={styles.livePillDot} />
+                    <Text style={styles.livePillText}>{hero.minute ? `${hero.minute}'` : 'LIVE'}</Text>
+                  </View>
+                ) : !isFinished(hero) ? (
+                  <View style={[styles.nextPill, { borderColor: theme.accent + '55' }]}>
+                    <Text style={[styles.nextPillText, { color: theme.accent }]}>NEXT MATCH</Text>
+                  </View>
+                ) : null}
               </View>
-              <Waveform color="#22c55e" count={10} />
-            </View>
-            <View style={styles.coachPills}>
-              {[
-                { label: 'High press tactics?', q: 'How does a high press work in modern football?' },
-                { label: 'Best striker ever?', q: 'Best striker in football history and why?' },
-                { label: 'Explain offside', q: 'Explain the offside rule with a simple example.' },
-              ].map(({ label, q }) => (
-                <TouchableOpacity key={label} style={styles.coachPill} onPress={() => go('MatchAI', q)} activeOpacity={0.7}>
-                  <Text style={styles.coachPillText}>{label}</Text>
+              <View style={styles.heroTeams}>
+                <View style={styles.heroTeamCol}>
+                  <TeamBadge url={badgeUrl(hero.strHomeTeamBadge)} name={hero.strHomeTeam} abbr={teamAbbr(hero.strHomeTeam)} size={52} />
+                  <Text style={styles.heroTeamName} numberOfLines={1}>{hero.strHomeTeam}</Text>
+                </View>
+                <View style={styles.heroMid}>
+                  {hero.intHomeScore != null && hero.intAwayScore != null ? (
+                    <>
+                      <Text style={styles.heroScore}>{hero.intHomeScore}–{hero.intAwayScore}</Text>
+                      {isFinished(hero) && <Text style={[styles.heroFt, { color: 'rgba(255,255,255,0.6)' }]}>FULL TIME</Text>}
+                      {hero.lastScorer && (
+                        <Text style={[styles.heroScorer, { color: 'rgba(255,255,255,0.65)' }]} numberOfLines={1}>
+                          ⚽ {hero.lastScorer.name} {hero.lastScorer.minute}'
+                        </Text>
+                      )}
+                    </>
+                  ) : fmtMatchTime(hero.strTime) ? (
+                    <>
+                      <Text style={styles.heroTime}>{fmtMatchTime(hero.strTime)}</Text>
+                      <Text style={[styles.heroTimeSub, { color: 'rgba(255,255,255,0.55)' }]}>{dateGroupLabel(hero.dateEvent)}</Text>
+                    </>
+                  ) : (
+                    <Text style={styles.heroVs}>VS</Text>
+                  )}
+                </View>
+                <View style={styles.heroTeamCol}>
+                  <TeamBadge url={badgeUrl(hero.strAwayTeamBadge)} name={hero.strAwayTeam} abbr={teamAbbr(hero.strAwayTeam)} size={52} />
+                  <Text style={styles.heroTeamName} numberOfLines={1}>{hero.strAwayTeam}</Text>
+                </View>
+              </View>
+              <Text style={[styles.heroHint, { color: 'rgba(255,255,255,0.5)' }]}>
+                {isLive(hero) ? 'Tap to predict the rest of this match →' : 'Tap to predict this match →'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* No model strip here — model loading lives in Coach and
+              Predictor now, the two screens that actually need one.
+              Matches doesn't touch the model at all. */}
+
+          {showFdNudge && (
+            <FdKeyNudge onSaved={() => { setShowFdNudge(false); lastFixtureFetchRef.current = 0; refreshFixtures(true); }} />
+          )}
+
+          {/* Competition filter chips */}
+          {comps.length > 1 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+              <TouchableOpacity
+                style={[styles.compChip, !selectedComp
+                  ? { backgroundColor: theme.accent }
+                  : { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border }]}
+                onPress={() => setSelectedComp(null)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.compChipText, { color: !selectedComp ? theme.accentFg : theme.textSecondary }]}>All</Text>
+              </TouchableOpacity>
+              {comps.map(c => (
+                <TouchableOpacity
+                  key={c}
+                  style={[styles.compChip, selectedComp === c
+                    ? { backgroundColor: theme.accent }
+                    : { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border }]}
+                  onPress={() => setSelectedComp(c)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.compChipText, { color: selectedComp === c ? theme.accentFg : theme.textSecondary }]} numberOfLines={1}>
+                    {c}
+                  </Text>
                 </TouchableOpacity>
               ))}
-            </View>
-            <View style={styles.coachFooter}>
-              <Text style={styles.coachCta}>Ask the Coach</Text>
-              <View style={styles.coachArrow}><Text style={styles.coachArrowText}>→</Text></View>
-            </View>
-          </TouchableOpacity>
-        </Animated.View>
+            </ScrollView>
+          )}
 
-        {/* ── PREDICTOR + LENS ROW ─────────────────────────────────── */}
-        <Animated.View style={[styles.twoColRow, { opacity: c2.op, transform: [{ translateY: c2.ty }] }]}>
+          {/* Quiet sync status — never a blocking error */}
+          {matchFromCache && !matchOnline && updatedAgo != null && (
+            <Text style={[styles.syncLine, { color: theme.textSecondary }]}>
+              Offline · showing cached fixtures
+            </Text>
+          )}
 
-          {/* Predictor */}
-          <TouchableOpacity style={styles.predictCard} onPress={() => navigation.navigate('Predictor', nextMatch ? { fixtureId: nextMatch.idEvent } : undefined)} activeOpacity={0.85}>
-            <Text style={styles.predictModLabel}>PREDICTOR</Text>
-
-            {nextMatch ? (
-              <>
-                {/* League / live badge */}
-                <View style={styles.matchBadgeRow}>
-                  {isLive(nextMatch) ? (
-                    <View style={styles.liveBadge}>
-                      <View style={styles.liveDot} />
-                      <Text style={styles.liveBadgeText}>
-                        {liveCount > 1 ? `LIVE · ${liveCount} MATCHES` : 'LIVE'}
-                      </Text>
+          {/* Grouped fixture list */}
+          {groups.map(g => (
+            <View key={g.label}>
+              <Text style={[styles.groupLabel, { color: theme.textSecondary }]}>{g.label.toUpperCase()}</Text>
+              {g.list.map(f => (
+                <TouchableOpacity
+                  key={f.idEvent}
+                  style={[styles.fixRow, { backgroundColor: theme.card, borderColor: theme.border }]}
+                  onPress={() => openInPredictor(f)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.fixComp, { color: theme.textTertiary }]} numberOfLines={1}>{f.strLeague}</Text>
+                  <View style={styles.fixTeamsRow}>
+                    <View style={styles.fixTeamLeft}>
+                      <TeamBadge url={badgeUrl(f.strHomeTeamBadge)} name={f.strHomeTeam} abbr={teamAbbr(f.strHomeTeam)} size={28} />
+                      <Text style={[styles.fixTeamName, { color: theme.text }]} numberOfLines={1}>{f.strHomeTeam}</Text>
                     </View>
-                  ) : isWorldCup(nextMatch) ? (
-                    <Text style={styles.wcLabel}>WC 2026</Text>
-                  ) : (
-                    <Text style={styles.wcLabel} numberOfLines={1}>{nextMatch.strLeague.slice(0, 14)}</Text>
-                  )}
-                  {matchFromCache && !matchOnline && (
-                    <Text style={styles.cachedLabel}>cached</Text>
-                  )}
-                </View>
-
-                {/* Teams */}
-                <View style={styles.fixtureVis}>
-                  <View style={styles.teamCol}>
-                    <TeamBadge
-                      url={badgeUrl(nextMatch.strHomeTeamBadge)}
-                      abbr={teamAbbr(nextMatch.strHomeTeam)}
-                      fallbackColor="#ef4444"
-                    />
-                    <Text style={styles.teamName} numberOfLines={1}>{nextMatch.strHomeTeam.split(' ')[0]}</Text>
-                  </View>
-                  <View style={styles.vsCol}>
-                    {nextMatch.intHomeScore != null && nextMatch.intAwayScore != null ? (
-                      <Text style={styles.scoreLabel}>
-                        {nextMatch.intHomeScore}-{nextMatch.intAwayScore}
-                      </Text>
-                    ) : (
-                      <>
-                        <Text style={styles.vsLabel}>vs</Text>
-                        {fmtMatchTime(nextMatch.strTime) ? (
-                          <Text style={styles.matchTime}>{fmtMatchTime(nextMatch.strTime)}</Text>
-                        ) : null}
-                      </>
-                    )}
-                  </View>
-                  <View style={styles.teamCol}>
-                    <TeamBadge
-                      url={badgeUrl(nextMatch.strAwayTeamBadge)}
-                      abbr={teamAbbr(nextMatch.strAwayTeam)}
-                      fallbackColor="#3b82f6"
-                    />
-                    <Text style={styles.teamName} numberOfLines={1}>{nextMatch.strAwayTeam.split(' ')[0]}</Text>
-                  </View>
-                </View>
-              </>
-            ) : (
-              <>
-                {/* Offline / no data fallback */}
-                <View style={styles.offlineBadgeRow}>
-                  {!matchOnline && (
-                    <Text style={styles.offlineLabel}>offline</Text>
-                  )}
-                </View>
-                <View style={styles.fixtureVis}>
-                  <View style={styles.teamCol}>
-                    <View style={[styles.teamCircle, { backgroundColor: '#374151' }]}>
-                      <Text style={styles.teamLetter}>---</Text>
+                    <View style={styles.fixMid}>
+                      {f.intHomeScore != null && f.intAwayScore != null ? (
+                        <>
+                          <Text style={[styles.fixScore, { color: theme.text }]}>
+                            {f.intHomeScore}–{f.intAwayScore}
+                          </Text>
+                          {isFinished(f) ? (
+                            <Text style={[styles.fixStatus, { color: theme.textSecondary }]}>FT</Text>
+                          ) : isLive(f) ? (
+                            <Text style={[styles.fixStatus, { color: theme.live }]}>
+                              {f.minute ? `${f.minute}'` : 'LIVE'}
+                            </Text>
+                          ) : null}
+                        </>
+                      ) : (
+                        <Text style={[styles.fixKick, { color: theme.text }]}>{fmtMatchTime(f.strTime) || '—'}</Text>
+                      )}
                     </View>
-                    <Text style={styles.teamName}>Home</Text>
-                  </View>
-                  <View style={styles.vsCol}>
-                    <Text style={styles.vsLabel}>vs</Text>
-                  </View>
-                  <View style={styles.teamCol}>
-                    <View style={[styles.teamCircle, { backgroundColor: '#374151' }]}>
-                      <Text style={styles.teamLetter}>---</Text>
+                    <View style={styles.fixTeamRight}>
+                      <Text style={[styles.fixTeamName, styles.fixTeamNameRight, { color: theme.text }]} numberOfLines={1}>{f.strAwayTeam}</Text>
+                      <TeamBadge url={badgeUrl(f.strAwayTeamBadge)} name={f.strAwayTeam} abbr={teamAbbr(f.strAwayTeam)} size={28} />
                     </View>
-                    <Text style={styles.teamName}>Away</Text>
                   </View>
-                </View>
-                {!matchOnline && (
-                  <Text style={styles.offlineHint}>Go online for live fixtures</Text>
-                )}
-              </>
-            )}
-
-            <Text style={styles.predictCta}>Predict →</Text>
-          </TouchableOpacity>
-
-          {/* Scout Lens */}
-          <TouchableOpacity style={styles.lensCard} onPress={() => go('ScoutLens')} activeOpacity={0.85}>
-            <Text style={styles.lensModLabel}>SCOUT LENS</Text>
-            <View style={styles.lensBracketWrap}>
-              <ScanBrackets color="#34d399" />
+                </TouchableOpacity>
+              ))}
+              <HalfwayDivider color={theme.border} />
             </View>
-            <Text style={styles.lensTitle}>Jerseys,{'\n'}badges &{'\n'}scoreboards</Text>
-            <Text style={styles.lensCta}>Scan →</Text>
-          </TouchableOpacity>
-        </Animated.View>
+          ))}
 
-        </View>
+          {/* A pinned league chip (e.g. Premier League in mid-summer) can
+              have nothing in the fetch window at all — without this, tapping
+              it would just show a blank area under the chips with zero
+              explanation. */}
+          {selectedComp && fixtures.length > 0 && groups.length === 0 && hero?.strLeague !== selectedComp && (
+            <View style={styles.empty}>
+              <Text style={[styles.emptyTitle, { color: theme.text }]}>No {selectedComp} fixtures right now</Text>
+              <Text style={[styles.emptySub, { color: theme.textSecondary }]}>Check back closer to the next matchday.</Text>
+            </View>
+          )}
 
-        <TouchableOpacity onPress={() => navigation.navigate('About')} style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-          <Text style={[styles.footerText, { color: theme.textSecondary }]}>
-            Scout · 100% on-device football AI
-          </Text>
-        </TouchableOpacity>
+          {/* Empty state — three distinct cases: still loading (first
+              fetch hasn't resolved, no message yet so it doesn't flash
+              "no fixtures" for a split second), no internet at all, or
+              online but our data sources are having trouble. */}
+          {fixtures.length === 0 && initialLoading && (
+            <View style={styles.empty}>
+              <Text style={[styles.emptySub, { color: theme.textSecondary }]}>Loading matches...</Text>
+            </View>
+          )}
+          {fixtures.length === 0 && !initialLoading && (
+            <View style={styles.empty}>
+              {deviceOffline ? (
+                <>
+                  <Text style={[styles.emptyTitle, { color: theme.text }]}>You're offline</Text>
+                  <Text style={[styles.emptySub, { color: theme.textSecondary }]}>
+                    Connect to the internet to get live matches. Anything you've already loaded stays available offline.
+                  </Text>
+                </>
+              ) : !matchOnline ? (
+                <>
+                  <Text style={[styles.emptyTitle, { color: theme.text }]}>Having trouble connecting</Text>
+                  <Text style={[styles.emptySub, { color: theme.textSecondary }]}>
+                    You're online, but match data isn't loading right now. Pull to refresh, or check back shortly.
+                  </Text>
+                  <ReportBugLink prefill="Matches: online but fixtures won't load" />
+                </>
+              ) : (
+                <>
+                  <Text style={[styles.emptyTitle, { color: theme.text }]}>No fixtures synced yet</Text>
+                  <Text style={[styles.emptySub, { color: theme.textSecondary }]}>Pull to refresh.</Text>
+                </>
+              )}
+            </View>
+          )}
+        </ScrollView>
       </View>
     </View>
   );
@@ -475,132 +471,71 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   body: { flex: 1 },
-  // flex-start, not center: centering left equal dead gaps above AND below
-  // the cards (looked broken, like content hadn't loaded). Top-anchoring
-  // means any leftover space collects in one place, below the cards and
-  // above the footer — the normal, unsurprising "breathing room" pattern
-  // most screens have, instead of a void before the first thing on screen.
-  middleFlex: { flex: 1, justifyContent: 'flex-start', gap: 10 },
 
-  // Top bar
+  // Header
   topBar: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 20, paddingBottom: 10,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+    paddingHorizontal: 20, paddingBottom: 14,
   },
-  wordmarkRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  wDot: { width: 7, height: 7, borderRadius: 3.5 },
-  wordmark: { fontSize: 20, fontWeight: '900', letterSpacing: 4 },
-  topActions: { flexDirection: 'row', gap: 10 },
-  iconChip: {
-    width: 34, height: 34, borderRadius: 17,
-    alignItems: 'center', justifyContent: 'center',
-  },
+  screenTitle: { fontSize: 24, fontFamily: fonts.displayExtraBold, letterSpacing: -0.4 },
+  topActions: { flexDirection: 'row', gap: 8 },
+  iconChip: { width: 34, height: 34, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
 
+  // Competition chips
+  chipRow: { gap: 8, paddingHorizontal: 16, paddingTop: 22, paddingBottom: 12 },
+  compChip: { borderRadius: 99, paddingHorizontal: 13, paddingVertical: 7, maxWidth: 170 },
+  compChipText: { fontSize: 12, fontFamily: fonts.bodySemiBold },
 
-  // Model status strip
-  modelStrip: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginHorizontal: 14, marginTop: 4, marginBottom: 2,
-    borderRadius: 14, paddingVertical: 11, paddingHorizontal: 15,
-    },
-  modelStripLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  modelStatusDot: { width: 7, height: 7, borderRadius: 4 },
-  modelStatusText: { fontSize: 13, fontWeight: '600' },
-  modelStripBtn: {
-    borderWidth: 1, borderRadius: 8,
-    paddingHorizontal: 12, paddingVertical: 5,
-  },
-  modelStripBtnText: { fontSize: 12, fontWeight: '700' },
+  // Backdrop
+  stadiumWrap: { position: 'absolute', top: 0, left: 0, right: 0, height: 350 },
+  stadiumImg: { width: '100%', height: '100%' },
+  // Bigger, but anchored off-corner so it stays a background accent, not a
+  // page-filling element — most of it bleeds off the right/bottom edges.
+  ballWrap: { position: 'absolute', right: -95, bottom: -75, width: 320, height: 320 },
+  ballInner: { width: 320, height: 320, opacity: 0.9 },
 
-  // Full-width card wrapper
-  fullCardWrap: { paddingHorizontal: 14, marginTop: 12 },
+  // Hero — translucent card floating over the stadium
+  hero: {
+    marginHorizontal: 16, marginTop: 4, borderRadius: 24, padding: 19, overflow: 'hidden', gap: 16,
+    backgroundColor: 'rgba(8,10,6,0.60)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+  },
+  heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
+  heroEyebrow: { flex: 1, fontSize: 10, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 1.2 },
+  livePill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 4 },
+  livePillDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
+  livePillText: { fontSize: 10.5, fontFamily: fonts.mono, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
+  nextPill: { borderRadius: 999, borderWidth: 1, paddingHorizontal: 9, paddingVertical: 4 },
+  nextPillText: { fontSize: 9.5, fontFamily: fonts.mono, fontWeight: '800', letterSpacing: 0.5 },
+  heroTeams: { flexDirection: 'row', alignItems: 'center' },
+  heroTeamCol: { flex: 1, alignItems: 'center', gap: 9 },
+  heroTeamName: { fontSize: 12.5, fontFamily: fonts.displayExtraBold, color: '#f5f5f5', textTransform: 'uppercase', letterSpacing: 0.4, maxWidth: 120, textAlign: 'center' },
+  heroMid: { alignItems: 'center', paddingHorizontal: 6, gap: 5 },
+  heroVs: { fontSize: 18, fontFamily: fonts.displayBlack, color: 'rgba(255,255,255,0.45)' },
+  heroScore: { fontSize: 42, fontFamily: fonts.displayBlack, color: '#f5f5f5', fontVariant: ['tabular-nums'], letterSpacing: -1 },
+  heroFt: { fontSize: 10, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 1 },
+  heroScorer: { fontSize: 10.5, fontFamily: fonts.bodyMedium, marginTop: 4, maxWidth: 200, textAlign: 'center' },
+  heroTime: { fontSize: 30, fontFamily: fonts.displayBlack, color: '#f5f5f5', fontVariant: ['tabular-nums'], letterSpacing: -0.5 },
+  heroTimeSub: { fontSize: 12, fontFamily: fonts.bodyMedium },
+  heroHint: { fontSize: 10.5, fontFamily: fonts.bodyMedium, textAlign: 'center' },
 
-  // AI Coach card
-  coachCard: {
-    backgroundColor: '#0c1f0c', borderRadius: 24, padding: 22, gap: 18, overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(34,197,94,0.22)',
-  },
-  pitchCircleOuter: {
-    position: 'absolute', right: -70, bottom: -70, width: 200, height: 200,
-    borderRadius: 100, borderWidth: 1.5, borderColor: 'rgba(34,197,94,0.10)',
-  },
-  pitchCircleInner: {
-    position: 'absolute', right: -25, bottom: -25, width: 110, height: 110,
-    borderRadius: 55, borderWidth: 1.5, borderColor: 'rgba(34,197,94,0.14)',
-  },
-  pitchLine: {
-    position: 'absolute', right: 30, top: 0, bottom: 0, width: 1.5,
-    backgroundColor: 'rgba(34,197,94,0.07)',
-  },
-  coachTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  coachTopLeft: { gap: 6, flex: 1 },
-  coachModLabel: { fontSize: 10, fontWeight: '800', color: '#22c55e', letterSpacing: 1.5 },
-  coachTitle: { fontSize: 28, fontWeight: '900', color: '#fff', lineHeight: 34, letterSpacing: -0.6 },
-  coachPills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  coachPill: {
-    backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 8,
-    paddingHorizontal: 12, paddingVertical: 7,
-  },
-  coachPillText: { fontSize: 12, color: 'rgba(255,255,255,0.65)' },
-  coachFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  coachCta: { fontSize: 15, fontWeight: '800', color: '#22c55e' },
-  coachArrow: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#22c55e', alignItems: 'center', justifyContent: 'center',
-  },
-  coachArrowText: { fontSize: 18, color: '#fff', fontWeight: '700' },
+  syncLine: { fontSize: 11, fontFamily: fonts.bodyMedium, textAlign: 'center', marginTop: 10 },
 
-  // Two-column row
-  twoColRow: {
-    flexDirection: 'row', paddingHorizontal: 14, marginTop: 10, gap: 10,
-  },
+  // Grouped fixture list
+  groupLabel: { fontSize: 11, fontFamily: fonts.bodySemiBold, letterSpacing: 1.2, marginHorizontal: 20, marginTop: 18, marginBottom: 8 },
+  fixRow: { marginHorizontal: 16, marginBottom: 8, borderRadius: 16, borderWidth: 1, padding: 12, gap: 8 },
+  fixComp: { fontSize: 10, fontFamily: fonts.bodySemiBold, letterSpacing: 0.8, textTransform: 'uppercase' },
+  fixTeamsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  fixTeamLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  fixTeamRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8 },
+  fixTeamName: { fontSize: 13, fontFamily: fonts.displayBold, flexShrink: 1 },
+  fixTeamNameRight: { textAlign: 'right' },
+  fixMid: { alignItems: 'center', minWidth: 52 },
+  fixKick: { fontSize: 13, fontFamily: fonts.displayBold, fontVariant: ['tabular-nums'] },
+  fixScore: { fontSize: 15, fontFamily: fonts.displayExtraBold, fontVariant: ['tabular-nums'] },
+  fixStatus: { fontSize: 9, fontFamily: fonts.bodySemiBold, letterSpacing: 0.8, marginTop: 1 },
 
-  // Predictor card
-  predictCard: {
-    flex: 1, backgroundColor: '#1a0d00', borderRadius: 24, padding: 18, gap: 10, overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(249,115,22,0.22)',
-  },
-  predictModLabel: { fontSize: 9, fontWeight: '800', color: '#f97316', letterSpacing: 1.6 },
-  predictTitle: { fontSize: 21, fontWeight: '900', color: '#fff', lineHeight: 27, letterSpacing: -0.3 },
-
-  // Match badge row (WC / LIVE / cached)
-  matchBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  offlineBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 16 },
-  wcLabel: { fontSize: 9, fontWeight: '800', color: '#f97316', letterSpacing: 1 },
-  cachedLabel: { fontSize: 9, color: 'rgba(255,255,255,0.28)', fontStyle: 'italic' },
-  offlineLabel: {
-    fontSize: 9, fontWeight: '700', color: 'rgba(255,255,255,0.28)',
-    letterSpacing: 0.8,
-  },
-  liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  liveDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#ef4444' },
-  liveBadgeText: { fontSize: 9, fontWeight: '800', color: '#ef4444', letterSpacing: 1 },
-
-  // Fixture vis
-  fixtureVis: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
-  teamCol: { alignItems: 'center', gap: 3, flex: 1 },
-  vsCol: { alignItems: 'center', gap: 2 },
-  teamCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  teamLetter: { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
-  teamName: { fontSize: 10, color: 'rgba(255,255,255,0.55)', fontWeight: '600', maxWidth: 60 },
-  vsLabel: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.35)' },
-  scoreLabel: { fontSize: 16, fontWeight: '900', color: '#fff', letterSpacing: 0.5 },
-  matchTime: { fontSize: 10, color: '#f97316', fontWeight: '700' },
-  offlineHint: { fontSize: 9, color: 'rgba(255,255,255,0.25)', marginTop: -2 },
-
-  predictCta: { fontSize: 13, fontWeight: '800', color: '#f97316', marginTop: 2 },
-
-  // Scout Lens card
-  lensCard: {
-    flex: 1, backgroundColor: '#0a0e18', borderRadius: 24, padding: 18, gap: 8, overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(52,211,153,0.22)',
-  },
-  lensModLabel: { fontSize: 9, fontWeight: '800', color: '#34d399', letterSpacing: 1.6 },
-  lensBracketWrap: { marginTop: 2, marginBottom: 2 },
-  lensTitle: { fontSize: 15, fontWeight: '800', color: '#fff', lineHeight: 22, letterSpacing: -0.2 },
-  lensCta: { fontSize: 13, fontWeight: '800', color: '#34d399', marginTop: 2 },
-
-  // Footer
-  footer: { alignItems: 'center', marginTop: 10, paddingBottom: 10 },
-  footerText: { fontSize: 11 },
+  // Empty state
+  empty: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32, gap: 6 },
+  emptyTitle: { fontSize: 16, fontFamily: fonts.displayExtraBold },
+  emptySub: { fontSize: 13, fontFamily: fonts.bodyRegular, textAlign: 'center', lineHeight: 19 },
 });

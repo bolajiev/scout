@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
-  ScrollView, Keyboard, Animated, Dimensions,
+  ScrollView, Keyboard, Animated, Modal, Pressable,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
@@ -11,22 +11,23 @@ import { completion, cancel, InferenceCancelledError, type Tool } from '@qvac/sd
 import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
 import { getTheme } from '../theme';
+import { fonts } from '../theme/fonts';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconSend, IconStop, IconBall } from '../components/Icons';
+import { IconSend, IconStop, IconBall, IconTactics, IconPlayers, IconTrophy, IconRules, IconMore } from '../components/Icons';
 import ScreenHeader from '../components/ScreenHeader';
+import ModelStatusPill from '../components/ModelStatusPill';
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
-import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId } from '../utils/storage';
+import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId, getActiveBzKey } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage, getMessages } from '../utils/historyDb';
 import { formatFixtureContext, fetchTeamForm } from '../utils/teamStats';
+import { fetchBzTeamForm } from '../utils/bzzoiro';
 import { fetchFootballNews, formatNewsContext } from '../utils/footballNews';
 import { splitChannelThinking } from '../utils/thinkingSplit';
 import { fetchAndCacheFixtures } from '../utils/fixtures';
 import { logInference } from '../utils/auditLogger';
 
-const { width: SCREEN_W } = Dimensions.get('window');
-const CARD_W = (SCREEN_W - 48) / 2;
 
 // Kept minimal on purpose: every system-prompt token costs CPU prompt-
 // processing time before the first visible token appears.
@@ -38,7 +39,9 @@ const CARD_W = (SCREEN_W - 48) / 2;
 // parroted the tool descriptions back as prose or fell back to a flat
 // "I don't have real-time access" refusal — neither is useful. The
 // prompt is now built per-request based on real tool availability.
-const BASE_SYSTEM_PROMPT = `You are Scout's AI Coach — a veteran football coach, fully on-device.
+const BASE_SYSTEM_PROMPT = `You are Scout's AI Coach — a veteran football (association football / soccer) coach, fully on-device.
+
+Every question is about football unless the user explicitly names a different sport. This matters for words football shares with other sports — "handball" is a foul inside football, not the Olympic team sport; "offside" is football's rule, not ice hockey's; "corner", "box", "pitch", "clean sheet", "the back four" etc. are all football terms. Never answer with a different sport's rules just because a word is ambiguous in isolation — read it as football first, always.
 
 Rules: always commit — never refuse or say "I'm not sure"; back opinions with specific players, formations, scorelines; no filler or disclaimers. Style: short paragraphs, **bold** key names, bullets for lists, concise English.`;
 
@@ -146,9 +149,23 @@ const getGreeting = () => {
   return 'Evening, coach';
 };
 
+const CAT_ICONS: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
+  'TACTICS': IconTactics,
+  'PLAYERS': IconPlayers,
+  'WC 2026': IconTrophy,
+  'RULES': IconRules,
+};
+
 interface Entry {
   id: string;
   question: string;
+  // A Coach message is text, or image + text: `image` is a local photo URI
+  // attached to the question. Unused at launch (no camera in the input bar
+  // yet) but defined NOW so vision can return as an upgrade to Coach — a
+  // camera icon in the input bar feeding a multimodal model — without a
+  // data-shape refactor. This one optional field is the whole
+  // forward-compat contract; do not remove it as "dead".
+  image?: string;
   answer: string;
   thinking?: string;
   thinkingMs?: number;
@@ -180,10 +197,26 @@ export default function MatchAIScreen() {
   const [entries, setEntries]           = useState<Entry[]>([]);
   const [slot, setSlot]                 = useState<StreamSlot | null>(null);
   const [input, setInput]               = useState('');
+  // The composer docks directly above the floating tab bar. When the
+  // keyboard opens the tab bar hides itself (see TabBar.tsx), so the
+  // composer's bottom padding collapses and it pins to the keyboard.
+  const [keyboardUp, setKeyboardUp] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardUp(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardUp(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
   const [isGenerating, setIsGenerating] = useState(false);
   const [modelId, setModelId]           = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel]           = useState(false);
+  // Distinct from noModel: a model IS downloaded but ensure() threw (low
+  // RAM, corrupted file, native crash). Conflating this with "no model
+  // downloaded" — the bug this replaces — told users to go re-download a
+  // model they already had, with no way to just retry the load.
+  const [loadError, setLoadError]       = useState<string | null>(null);
+  const [loadPct, setLoadPct]           = useState(0);
+  const [menuOpen, setMenuOpen]         = useState(false);
   const [thinkingOn, setThinkingOn]     = useState(false);
   const [thoughtOpen, setThoughtOpen]   = useState<Record<string, boolean>>({});
   const [dataOpen, setDataOpen]         = useState<Record<string, boolean>>({});
@@ -192,6 +225,10 @@ export default function MatchAIScreen() {
 
   const scrollRef        = useRef<ScrollView>(null);
   const currentRunRef    = useRef<any>(null);
+  // Hard-stop flag: cancel() can take seconds to propagate into llama.cpp,
+  // so the stream loops also bail out locally the moment this is set —
+  // the Stop button must FEEL instant.
+  const abortRef         = useRef(false);
   const mountedRef       = useRef(true);
   const prefillFiredRef  = useRef(false);
   const prefillRef       = useRef<string | null>(null);
@@ -287,8 +324,24 @@ export default function MatchAIScreen() {
     }, [route.params?.resumeSessionId])
   );
 
+  // Predictor and Coach each track their own modelId, but there's only
+  // one resident model app-wide — if the model was stopped from the OTHER
+  // tab (or evicted for any reason) while this one wasn't focused, its
+  // local modelId would otherwise stay stale and the pill would keep
+  // claiming "Model ready" for a model that no longer exists.
+  useFocusEffect(useCallback(() => {
+    if (modelId && llmManager.getLoadedQvacId() !== modelId) {
+      setModelId(null);
+    }
+  }, [modelId]));
+
+  // Repurposed for the tool-status dot below (was driven by modelLoading
+  // before that state moved to the small header pill) — a live pulse on
+  // "Checking today's fixtures..." reads as active progress instead of a
+  // label that might as well be frozen, which is the whole point of
+  // surfacing tool calls in the first place.
   useEffect(() => {
-    if (modelLoading && !noModel) {
+    if (slot?.toolStatus) {
       const loop = Animated.loop(Animated.sequence([
         Animated.timing(loadPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
         Animated.timing(loadPulse, { toValue: 0.25, duration: 700, useNativeDriver: true }),
@@ -299,9 +352,12 @@ export default function MatchAIScreen() {
       loadLoopRef.current?.stop();
       Animated.timing(loadPulse, { toValue: 1, duration: 180, useNativeDriver: true }).start();
     }
-  }, [modelLoading, noModel]);
+  }, [slot?.toolStatus]);
 
   const loadModel = async () => {
+    setLoadError(null);
+    setModelLoading(true);
+    setLoadPct(0);
     try {
       const synced = await syncModelsFromDisk();
       const model = pickTextCapable(synced, await getDefaultModelId(), llmManager.getLoadedModelId());
@@ -314,7 +370,11 @@ export default function MatchAIScreen() {
       // chat templates don't reliably support function-calling — Gemma is
       // marked true as an active experiment, SmolVLM2 is not.
       const supportsTools = model.supportsTools ?? model.modelType === 'text';
-      const mid = await llmManager.ensure(model, { ctx_size: model.modelType === 'vision' ? 2048 : 4096, device: 'auto', tools: supportsTools, projectionModelSrc: model.projectionModelSrc });
+      const mid = await llmManager.ensure(
+        model,
+        { ctx_size: model.modelType === 'vision' ? 2048 : 4096, device: 'auto', tools: supportsTools, projectionModelSrc: model.projectionModelSrc },
+        pct => { if (mountedRef.current) setLoadPct(Math.round(pct)); },
+      );
       modelNameRef.current = model.name;
       toolsEnabledRef.current = supportsTools;
       if (mountedRef.current) {
@@ -326,9 +386,25 @@ export default function MatchAIScreen() {
           prefillRef.current = prefill; // fired via useEffect once modelId is set
         }
       }
-    } catch {
-      if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
+    } catch (e: any) {
+      // A model exists but failed to load — NOT the same as "no model
+      // downloaded". Surface a real message + retry button instead of
+      // silently pointing the user at Models to re-download something
+      // they already have.
+      if (mountedRef.current) {
+        setLoadError(e?.message || 'Could not load the model. Close other apps to free memory and try again.');
+        setModelLoading(false);
+      }
     }
+  };
+
+  // Frees the resident model so the small status pill's Stop control does
+  // something real — Coach and Predictor are separate tab instances that
+  // each track their own modelId, so stopping from one leaves the other's
+  // local state stale until it notices (see the focus check below).
+  const stopModel = async () => {
+    await llmManager.release();
+    setModelId(null);
   };
 
   const springEntry = (id: string) => {
@@ -341,6 +417,7 @@ export default function MatchAIScreen() {
   };
 
   const send = useCallback(async (question?: string) => {
+    abortRef.current = false;
     const q = (question ?? input).trim();
     if (!q || isGenerating || !modelId) return;
     setInput('');
@@ -405,6 +482,7 @@ export default function MatchAIScreen() {
       });
       currentRunRef.current = run1;
       registerInferenceCancel(() => {
+        abortRef.current = true;
         if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
       });
       showRunningNotification('AI Coach');
@@ -412,6 +490,7 @@ export default function MatchAIScreen() {
       let pass1Answer = '';
       let pass1Raw = '';
       for await (const event of run1.events) {
+        if (abortRef.current) break;
         if (event.type === 'thinkingDelta') {
           if (!thinkStart) thinkStart = Date.now();
           thoughtAcc += event.text;
@@ -448,7 +527,7 @@ export default function MatchAIScreen() {
 
       if (toolCalls.length > 0 && mountedRef.current) {
         // ── Tool execution ──────────────────────────────────────────────────
-        if (mountedRef.current) { setSlot(s => s ? { ...s, toolStatus: 'Fetching live data...', answer: '' } : s); }
+        if (mountedRef.current) { setSlot(s => s ? { ...s, toolStatus: 'Fetching data...', answer: '' } : s); }
 
         const toolHistory = [...history, { role: 'assistant' as const, content: pass1Answer }];
 
@@ -456,18 +535,23 @@ export default function MatchAIScreen() {
           let toolResult = 'No data available.';
           try {
             if (tc.name === 'get_today_fixtures') {
+              setSlot(s => s ? { ...s, toolStatus: "Checking today's fixtures..." } : s);
               const { fixtures } = await fetchAndCacheFixtures();
               toolResult = formatFixtureContext(fixtures) || 'No fixtures scheduled today.';
               liveSources.push('TheSportsDB');
             } else if (tc.name === 'get_team_form') {
               const teamName = String(tc.arguments.team_name ?? '');
-              const form = await fetchTeamForm(teamName);
+              setSlot(s => s ? { ...s, toolStatus: `Checking ${teamName || 'team'}'s recent form...` } : s);
+              const bzKey = await getActiveBzKey().catch(() => '');
+              const bzForm = bzKey ? await fetchBzTeamForm(bzKey, teamName, 5).catch(() => null) : null;
+              const form = bzForm ?? await fetchTeamForm(teamName);
+              const source = bzForm ? 'Bzzoiro Sports' : 'TheSportsDB';
               if (form && form.events.length > 0) {
                 const lines = form.events.map(e =>
                   `${e.date} vs ${e.opponent}: ${e.score} (${e.result})${e.league ? ' — ' + e.league : ''}`
                 );
                 toolResult = [
-                  `[RECENT RESULTS — ${form.teamName} via TheSportsDB]`,
+                  `[RECENT RESULTS — ${form.teamName} via ${source}]`,
                   `Form (most recent last): ${form.form.join(' ')}`,
                   ...lines,
                   '[END RESULTS]',
@@ -481,7 +565,7 @@ export default function MatchAIScreen() {
                 );
                 toolResult = teamFix.length > 0 ? formatFixtureContext(teamFix) : `No recent data found for ${teamName}.`;
               }
-              liveSources.push('TheSportsDB');
+              liveSources.push(source);
             } else if (tc.name === 'get_football_news') {
               const query = String(tc.arguments.query ?? '');
               setSlot(s => s ? { ...s, toolStatus: 'Checking football news...' } : s);
@@ -489,7 +573,7 @@ export default function MatchAIScreen() {
               toolResult = formatNewsContext(news, query);
               news.forEach(n => liveSources.push(n.source));
             }
-          } catch { toolResult = 'Unable to fetch live data.'; }
+          } catch { toolResult = 'Unable to fetch data.'; }
           toolHistory.push({ role: 'tool', content: toolResult });
           liveDataAcc += (liveDataAcc ? '\n\n' : '') + toolResult;
         }
@@ -511,6 +595,7 @@ export default function MatchAIScreen() {
         answerAcc = '';
         lastFlush = 0;
         for await (const event of run2.events) {
+          if (abortRef.current) break;
           if (event.type === 'contentDelta') {
             pass2Raw += event.text;
             const split = splitChannelThinking(pass2Raw);
@@ -561,7 +646,9 @@ export default function MatchAIScreen() {
       currentRunRef.current = null;
       clearNotification();
       if (mountedRef.current) {
-        const fallback = err instanceof InferenceCancelledError ? (slotRef.current?.answer || '...') : 'Could not get a response. Try again.';
+        const fallback = err instanceof InferenceCancelledError
+          ? (slotRef.current?.answer || '...')
+          : 'Could not get a response. Try again.\n\n[Report a bug](https://github.com/bolajiev/scout/issues/new)';
         const finished: Entry = { id: entryId, question: q, answer: fallback };
         setSlot(null);
         setEntries(prev => [...prev, finished]);
@@ -627,27 +714,30 @@ export default function MatchAIScreen() {
         style={[styles.entryBlock, anim ? { opacity: anim.op, transform: [{ translateY: anim.ty }] } : undefined]}
       >
         <View style={styles.userRow}>
-          <View style={[styles.userBubble, { backgroundColor: accent }]}>
+          <View style={[styles.userBubble, { backgroundColor: theme.cardAlt }]}>
             <Text style={styles.userText}>{entry.question}</Text>
           </View>
         </View>
         {entry.thinking && renderThoughtBlock(entry.thinking, false, entry.id, entry.thinkingMs)}
         <View style={styles.aiRow}>
+          <View style={[styles.aiAvatar, { backgroundColor: accent }]}>
+            <IconBall size={12} color={theme.accentFg} />
+          </View>
           <View style={styles.aiCol}>
-            <View style={[styles.aiBubble, { backgroundColor: theme.cardAlt }]}>
+            <View style={[styles.aiBubble, { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border }]}>
               <Markdown style={mdStyles(theme)}>{entry.answer}</Markdown>
             </View>
             <View style={styles.statRow}>
               {entry.liveSources && entry.liveSources.length > 0 && (
                 <TouchableOpacity
-                  style={[styles.liveChip, { backgroundColor: '#22c55e14' }]}
+                  style={[styles.liveChip, { backgroundColor: 'rgba(198,245,58,0.14)' }]}
                   onPress={() => setDataOpen(p => ({ ...p, [entry.id]: !p[entry.id] }))}
                   hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
                 >
-                  <View style={[styles.liveDotSmall, { backgroundColor: '#22c55e' }]} />
-                  <Text style={[styles.liveChipText, { color: '#22c55e' }]}>{entry.liveSources.join(' · ')}</Text>
+                  <View style={[styles.liveDotSmall, { backgroundColor: '#C6F53A' }]} />
+                  <Text style={[styles.liveChipText, { color: '#C6F53A' }]}>{entry.liveSources.join(' · ')}</Text>
                   {entry.liveData && (
-                    <Text style={[styles.liveChipText, { color: '#22c55e' }]}>{dataOpen[entry.id] ? ' ‹' : ' ›'}</Text>
+                    <Text style={[styles.liveChipText, { color: '#C6F53A' }]}>{dataOpen[entry.id] ? ' ‹' : ' ›'}</Text>
                   )}
                 </TouchableOpacity>
               )}
@@ -690,60 +780,42 @@ export default function MatchAIScreen() {
     [entries, thoughtOpen, dataOpen, themeMode],
   );
 
-  // ── Empty state ────────────────────────────────────────────────────────────
+  // ── Empty state — category chips, then a horizontal rail of question
+  // cards. Everything is a one-tap question.
+  // Simple, single-column suggestion rows — one per category, eyebrow tag +
+  // question + chevron, straight to send() on tap. No chips, no horizontal
+  // rails, no separate "insight" card — just four clear things to tap.
+  // Model state now lives in the small persistent pill under the header —
+  // this just always shows the suggestions, dimmed and untappable until
+  // ready rather than swapping in a separate status card.
+  const ready = !modelLoading && !!modelId;
   const renderEmpty = () => (
     <View style={styles.emptyWrap}>
-      {/* Brand mark */}
-      <Animated.View style={[styles.brandMark, { backgroundColor: accent + '14', opacity: loadPulse }]}>
-        <IconBall size={36} color={accent} />
-      </Animated.View>
-
       <Text style={[styles.greeting, { color: theme.textSecondary }]}>{getGreeting()}</Text>
-      <Text style={[styles.emptyTitle, { color: theme.text }]}>Your AI Football Coach</Text>
-
-      {/* Status pills row */}
-      <View style={styles.pillRow}>
-        <View style={[styles.statusPill, { backgroundColor: accent + '14', borderColor: accent + '30' }]}>
-          <View style={[styles.pillDot, { backgroundColor: modelId ? accent : theme.textSecondary }]} />
-          <Text style={[styles.pillText, { color: modelId ? accent : theme.textSecondary }]}>
-            {modelLoading ? 'Loading...' : noModel ? 'No model' : 'On-device AI'}
-          </Text>
-        </View>
-
-        <View style={[styles.statusPill, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <View style={[styles.pillDot, { backgroundColor: accent }]} />
-          <Text style={[styles.pillText, { color: theme.textSecondary }]}>Private · No cloud</Text>
-        </View>
+      <View style={[styles.sugList, { opacity: ready ? 1 : 0.5 }]}>
+        {CATEGORY_POOLS.map((cat) => {
+          const q = cat.qs[catIdx % cat.qs.length];
+          const Icon = CAT_ICONS[cat.tag] ?? IconBall;
+          return (
+            <TouchableOpacity
+              key={cat.tag}
+              style={[styles.sugRow, { backgroundColor: theme.card, borderColor: theme.border }]}
+              onPress={() => send(q)}
+              activeOpacity={0.75}
+              disabled={!ready}
+            >
+              <Icon size={15} color={theme.textSecondary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.sugTag, { color: theme.textTertiary }]}>{cat.tag}</Text>
+                <Animated.Text style={[styles.sugQuestion, { color: theme.text, opacity: cardFade }]} numberOfLines={2}>
+                  {q}
+                </Animated.Text>
+              </View>
+              <Text style={[styles.sugChevron, { color: theme.textTertiary }]}>›</Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
-
-      {noModel ? (
-        <View style={[styles.noModelCard, { backgroundColor: theme.card }]}>
-          <Text style={[styles.noModelText, { color: theme.textSecondary }]}>No model downloaded — go to Models.</Text>
-        </View>
-      ) : (
-        <>
-          {/* Category cards 2×2 — questions auto-rotate every few seconds */}
-          <View style={styles.cardGrid}>
-            {CATEGORY_POOLS.map((cat) => {
-              const q = cat.qs[catIdx % cat.qs.length];
-              return (
-                <TouchableOpacity
-                  key={cat.tag}
-                  style={[styles.categoryCard, { backgroundColor: theme.card }]}
-                  onPress={() => send(q)}
-                  activeOpacity={0.75}
-                  disabled={modelLoading || !modelId}
-                >
-                  <Text style={[styles.cardTag, { color: accent }]}>{cat.tag}</Text>
-                  <Animated.Text style={[styles.cardQuestion, { color: theme.text, opacity: cardFade }]} numberOfLines={3}>
-                    {q}
-                  </Animated.Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </>
-      )}
     </View>
   );
 
@@ -754,41 +826,66 @@ export default function MatchAIScreen() {
       // be handled in JS or it covers the input bar
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      {/* Header — shared component so every screen matches exactly */}
+      {/* Header — Coach is full-screen chat: the tab bar hides while this
+          tab is focused (see TabBar.tsx), so the back button here is the
+          only way out. It returns to the Matches tab, not a stack pop —
+          there's nothing on the stack to pop. */}
       <ScreenHeader
         title="AI Coach"
-        subtitle={modelLoading ? 'Loading model...' : noModel ? 'No model' : 'On-device · Private'}
+        centered
+        onBack={() => navigation.navigate('Home')}
         rightSlot={
-          <>
-            {(entries.length > 0 || slot) && !isGenerating && (
-              <TouchableOpacity
-                onPress={() => {
-                  setEntries([]);
-                  setSlot(null);
-                  sessionIdRef.current = null;
-                  setThoughtOpen({});
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              >
-                <Text style={[styles.historyBtn, { color: accent }]}>New</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              onPress={() => navigation.navigate('History', { tab: 'matchai' })}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
-            </TouchableOpacity>
-          </>
+          <TouchableOpacity onPress={() => setMenuOpen(true)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <IconMore size={22} color={theme.text} />
+          </TouchableOpacity>
         }
+      />
+
+      {/* New Chat / History — a single dropdown instead of two competing
+          header links, so the header row stays clean and centered. */}
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
+          <View style={[styles.menuPanel, { top: insets.top + 52, backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
+            <TouchableOpacity
+              style={styles.menuRow}
+              disabled={isGenerating}
+              onPress={() => {
+                setMenuOpen(false);
+                setEntries([]);
+                setSlot(null);
+                sessionIdRef.current = null;
+                setThoughtOpen({});
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+            >
+              <Text style={[styles.menuRowText, { color: isGenerating ? theme.textTertiary : theme.text }]}>New Chat</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => { setMenuOpen(false); navigation.navigate('History', { tab: 'matchai' }); }}
+            >
+              <Text style={[styles.menuRowText, { color: theme.text }]}>History</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
+      <ModelStatusPill
+        noModel={noModel}
+        modelLoading={modelLoading}
+        loadError={loadError}
+        modelId={modelId}
+        loadPct={loadPct}
+        onLoad={loadModel}
+        onStop={stopModel}
+        onGetModel={() => navigation.navigate('Models')}
       />
 
       {/* Feed */}
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 110 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -799,19 +896,22 @@ export default function MatchAIScreen() {
         {slot && (
           <View style={styles.entryBlock}>
             <View style={styles.userRow}>
-              <View style={[styles.userBubble, { backgroundColor: accent }]}>
+              <View style={[styles.userBubble, { backgroundColor: theme.cardAlt }]}>
                 <Text style={styles.userText}>{slot.question}</Text>
               </View>
             </View>
             {slot.toolStatus && (
-              <View style={[styles.liveChip, { backgroundColor: '#22c55e14', alignSelf: 'flex-start' }]}>
-                <View style={[styles.liveDotSmall, { backgroundColor: '#22c55e' }]} />
-                <Text style={[styles.liveChipText, { color: '#22c55e' }]}>{slot.toolStatus}</Text>
+              <View style={[styles.liveChip, { backgroundColor: 'rgba(198,245,58,0.14)', alignSelf: 'flex-start' }]}>
+                <Animated.View style={[styles.liveDotSmall, { backgroundColor: '#C6F53A', opacity: loadPulse }]} />
+                <Text style={[styles.liveChipText, { color: '#C6F53A' }]}>{slot.toolStatus}</Text>
               </View>
             )}
             {(slot.thought.length > 0 || slot.isThinking) && renderThoughtBlock(slot.thought, slot.isThinking, slot.id)}
             <View style={styles.aiRow}>
-              <View style={[styles.aiBubble, { backgroundColor: theme.cardAlt }]}>
+              <View style={[styles.aiAvatar, { backgroundColor: accent }]}>
+                <IconBall size={12} color={theme.accentFg} />
+              </View>
+              <View style={[styles.aiBubble, { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border }]}>
                 {slot.answer.length > 0 ? (
                   <Text style={[styles.aiText, { color: theme.text }]}>{slot.answer}</Text>
                 ) : (
@@ -825,11 +925,13 @@ export default function MatchAIScreen() {
 
       {/* Composer — one rounded card: text on top, controls inside at the
           bottom (Think toggle left, send right) */}
-      <View style={[styles.composerWrap, { backgroundColor: theme.background, paddingBottom: Math.max(insets.bottom, 10) }]}>
+      {/* No tab bar on this screen, so the composer sits right at the
+          bottom safe area instead of reserving pill space */}
+      <View style={[styles.composerWrap, { backgroundColor: theme.background, paddingBottom: keyboardUp ? 10 : Math.max(insets.bottom, 12) }]}>
         <View style={[styles.composer, { backgroundColor: theme.cardAlt }]}>
           <TextInput
             style={[styles.composerInput, { color: theme.text }]}
-            placeholder={modelLoading ? 'Loading model...' : 'Ask anything'}
+            placeholder={modelLoading ? 'Loading model...' : noModel ? 'No model downloaded' : loadError ? 'Model load failed' : 'Ask anything'}
             placeholderTextColor={theme.textSecondary}
             value={input}
             onChangeText={setInput}
@@ -840,23 +942,24 @@ export default function MatchAIScreen() {
             onSubmitEditing={() => { if (input.trim()) send(); }}
           />
           <View style={styles.composerRow}>
+            {/* ONE mode chip — shows the current mode, tap to switch.
+                "Fast" ⇄ "Think", not two side-by-side buttons. */}
             <TouchableOpacity
               onPress={() => setThinkingOn(v => !v)}
-              style={[styles.deepToggle, { backgroundColor: thinkingOn ? accent + '1a' : theme.cardAlt }]}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={[styles.modeBtn, { backgroundColor: thinkingOn ? 'rgba(198,245,58,0.14)' : theme.cardHot }]}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
             >
-              <View style={[styles.deepDot, { backgroundColor: thinkingOn ? accent : theme.textSecondary }]} />
-              <Text style={[styles.deepToggleText, { color: thinkingOn ? accent : theme.textSecondary }]}>
-                {thinkingOn ? 'Think · on' : 'Think'}
+              <Text style={[styles.modeBtnText, { color: thinkingOn ? accent : theme.textSecondary }]}>
+                {thinkingOn ? 'Think' : 'Fast'}
               </Text>
             </TouchableOpacity>
             <View style={{ flex: 1 }} />
             {isGenerating ? (
               <TouchableOpacity
-                style={[styles.sendBtn, { backgroundColor: '#ef4444' }]}
-                onPress={() => { if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {}); }}
+                style={[styles.sendBtn, { backgroundColor: theme.error }]}
+                onPress={() => { abortRef.current = true; if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {}); }}
               >
-                <IconStop size={17} color="#fff" />
+                <IconStop size={15} color="#0b0b0b" />
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
@@ -864,7 +967,7 @@ export default function MatchAIScreen() {
                 onPress={() => send()}
                 disabled={!input.trim() || !modelId || isGenerating}
               >
-                <IconSend size={17} color="#fff" />
+                <IconSend size={15} color={theme.accentFg} />
               </TouchableOpacity>
             )}
           </View>
@@ -891,7 +994,7 @@ const mdStyles = (theme: ReturnType<typeof getTheme>) => ({
     paddingHorizontal: 4, fontSize: 14, color: theme.text,
   },
   fence: {
-    backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, padding: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, padding: 10,
     borderWidth: 0, fontSize: 13, color: theme.text, marginBottom: 8,
   },
   blockquote: {
@@ -904,38 +1007,34 @@ const mdStyles = (theme: ReturnType<typeof getTheme>) => ({
 const styles = StyleSheet.create({
   root: { flex: 1 },
 
-  historyBtn: { fontSize: 13, fontWeight: '600' },
+  menuBackdrop: { flex: 1 },
+  menuPanel: {
+    position: 'absolute', right: 16, borderRadius: 12, borderWidth: 1,
+    paddingVertical: 4, minWidth: 128,
+    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8,
+  },
+  menuRow: { paddingVertical: 9, paddingHorizontal: 14 },
+  menuRowText: { fontSize: 13, fontFamily: fonts.bodySemiBold },
 
   scroll: { flex: 1 },
   scrollContent: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 16, gap: 4 },
 
-  // ── Empty state ────────────────────────────────────────────────────────────
-  emptyWrap: { flex: 1, justifyContent: 'center', paddingHorizontal: 2, gap: 14, alignItems: 'center' },
-  brandMark: { width: 80, height: 80, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  greeting: { fontSize: 14, fontWeight: '500', marginTop: -4 },
-  emptyTitle: { fontSize: 24, fontWeight: '800', letterSpacing: -0.5, textAlign: 'center', marginTop: -6 },
+  // ── Empty state — v3: insight hero, category chips, question cards ──────
+  emptyWrap: { paddingHorizontal: 2, paddingTop: 4, gap: 12 },
 
-  pillRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' },
-  statusPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    borderRadius: 20, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 6,
+
+  greeting: { fontSize: 14, fontFamily: fonts.bodyMedium, marginLeft: 4, marginBottom: 2 },
+  sugList: { gap: 8 },
+  sugRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderRadius: 16, borderWidth: 1, paddingHorizontal: 15, paddingVertical: 12, minHeight: 56,
   },
-  pillDot: { width: 5, height: 5, borderRadius: 2.5 },
-  pillText: { fontSize: 12, fontWeight: '600' },
-
-  noModelCard: { borderRadius: 12, padding: 14, width: '100%', marginTop: 4 },
-  noModelText: { fontSize: 13, textAlign: 'center' },
-
-  // Category cards
-  cardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, width: '100%', marginTop: 4 },
-  categoryCard: {
-    width: CARD_W, borderRadius: 16,
-    padding: 16, gap: 8,
-  },
-  cardTag: { fontSize: 10, fontWeight: '800', letterSpacing: 1.2 },
-  cardQuestion: { fontSize: 14, fontWeight: '500', lineHeight: 20 },
-
-  // Chip row
+  sugTag: { fontSize: 9.5, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 1 },
+  // Several of the actual questions run 45-55 characters — too long for
+  // one line at this size, and numberOfLines={1} was truncating them
+  // mid-word instead of wrapping. Two lines + real line-height fixes it.
+  sugQuestion: { fontSize: 13.5, lineHeight: 18, fontFamily: fonts.bodyMedium, marginTop: 3 },
+  sugChevron: { fontSize: 18, fontWeight: '600' },
 
   // ── Message blocks ────────────────────────────────────────────────────────
   entryBlock: { marginBottom: 18, gap: 7 },
@@ -945,9 +1044,10 @@ const styles = StyleSheet.create({
     maxWidth: '78%', borderRadius: 20, borderBottomRightRadius: 6,
     paddingHorizontal: 15, paddingVertical: 10,
   },
-  userText: { fontSize: 16, lineHeight: 22, fontWeight: '500', color: '#fff' },
+  userText: { fontSize: 16, lineHeight: 22, fontWeight: '500', color: '#f5f5f5' },
 
-  aiRow: { alignItems: 'flex-start' },
+  aiRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 7 },
+  aiAvatar: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   aiCol: { alignItems: 'flex-start', gap: 5, maxWidth: '90%' },
   aiBubble: {
     borderRadius: 20, borderBottomLeftRadius: 6,
@@ -989,14 +1089,11 @@ const styles = StyleSheet.create({
     paddingTop: 10, paddingBottom: 6, textAlignVertical: 'top',
   },
   composerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  deepToggle: {
-    height: 34, borderRadius: 17, paddingHorizontal: 12,
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-  },
-  deepToggleText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
-  deepDot: { width: 6, height: 6, borderRadius: 3 },
+  modeToggle: { flexDirection: 'row', gap: 4, alignItems: 'center' },
+  modeBtn: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999 },
+  modeBtnText: { fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
   sendBtn: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 38, height: 38, borderRadius: 19,
     alignItems: 'center', justifyContent: 'center',
   },
 });

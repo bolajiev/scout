@@ -41,7 +41,7 @@ export default function DownloadScreen() {
   // returnTo: screen to navigate to after success
   // returnParams: params to pass to returnTo
   const modelId: string = route.params?.modelId;
-  const returnTo: string = route.params?.returnTo ?? 'Main';
+  const returnTo: string = route.params?.returnTo ?? 'MainTabs';
   const returnParams: Record<string, any> = route.params?.returnParams ?? {};
   const themeMode = useTheme();
   const theme = getTheme(themeMode);

@@ -1,5 +1,8 @@
 import { getDb } from './historyDb';
-import { getActiveFdKey } from './storage';
+import { getActiveFdKey, getActiveBzKey } from './storage';
+import { fetchBzMatches, fetchBzTopLeagueMatches, TOP_LEAGUES } from './bzzoiro';
+
+const TOP_LEAGUE_NAMES = new Set(TOP_LEAGUES.map(l => l.name));
 
 export interface Fixture {
   idEvent: string;
@@ -12,6 +15,11 @@ export interface Fixture {
   intAwayScore: string | null;
   strHomeTeamBadge: string | null;
   strAwayTeamBadge: string | null;
+  // Only populated for football-data.org (fd-*) fixtures via the per-match
+  // detail endpoint — the bulk /v4/matches list this app polls for the
+  // fixture list does NOT include minute or goalscorers, only the score.
+  minute?: number | null;
+  lastScorer?: { team: 'home' | 'away'; name: string; minute: number } | null;
 }
 
 // TheSportsDB badge URLs serve resized variants via a path suffix —
@@ -24,6 +32,15 @@ export const todayISO = () => new Date().toISOString().split('T')[0];
 
 export const isWorldCup = (f: Fixture) =>
   /world cup/i.test(f.strLeague) || /fifa wc/i.test(f.strLeague);
+
+// One canonical name for World Cup fixtures regardless of source — verified
+// live that TheSportsDB, football-data.org, and Bzzoiro each spell this
+// differently ("FIFA World Cup 2026" vs "World Cup 2026" vs similar).
+// Without normalizing, a single pinned chip can't exact-match all three,
+// and the same tournament could show up as two different filter chips.
+export const WC_NAME = 'FIFA World Cup 2026';
+export const normalizeLeague = (name: string): string =>
+  (/world cup/i.test(name) || /fifa wc/i.test(name)) ? WC_NAME : name;
 
 const timeToMins = (t: string): number | null => {
   if (!t || t === '00:00:00') return null;
@@ -59,14 +76,39 @@ const dayDiff = (f: Fixture): number | null => {
   return Math.round((d - t) / 86_400_000);
 };
 
-// Rail ordering: live matches first (all of them), then upcoming by
-// kick-off (today before future days), finished matches last
+// Rough competition prestige tiers, used to keep a small regional league
+// from outranking the World Cup or a top-5 European league just because it
+// kicks off a few minutes earlier — verified this was a real, visible
+// problem: TheSportsDB/Bzzoiro list order is arbitrary, so "Australia
+// Northern NSW NPL" was landing above real World Cup fixtures on the same
+// day purely by chance. Not exhaustive — anything unrecognized lands in
+// the neutral middle tier rather than being wrongly promoted or demoted.
+const TIER1_COMPETITIONS = /champions league|europa league|conference league|european championship|euro 20\d\d|copa am[eé]rica|africa cup of nations|asian cup|gold cup|nations league/i;
+const TIER3_LEAGUES = /eredivisie|primeira liga|liga portugal|brasileir[aã]o s[eé]rie a\b|major league soccer|\bmls\b|scottish premiership|s[uü]per lig|saudi pro league|liga mx|championship\b/i;
+const LOWER_TIER_MARKERS = /serie b\b|segunda divisi[oó]n|2\. ?bundesliga|ligue 2\b|league one|league two|u1[0-9]\b|u2[0-3]\b|under-?1[0-9]\b|under-?2[0-3]\b|youth|reserve|academy|regional|amateur|\bnpl\b|division [2-9]/i;
+
+export const leagueRank = (league: string): number => {
+  if (!league) return 4;
+  if ((/world cup/i.test(league) || /fifa wc/i.test(league)) && !/qualif/i.test(league)) return 0;
+  if (TIER1_COMPETITIONS.test(league)) return 1;
+  if (TOP_LEAGUE_NAMES.has(league)) return 2;
+  if (TIER3_LEAGUES.test(league)) return 3;
+  if (LOWER_TIER_MARKERS.test(league)) return 5;
+  return 4;
+};
+
+// Rail ordering: live matches first (all of them, higher-tier competitions
+// ahead of lower ones within that group), then upcoming sorted by league
+// tier first and kick-off time second (a small regional match can't outrank
+// the World Cup just because it kicks off a few minutes earlier), finished
+// matches last.
 export const fixtureOrder = (f: Fixture): number => {
   const mins = timeToMins(f.strTime) ?? 0;
-  const key = (dayDiff(f) ?? 0) * 1440 + mins;
-  if (isLive(f)) return -1_000_000 + key;
-  if (isFinished(f)) return 1_000_000 + key;
-  return key;
+  const dayKey = (dayDiff(f) ?? 0) * 1440 + mins;
+  const rank = leagueRank(f.strLeague);
+  if (isLive(f)) return -10_000_000 + rank * 10_000 + mins;
+  if (isFinished(f)) return 10_000_000 + rank * 10_000 + mins;
+  return rank * 100_000 + dayKey;
 };
 
 // Pick the single most relevant match to surface on the home card.
@@ -143,7 +185,7 @@ const loadFixturesFromDb = (date: string): Fixture[] => {
     idEvent: r.id_event,
     strHomeTeam: r.home_team,
     strAwayTeam: r.away_team,
-    strLeague: r.league,
+    strLeague: normalizeLeague(r.league),
     strTime: r.match_time,
     dateEvent: r.date_event,
     intHomeScore: r.home_score,
@@ -197,17 +239,59 @@ const fetchFdMatches = async (key: string, from: string, to: string): Promise<Fi
         idEvent: `fd-${m.id}`,
         strHomeTeam: m.homeTeam?.shortName || m.homeTeam?.name || '',
         strAwayTeam: m.awayTeam?.shortName || m.awayTeam?.name || '',
-        strLeague: m.competition?.name ?? '',
+        strLeague: normalizeLeague(m.competition?.name ?? ''),
         strTime: `${hh}:${mm}:00`,
         dateEvent: m.utcDate?.split('T')[0] ?? null,
         intHomeScore: started && m.score?.fullTime?.home != null ? String(m.score.fullTime.home) : null,
         intAwayScore: started && m.score?.fullTime?.away != null ? String(m.score.fullTime.away) : null,
         strHomeTeamBadge: crest(m.homeTeam?.crest),
         strAwayTeamBadge: crest(m.awayTeam?.crest),
+        // The list endpoint sometimes carries this for free; the detail
+        // endpoint (fetchFdMatchDetail) is the reliable source, polled
+        // separately per-live-match since minute/scorers aren't guaranteed
+        // here.
+        minute: m.status === 'IN_PLAY' || m.status === 'PAUSED' ? (m.minute ?? null) : null,
       };
     }).filter((f: Fixture) => f.strHomeTeam && f.strAwayTeam);
   } catch {
     return [];
+  }
+};
+
+// Per-match detail — the ONLY football-data.org endpoint that reliably
+// includes the current minute and goalscorers; the bulk list above omits
+// both. Called sparingly (see LIVE_POLL_MIN_GAP_MS in HomeScreen) to stay
+// inside the free tier's 10 requests/minute cap.
+export const fetchFdMatchDetail = async (
+  key: string,
+  fdIdEvent: string, // "fd-12345"
+): Promise<{ minute: number | null; homeScore: number | null; awayScore: number | null; lastScorer: Fixture['lastScorer'] }> => {
+  const id = fdIdEvent.replace(/^fd-/, '');
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.football-data.org/v4/matches/${id}`,
+      8000,
+      { headers: { 'X-Auth-Token': key } },
+    );
+    if (!res.ok) return { minute: null, homeScore: null, awayScore: null, lastScorer: null };
+    const m = await res.json();
+    const goals: any[] = m.goals ?? [];
+    const last = goals[goals.length - 1];
+    const lastScorer: Fixture['lastScorer'] = last
+      ? {
+          team: last.team?.id === m.homeTeam?.id ? 'home' : 'away',
+          name: last.scorer?.name ?? '',
+          minute: last.minute ?? 0,
+        }
+      : null;
+    return {
+      minute: m.minute ?? null,
+      homeScore: m.score?.fullTime?.home ?? null,
+      awayScore: m.score?.fullTime?.away ?? null,
+      lastScorer: lastScorer && lastScorer.name ? lastScorer : null,
+    };
+  } catch {
+    return { minute: null, homeScore: null, awayScore: null, lastScorer: null };
   }
 };
 
@@ -220,15 +304,26 @@ export const fetchAndCacheFixtures = async (): Promise<{
   const plusDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().split('T')[0];
 
   try {
-    const fdKey = await getActiveFdKey().catch(() => '');
+    const [fdKey, bzKey] = await Promise.all([
+      getActiveFdKey().catch(() => ''),
+      getActiveBzKey().catch(() => ''),
+    ]);
 
-    // Keyed mode: football-data.org is the exclusive source while the key
-    // works — the free API is only consulted if the keyed call fails or
-    // returns nothing (rate limit, outage, bad key).
-    const fdMatches = fdKey ? await fetchFdMatches(fdKey, today, plusDays(2)) : [];
+    // Bzzoiro first when keyed — its bulk list already carries live minute
+    // directly (no per-match detail call needed, unlike football-data.org),
+    // and its predictions feed Predictor's real odds. football-data.org is
+    // the fallback keyed source, then the free keyless source last. The
+    // top-5-league fetch uses a wider window so those chips always have at
+    // least one upcoming fixture even during a gap the normal 2-day window
+    // would miss (international break, etc).
+    const [bzMatches, bzTopLeagueMatches] = bzKey
+      ? await Promise.all([fetchBzMatches(bzKey, today, plusDays(2)), fetchBzTopLeagueMatches(bzKey, today, plusDays(21))])
+      : [[], []];
+    const fdMatches = bzMatches.length === 0 && fdKey ? await fetchFdMatches(fdKey, today, plusDays(2)) : [];
+    const keyedMatches = [...bzMatches, ...bzTopLeagueMatches, ...fdMatches];
 
     let results: (Response | null)[] = [];
-    if (fdMatches.length === 0) {
+    if (keyedMatches.length === 0) {
       // Free keyless source: WC next events + today's soccer + next two days
       results = await Promise.all([
         fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`),
@@ -240,22 +335,23 @@ export const fetchAndCacheFixtures = async (): Promise<{
 
     const oks = results.map(r => !!r && r.ok);
     // Every source unreachable → we are offline; don't report success with 0 fixtures
-    if (!oks.some(Boolean) && fdMatches.length === 0) throw new Error('offline');
+    if (!oks.some(Boolean) && keyedMatches.length === 0) throw new Error('offline');
 
     const eventLists: any[][] = await Promise.all(results.map(async (r, i) =>
       oks[i] ? (((await (r as Response).json()).events) ?? []) : []
     ));
 
-    // Merge: football-data first (accurate scores when keyed), then TheSportsDB.
-    // Dedup by team-pair + date so the same real match never appears twice
-    // across sources, plus by idEvent within a source.
+    // Merge: keyed sources first (Bzzoiro, then football-data.org — accurate
+    // scores/minute when keyed), then TheSportsDB. Dedup by team-pair + date
+    // so the same real match never appears twice across sources, plus by
+    // idEvent within a source.
     const seenId = new Set<string>();
     const seenMatch = new Set<string>();
     const matchKey = (f: Fixture) =>
       `${f.strHomeTeam.toLowerCase().slice(0, 6)}|${f.strAwayTeam.toLowerCase().slice(0, 6)}|${f.dateEvent ?? ''}`;
     const merged: Fixture[] = [];
 
-    for (const f of fdMatches) {
+    for (const f of keyedMatches) {
       if (!seenId.has(f.idEvent) && !seenMatch.has(matchKey(f))) {
         seenId.add(f.idEvent);
         seenMatch.add(matchKey(f));
@@ -268,7 +364,7 @@ export const fetchAndCacheFixtures = async (): Promise<{
         idEvent: e.idEvent,
         strHomeTeam: e.strHomeTeam ?? '',
         strAwayTeam: e.strAwayTeam ?? '',
-        strLeague: e.strLeague ?? '',
+        strLeague: normalizeLeague(e.strLeague ?? ''),
         strTime: e.strTime ?? '',
         dateEvent: e.dateEvent ?? null,
         intHomeScore: e.intHomeScore ?? null,

@@ -17,6 +17,7 @@ const KEYS = {
   HF_TOKEN: 'scout_hf_token',
   CUSTOM_PROMPTS: '@scout_custom_prompts',
   FD_API_KEY: '@scout_fd_api_key',
+  BZ_API_KEY: '@scout_bz_api_key',
 };
 
 // football-data.org API key (optional) — unlocks richer fixtures for the
@@ -39,6 +40,34 @@ export async function setFdKeyEnabled(on: boolean): Promise<void> {
 export async function getActiveFdKey(): Promise<string> {
   const [key, enabled] = await Promise.all([getFdApiKey(), getFdKeyEnabled()]);
   return enabled ? key : '';
+}
+
+// Bzzoiro Sports Data API key (optional) — real ML match-result probabilities
+// for Predictor (replacing the fabricated confidence-derived split when a
+// match is found), and live scores/minute in a single bulk call for Matches.
+// Same enabled/disabled pattern as the football-data.org key above.
+export async function getBzApiKey(): Promise<string> {
+  try { return (await AsyncStorage.getItem(KEYS.BZ_API_KEY)) || ''; } catch { return ''; }
+}
+export async function setBzApiKey(key: string): Promise<void> {
+  await AsyncStorage.setItem(KEYS.BZ_API_KEY, key.trim());
+}
+export async function getBzKeyEnabled(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem('@scout_bz_enabled')) !== 'false'; } catch { return true; }
+}
+export async function setBzKeyEnabled(on: boolean): Promise<void> {
+  await AsyncStorage.setItem('@scout_bz_enabled', on ? 'true' : 'false');
+}
+// Shared default so the app works out of the box — a user's own key (when
+// present and enabled) always overrides it; toggling their own key off
+// falls back to this shared one rather than disabling Bzzoiro entirely,
+// since unlike football-data.org there's no reason to go fully keyless.
+const DEFAULT_BZ_KEY = process.env.EXPO_PUBLIC_BZ_API_KEY ?? '';
+
+export async function getActiveBzKey(): Promise<string> {
+  const [key, enabled] = await Promise.all([getBzApiKey(), getBzKeyEnabled()]);
+  if (key.trim() && enabled) return key.trim();
+  return DEFAULT_BZ_KEY;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {

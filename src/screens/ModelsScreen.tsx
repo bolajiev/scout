@@ -243,7 +243,7 @@ export default function ModelsScreen() {
         model,
         {
           // Vision loads with a smaller context — the KV cache for 4096 on a
-          // 3.5 GB model adds hundreds of MB and ScoutLens only needs 2048.
+          // 3.5 GB model adds hundreds of MB and vision use only needs 2048.
           ctx_size: model.modelType === 'vision' ? 2048 : 4096,
           device: 'auto',
           tools: model.modelType !== 'vision',

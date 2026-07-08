@@ -2,6 +2,7 @@
 // Used to pull real recent match form for predictions and grounded AI answers.
 
 import { fetchWithTimeout } from './fixtures';
+import { fetchBothBzTeamForms } from './bzzoiro';
 
 export type FormResult = 'W' | 'D' | 'L';
 
@@ -31,13 +32,28 @@ const BASE = 'https://www.thesportsdb.com/api/v1/json/3';
 // pulling Formula One data into a football prediction. Returning null
 // (honest "not found," model falls back to its own knowledge) is a far
 // better failure mode than confidently wrong-sport data.
+// Names TheSportsDB indexes differently than fixtures/users write them.
+// Each entry verified live before adding — e.g. "USA" is deliberately NOT
+// mapped to "United States" because TheSportsDB has a proper "USA" soccer
+// entry, while "United States" returns the U17 side.
+const TEAM_NAME_MAP: Record<string, string> = {
+  'czechia': 'Czech Republic',   // bare "Czechia" returns the women's team
+  'türkiye': 'Turkey',           // returns nothing
+  'turkiye': 'Turkey',
+  'uae': 'United Arab Emirates', // returns nothing
+};
+
 export const searchTeamId = async (name: string): Promise<string | null> => {
   try {
-    const res = await fetchWithTimeout(`${BASE}/searchteams.php?t=${encodeURIComponent(name)}`, 6000);
+    const mapped = TEAM_NAME_MAP[name.trim().toLowerCase()] ?? name;
+    const res = await fetchWithTimeout(`${BASE}/searchteams.php?t=${encodeURIComponent(mapped)}`, 6000);
     const data = await res.json();
     const teams: any[] = data.teams ?? [];
-    const soccer = teams.find(t => /soccer|football/i.test(t.strSport ?? ''));
-    return soccer?.idTeam ?? null;
+    const soccer = teams.filter(t => /soccer|football/i.test(t.strSport ?? ''));
+    // Prefer the exact-name match — a loose first-hit can land on a
+    // women's/U17 side that happens to sort first for some countries.
+    const exact = soccer.find(t => (t.strTeam ?? '').toLowerCase() === mapped.toLowerCase());
+    return (exact ?? soccer[0])?.idTeam ?? null;
   } catch {
     return null;
   }
@@ -191,15 +207,30 @@ const fetchFdRecentMatches = async (
   return { a, b };
 };
 
-// Fetch form for two teams in parallel. With a football-data.org key
-// configured, tries that first (richer history for teams in its ~12
-// supported competitions), falling back to TheSportsDB per team when a
-// team isn't covered (free-tier competitions only) or no key is set.
+// Fetch form for two teams in parallel. Bzzoiro goes first when keyed — its
+// last-N-finished-matches query covers essentially any team, not just ~12
+// competitions — falling back to football-data.org, then TheSportsDB per
+// team when a team isn't covered there either.
 export const fetchBothTeamForms = async (
   nameA: string,
   nameB: string,
   fdKey?: string,
+  bzKey?: string,
 ): Promise<[TeamForm | null, TeamForm | null]> => {
+  if (bzKey) {
+    try {
+      const [bzA, bzB] = await fetchBothBzTeamForms(bzKey, nameA, nameB, 5);
+      if (bzA && bzB) return [bzA, bzB];
+      if (bzA || bzB) {
+        // Only one side missing — one fallback pass covers both instead of
+        // calling the whole fd/TheSportsDB pipeline twice.
+        const [fallbackA, fallbackB] = await fetchBothTeamForms(nameA, nameB, fdKey);
+        return [bzA ?? fallbackA, bzB ?? fallbackB];
+      }
+    } catch {
+      // fall through to football-data.org / TheSportsDB below
+    }
+  }
   if (fdKey) {
     try {
       const { a, b } = await fetchFdRecentMatches(fdKey, nameA, nameB);

@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0A0A0A"
+      "backgroundColor": "#050505"
     },
     "ios": {
       "supportsTablet": true,
@@ -54,12 +54,13 @@
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#22c55e",
+          "color": "#1E7A46",
           "defaultChannel": "scout-inference"
         }
       ],
       "expo-sqlite",
-      "expo-image-picker"
+      "expo-image-picker",
+      "expo-font"
     ],
     "extra": {
       "eas": {

@@ -1,42 +1,52 @@
+// Redesign v3 — dark, near-black surfaces with a single volt-green accent.
+// Chalk text, mist secondary, hairline white strokes. One radial volt glow
+// per hero card is the only "decoration"; everything else is flat surface.
 export interface Theme {
   // Surfaces
-  background: string;
+  background: string; // near-black app background
   card: string;       // surface
-  cardAlt: string;    // surfaceAlt (raised elements, inputs)
+  cardAlt: string;    // surface-2 (raised elements, inputs, user bubbles)
+  cardHot: string;    // kept for selected/emphasis states
 
   // Brand
-  accent: string;     // primary — brand yellow #FDC803
-  accentFg: string;   // onPrimary — always black (text/icons ON yellow)
+  accent: string;     // volt green — CTAs, active tab, links, AI identity
+  accentFg: string;   // ink — text/icons ON volt
 
   // Typography
-  text: string;
-  textSecondary: string; // textMuted
+  text: string;       // chalk
+  textSecondary: string; // mist
+  textTertiary: string;  // mist-dim
 
   // Structure
-  border: string;
-  error: string;
-  success: string;    // live/online status dot ONLY — never use as accent
+  border: string;     // hairline white stroke
+  error: string;      // loss
+  success: string;
+  live: string;       // live pill red
+  highlight: string;  // legacy kitYellow slot — unused in v3, kept so old refs compile
 
   // Semantic chips
-  visionChip: string; // vision model type indicator
+  visionChip: string;
 }
 
 export const darkTheme: Theme = {
-  background:    '#080808',
-  card:          '#111111',
-  cardAlt:       '#171717',
-  accent:        '#22c55e',
-  accentFg:      '#000000',
-  text:          '#f9fafb',
-  textSecondary: '#6b7280',
-  border:        '#1f1f1f',
-  error:         '#ef4444',
-  success:       '#22c55e',
+  background:    '#050505',
+  card:          '#131313',
+  cardAlt:       '#1a1a1a',
+  cardHot:       '#222222',
+  accent:        '#C6F53A',
+  accentFg:      '#0b0b0b',
+  text:          '#f5f5f5',
+  textSecondary: '#9a9a9a',
+  textTertiary:  '#616161',
+  border:        'rgba(255,255,255,0.08)',
+  error:         '#ff6b57',
+  success:       '#C6F53A',
+  live:          '#ff3b3b',
+  highlight:     '#F5B80C',
   visionChip:    '#3b82f6',
 };
 
-// Dark only, by design — every screen calls getTheme(useTheme()), so this
-// keeps that call shape working without a light theme to fall back to.
+// Single theme by design — every screen calls getTheme(useTheme()).
 export function getTheme(_mode?: 'dark'): Theme {
   return darkTheme;
 }

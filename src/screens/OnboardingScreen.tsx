@@ -8,31 +8,31 @@ import { useNavigation } from '@react-navigation/native';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { markOnboarded } from '../utils/storage';
-import { IconBall, IconTarget, IconCamera } from '../components/Icons';
+import { IconBall, IconTarget, IconCalendar } from '../components/Icons';
 
 const { width: SW } = Dimensions.get('window');
 
 const MODULES = [
   {
-    icon: (c: string) => <IconBall size={28} color={c} />,
-    tag: 'QVAC',
-    tagColor: '#22c55e',
-    title: 'AI Coach',
-    desc: 'Ask any football question — tactics, players, clubs, history. Runs 100% on-device.',
+    icon: (c: string) => <IconCalendar size={28} color={c} />,
+    tag: 'MATCHDAY',
+    tagColor: '#C6F53A',
+    title: 'Matches',
+    desc: 'Upcoming fixtures with form and context — synced once, readable offline.',
   },
   {
     icon: (c: string) => <IconTarget size={28} color={c} />,
     tag: 'QVAC',
-    tagColor: '#22c55e',
+    tagColor: '#C6F53A',
     title: 'Predictor',
-    desc: 'Pick two teams and get an on-device match prediction with live form data.',
+    desc: 'Pick two teams and get an on-device match prediction with real form data.',
   },
   {
-    icon: (c: string) => <IconCamera size={28} color={c} />,
-    tag: 'QVAC Vision',
-    tagColor: '#22c55e',
-    title: 'Scout Lens',
-    desc: 'Point your camera at a jersey, badge, or match screen. AI identifies it instantly.',
+    icon: (c: string) => <IconBall size={28} color={c} />,
+    tag: 'QVAC',
+    tagColor: '#C6F53A',
+    title: 'AI Coach',
+    desc: 'Ask any football question — tactics, players, clubs, history. Runs 100% on-device.',
   },
 ];
 
@@ -57,7 +57,7 @@ export default function OnboardingScreen() {
       Animated.timing(btnScale, { toValue: 1, duration: 80, useNativeDriver: true }),
     ]).start();
     await markOnboarded();
-    navigation.replace('Main');
+    navigation.replace('MainTabs');
   };
 
   const onScroll = (e: any) => {
@@ -141,7 +141,7 @@ export default function OnboardingScreen() {
               <View style={styles.infoCardContent}>
                 <Text style={[styles.infoCardTitle, { color: theme.text }]}>On-device inference</Text>
                 <Text style={[styles.infoCardBody, { color: theme.textSecondary }]}>
-                  Scout uses the QVAC SDK. Download a model once — every answer it generates runs entirely on your device, no API keys, no subscriptions. (Live match data below still needs a connection to fetch.)
+                  Scout uses the QVAC SDK. Download a model once — every answer it generates runs entirely on your device, no API keys, no subscriptions. (Match data below still needs a connection to fetch.)
                 </Text>
               </View>
             </View>
@@ -149,7 +149,7 @@ export default function OnboardingScreen() {
             <View style={[styles.infoCard, { backgroundColor: theme.card }]}>
               <View style={[styles.infoBar, { backgroundColor: '#60a5fa' }]} />
               <View style={styles.infoCardContent}>
-                <Text style={[styles.infoCardTitle, { color: theme.text }]}>Live match data</Text>
+                <Text style={[styles.infoCardTitle, { color: theme.text }]}>Match data</Text>
                 <Text style={[styles.infoCardBody, { color: theme.textSecondary }]}>
                   Today's fixtures and team form come from TheSportsDB — a free, open football database. No account needed. All AI analysis still runs fully offline.
                 </Text>

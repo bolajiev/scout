@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Animated, ScrollView, TouchableOpacity, Linking
 import Constants from 'expo-constants';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconBall, IconTarget, IconCamera } from '../components/Icons';
+import { IconBall, IconTarget, IconCalendar } from '../components/Icons';
 import ScreenHeader from '../components/ScreenHeader';
 
 const appVersion = Constants.expoConfig?.version ?? '1.0';
@@ -16,23 +16,23 @@ const MODULES = [
   {
     icon: (c: string) => <IconBall size={18} color={c} />,
     tag: 'TOOL CALLING',
-    tagColor: '#22c55e',
+    tagColor: '#C6F53A',
     title: 'AI Coach',
-    desc: 'On-device LLM with live tool calling: the model decides when to fetch today\'s fixtures, a team\'s form, or check football news to verify a claim — every fetch is disclosed and viewable. Streams its thinking process in Think mode.',
+    desc: 'On-device LLM with tool calling: the model decides when to fetch today\'s fixtures, a team\'s form, or check football news to verify a claim — every fetch is disclosed and viewable. Streams its thinking process in Think mode.',
   },
   {
     icon: (c: string) => <IconTarget size={18} color={c} />,
     tag: 'ACCOUNTABLE',
-    tagColor: '#f97316',
+    tagColor: '#C6F53A',
     title: 'Predictor',
-    desc: 'Structured on-device predictions fed with live team form. Every call is recorded and graded against the real result — the app keeps a public W/L track record of its own AI.',
+    desc: 'Structured on-device predictions fed with real team form. Every call is recorded and graded against the real result — the app keeps a public W/L track record of its own AI.',
   },
   {
-    icon: (c: string) => <IconCamera size={18} color={c} />,
-    tag: 'MULTIMODAL',
-    tagColor: '#3b82f6',
-    title: 'Scout Lens',
-    desc: 'Vision + text conversation about any football image: scan a jersey, badge, or scoreboard, then ask follow-up questions — all processed on your phone.',
+    icon: (c: string) => <IconCalendar size={18} color={c} />,
+    tag: 'MATCHDAY',
+    tagColor: '#C6F53A',
+    title: 'Matches',
+    desc: 'Upcoming fixtures with scores and team badges, synced from free football data and cached locally — readable offline after one sync.',
   },
 ];
 
@@ -72,7 +72,7 @@ export default function AboutScreen() {
         <View style={[styles.card, { backgroundColor: theme.card }]}>
           <Text style={[styles.cardTitle, { color: theme.text }]}>What is Scout?</Text>
           <Text style={[styles.cardBody, { color: theme.textSecondary }]}>
-            A complete football companion where every AI feature — chat, match prediction, image recognition — runs 100% on your phone through the QVAC SDK. No cloud AI, no accounts; the model never leaves your device. Live fixtures, team form, and news still need a connection to fetch. Built for the FIFA World Cup 2026 moment: live fixtures, form-grounded predictions with a real track record, and a vision scanner for match-day moments.
+            A complete football companion where every AI feature — chat and match prediction — runs 100% on your phone through the QVAC SDK. No cloud AI, no accounts; the model never leaves your device. Fixtures, team form, and news still need a connection to fetch, then stay readable offline. Built for the FIFA World Cup 2026 moment: matchday fixtures and form-grounded predictions with a real track record.
           </Text>
         </View>
 

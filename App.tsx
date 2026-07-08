@@ -2,6 +2,8 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, AppState, AppStateStatus } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
+import { useFonts, Archivo_700Bold, Archivo_800ExtraBold, Archivo_900Black } from '@expo-google-fonts/archivo';
+import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter';
 import AppNavigator from './src/navigation/AppNavigator';
 import { llmManager } from './src/utils/modelManager';
 import { clearInferenceNotifications, cancelActiveInference, hasActiveInference } from './src/utils/bgNotification';
@@ -76,14 +78,26 @@ class ErrorBoundary extends React.Component<React.PropsWithChildren<{}>, EBState
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', padding: 32 },
-  title: { color: '#FDC803', fontSize: 20, fontWeight: '700', marginBottom: 12, textAlign: 'center' },
-  msg: { color: '#aaa', fontSize: 13, textAlign: 'center', lineHeight: 20, marginBottom: 28 },
-  btn: { backgroundColor: '#FDC803', paddingHorizontal: 32, paddingVertical: 14, borderRadius: 14 },
-  btnText: { color: '#000', fontSize: 15, fontWeight: '700' },
+  root: { flex: 1, backgroundColor: '#050505', justifyContent: 'center', alignItems: 'center', padding: 32 },
+  title: { color: '#f5f5f5', fontSize: 20, fontWeight: '700', marginBottom: 12, textAlign: 'center' },
+  msg: { color: '#9a9a9a', fontSize: 13, textAlign: 'center', lineHeight: 20, marginBottom: 28 },
+  btn: { backgroundColor: '#C6F53A', paddingHorizontal: 32, paddingVertical: 14, borderRadius: 14 },
+  btnText: { color: '#0b0b0b', fontSize: 15, fontWeight: '700' },
 });
 
 export default function App() {
+  // Fonts must be ready before anything renders — Archivo for display/
+  // headers (700/800/900), Inter for body copy (400/500/600). Blank view
+  // matching the paper background instead of `return null`, so there's
+  // no flash between the native splash and first paint.
+  const [fontsLoaded] = useFonts({
+    Archivo_700Bold, Archivo_800ExtraBold, Archivo_900Black,
+    Inter_400Regular, Inter_500Medium, Inter_600SemiBold,
+  });
+  if (!fontsLoaded) {
+    return <View style={{ flex: 1, backgroundColor: '#050505' }} />;
+  }
+
   return (
     <ErrorBoundary>
       <StatusBar style="light" />
