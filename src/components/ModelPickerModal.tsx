@@ -21,8 +21,11 @@ export default function ModelPickerModal({
   const theme = getTheme(useTheme());
   const accent = theme.accent;
 
+  // See PhotoSourceSheet.tsx for why these two props matter — without
+  // them this modal opens its own native window that doesn't inherit the
+  // app's dark edge-to-edge theming.
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={[styles.sheet, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
           <Text style={[styles.title, { color: theme.text }]}>Choose a model</Text>

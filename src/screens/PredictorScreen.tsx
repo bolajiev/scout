@@ -799,11 +799,19 @@ export default function PredictorScreen() {
         {isGenerating && prediction.length === 0 && <SkeletonVerdictCard />}
 
         {/* Streaming result — parsed live so raw WINNER:/SCORE: lines never
-            show; fields pop in as chips, analysis streams below */}
+            show; fields pop in as chips, analysis streams below. Team
+            badges + VS header reuses the same shape as the skeleton above
+            and the verdict card that follows on the result page, so the
+            three states read as one continuous reveal instead of three
+            unrelated layouts. */}
         {isGenerating && prediction.length > 0 && (
           <View style={[styles.resultCard, { backgroundColor: theme.card }]}>
               <View style={styles.resultContent}>
-                <Text style={[styles.resultLabel, { color: accent }]}>MAKING THE CALL...</Text>
+                <View style={styles.streamHeaderRow}>
+                  <TeamBadge url={badgeUrl(selectedFixture?.strHomeTeamBadge)} name={teamA} abbr={teamAbbr(teamA)} size={28} />
+                  <Text style={[styles.resultLabel, { color: accent }]}>MAKING THE CALL...</Text>
+                  <TeamBadge url={badgeUrl(selectedFixture?.strAwayTeamBadge)} name={teamB} abbr={teamAbbr(teamB)} size={28} />
+                </View>
                 {(live.winner || live.score || live.confidence) && (
                   <View style={styles.liveChipsRow}>
                     {live.winner ? (
@@ -1005,6 +1013,7 @@ const styles = StyleSheet.create({
   resultCard: { borderRadius: 14, overflow: 'hidden' },
   resultContent: { flex: 1, padding: 16, gap: 8 },
   resultLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.4 },
+  streamHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 14, marginBottom: 4 },
   resultText: { fontSize: 15, lineHeight: 24 },
   stat: { fontSize: 10 },
   analysisHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

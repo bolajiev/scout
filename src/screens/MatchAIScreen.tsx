@@ -27,7 +27,7 @@ import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId, getAc
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { createSession, addMessage, getMessages } from '../utils/historyDb';
 import { formatFixtureContext, fetchTeamForm } from '../utils/teamStats';
-import { fetchBzTeamForm } from '../utils/bzzoiro';
+import { fetchBzTeamForm, fetchPlayerStats, formatPlayerStatsContext } from '../utils/bzzoiro';
 import { splitChannelThinking } from '../utils/thinkingSplit';
 import { fetchAndCacheFixtures } from '../utils/fixtures';
 import { logInference } from '../utils/auditLogger';
@@ -64,11 +64,13 @@ const dateContext = (): string => {
   return ` Today's real date is ${iso(now)} (${weekday}). Yesterday was ${iso(yesterday)}, tomorrow is ${iso(tomorrow)}. Use this to judge what "recent", "last", "this week", "today", or "tomorrow" actually mean — never assume a date from your training data is current, and never treat an old date (e.g. a past World Cup) as if it just happened unless a tool result explicitly returns it as the answer to a "last match" question.`;
 };
 
-const TOOLS_SYSTEM_SUFFIX = ` Your training data has a cutoff and does NOT know live scores, current squads, or anything happening now — NEVER answer those from memory, and NEVER say "I don't have real-time access." Tools — use at most one per question: get_today_fixtures for today's games/scores; get_team_form for a team's recent match RESULTS. If a question is about anything happening now or recently, ALWAYS call a tool before answering — guessing from stale training data is worse than checking.
+const TOOLS_SYSTEM_SUFFIX = ` Your training data has a cutoff and does NOT know live scores, current squads, or anything happening now — NEVER answer those from memory, and NEVER say "I don't have real-time access." Tools — use at most one per question: get_today_fixtures for today's games/scores; get_team_form for a team's recent match RESULTS; get_player_stats for an individual player's real goals/assists/minutes/rating over their last few matches. If a question is about anything happening now or recently, ALWAYS call a tool before answering — guessing from stale training data is worse than checking.
+
+These tools are REAL and already working — calling one actually fetches live data right now, through the function-calling mechanism you have access to. This is not a simulation and not hypothetical; you are not guessing what a tool would return, you are actually retrieving it. Never reason your way into believing you "cannot actually execute" a tool — you can, every time.
 
 The FIFA World Cup 2026 is happening RIGHT NOW, this month — it is not a future event you lack data on. If asked about it, call get_today_fixtures rather than assuming it "hasn't happened yet."
 
-You do NOT have a tool for individual player statistics (goals scored, assists, cards, minutes played), and no tool for general news, transfers, or injuries — get_team_form only returns TEAM-level match results. If asked something neither tool can answer, say plainly that you don't have a reliable live source for that specific thing rather than guessing. NEVER invent a fake tool result to look like you checked — do not write words like "tool_response", a JSON array, or any bracketed data block as part of your answer; that text is reserved for the real function-calling mechanism only, and writing it yourself is always fabrication, never a real lookup.
+No tool covers general news, transfers, or injuries. If asked something none of your three tools can answer, say plainly that you don't have a reliable live source for that specific thing rather than guessing. NEVER invent a fake tool result to look like you checked — do not write words like "tool_response", a JSON array, or any bracketed data block as part of your answer; that text is reserved for the real function-calling mechanism only, and writing it yourself is always fabrication, never a real lookup.
 
 Only skip tools for pure tactics/history/opinion questions with no time-sensitive facts. When you decide to use a tool, call it through the actual function-calling mechanism only — never write the tool's name, or a sentence describing that you're about to use one, as part of your visible answer text. And never describe your own tools to the user by their internal function names (e.g. "get_today_fixtures") even when directly asked what you can do — describe them in plain English instead (e.g. "I can check today's fixtures or a team's recent results").`;
 
@@ -87,13 +89,25 @@ const SCOUT_TOOLS: Tool[] = [
   {
     type: 'function',
     name: 'get_team_form',
-    description: "Get a football TEAM's recent match results (W/D/L, scores, dates) from TheSportsDB. TEAM-level only — does not include any individual player's stats (goals, assists, cards). Use when asked about a specific team's recent form, results, or performance.",
+    description: "Get a football TEAM's recent match results (W/D/L, scores, dates) from TheSportsDB. TEAM-level only — use get_player_stats instead for an individual player's goals/assists/minutes. Use this for a specific team's recent form, results, or performance.",
     parameters: {
       type: 'object',
       properties: {
         team_name: { type: 'string', description: 'Name of the football team' },
       },
       required: ['team_name'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_player_stats',
+    description: "Get a football PLAYER's real per-match stats (goals, assists, minutes played, match rating) over their last few appearances, from Bzzoiro Sports. Use for any question about an individual player's goals, assists, or recent performance.",
+    parameters: {
+      type: 'object',
+      properties: {
+        player_name: { type: 'string', description: 'Full or partial name of the football player' },
+      },
+      required: ['player_name'],
     },
   },
 ];
@@ -116,7 +130,25 @@ const SCOUT_TOOLS: Tool[] = [
 // whole answer built on it has to be discarded, not just cleaned up.
 const FABRICATED_TOOL_RESPONSE_RE = /\btool[_ ]?response\b\s*:?\s*[\[{]/i;
 
-function detectLeakedToolCall(text: string): { impliedFixturesCall: boolean; fabricated: boolean } {
+// Verified live (Think mode): the model's own reasoning explicitly stated
+// "Since I cannot actually execute the tool here, I must state that I am
+// checking the form" — it doesn't believe its tool access is real, so it
+// narrates a confident-sounding status line ("Checking the team form for
+// Argentina...") and then produces nothing further, a dead end with no
+// recovery. Unlike the no-argument fixtures case, these two need a name —
+// pulled from the model's own narration/thinking with a deliberately
+// narrow pattern (a capitalized name right after "form for" / "stats
+// for") so a low-confidence guess falls through to the honest fallback
+// instead of firing a tool call with a garbage argument.
+const TEAM_FORM_ENTITY_RE = /\bform\s+for\s+([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,2})/;
+const PLAYER_STATS_ENTITY_RE = /\bstats?\s+for\s+([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,2})/;
+
+function detectLeakedToolCall(text: string, thinking: string): {
+  impliedFixturesCall: boolean;
+  impliedTeamForm: string | null;
+  impliedPlayerStats: string | null;
+  fabricated: boolean;
+} {
   const fabricated = FABRICATED_TOOL_RESPONSE_RE.test(text);
   // BUG FIX: this used to strip EVERY occurrence of a tool name from the
   // text unconditionally — verified live, asked "what can you check?", the
@@ -124,13 +156,21 @@ function detectLeakedToolCall(text: string): { impliedFixturesCall: boolean; fab
   // stripping them left "I only have access to: , and ` .`" with visible
   // holes where the names used to be. A tool name appearing mid-sentence
   // in an otherwise coherent answer is NOT the same failure as narrating a
-  // failed call attempt — only the specific no-argument-tool implied-call
-  // pattern gets auto-recovered (by actually calling it); every other
-  // mention is left completely alone rather than guessed at and mangled.
+  // failed call attempt — only the specific implied-call patterns below get
+  // auto-recovered (by actually calling the tool); every other mention is
+  // left completely alone rather than guessed at and mangled.
   const impliedFixturesCall = !fabricated
     && new RegExp(`\\bget_today_fixtures\\b`, 'i').test(text)
     && !new RegExp(`\\bget_team_form\\b`, 'i').test(text);
-  return { impliedFixturesCall, fabricated };
+  const combined = `${text}\n${thinking}`;
+  const formMatch = !fabricated && !impliedFixturesCall ? combined.match(TEAM_FORM_ENTITY_RE) : null;
+  const statsMatch = !fabricated && !impliedFixturesCall && !formMatch ? combined.match(PLAYER_STATS_ENTITY_RE) : null;
+  return {
+    impliedFixturesCall,
+    impliedTeamForm: formMatch ? formMatch[1] : null,
+    impliedPlayerStats: statsMatch ? statsMatch[1] : null,
+    fabricated,
+  };
 }
 
 // Four fixed category cards whose questions rotate automatically —
@@ -261,6 +301,18 @@ export default function MatchAIScreen() {
     return () => { show.remove(); hide.remove(); };
   }, []);
   const [isGenerating, setIsGenerating] = useState(false);
+  // Live ticking counter from the moment send() actually fires — the
+  // "Thinking..." label used to sit static with no number for however
+  // long prompt processing took (tens of seconds on-device, before the
+  // model emits even its first reasoning token), which read as frozen
+  // rather than working. Ticks every second while a request is in flight.
+  const [genStartedAt, setGenStartedAt] = useState<number | null>(null);
+  const [liveElapsedS, setLiveElapsedS] = useState(0);
+  useEffect(() => {
+    if (genStartedAt == null) { setLiveElapsedS(0); return; }
+    const id = setInterval(() => setLiveElapsedS(Math.floor((Date.now() - genStartedAt) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [genStartedAt]);
   const [modelId, setModelId]           = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel]           = useState(false);
@@ -364,6 +416,7 @@ export default function MatchAIScreen() {
             restored.push({
               id: `r-${msgs[i].id}`,
               question: msgs[i].content,
+              image: msgs[i].meta?.image,
               answer: next?.role === 'assistant' ? next.content : '',
               elapsed: next?.meta?.elapsed,
               toks: next?.meta?.toks,
@@ -621,7 +674,10 @@ export default function MatchAIScreen() {
 
     try {
       if (!sessionIdRef.current) sessionIdRef.current = createSession('matchai', q);
-      addMessage(sessionIdRef.current, 'user', q);
+      // BUG FIX: the image URI was never persisted here at all — only kept
+      // in React state, so it silently vanished the moment you navigated
+      // away and the screen remounted from stored history instead.
+      addMessage(sessionIdRef.current, 'user', q, image ? { image } : undefined);
     } catch {}
 
     // Only the last 4 exchanges go to the model — prompt processing on CPU
@@ -636,6 +692,7 @@ export default function MatchAIScreen() {
 
     setSlot({ id: entryId, question: q, image: image ?? undefined, answer: '', thought: '', isThinking: thinkingOn, toolStatus: null, liveSources: [], liveData: '' });
     setIsGenerating(true);
+    setGenStartedAt(Date.now());
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60);
 
     let liveSources: string[] = [];
@@ -643,7 +700,13 @@ export default function MatchAIScreen() {
     let answerAcc = '';
     let thoughtAcc = '';
     let lastFlush = 0;
-    let thinkStart = 0;
+    // BUG FIX: thinkMs used to measure from the first thinking TOKEN, not
+    // from send — silently excluding prompt-processing time (loading the
+    // system prompt + tool schemas + history before the model emits
+    // anything), which can be tens of seconds on-device. "Thought for
+    // X.Xs" now reflects the true wait from the moment the request was
+    // actually sent, matching what the user watched the clock do.
+    let thinkingStarted = false;
     let thinkMs = 0;
 
     try {
@@ -695,7 +758,7 @@ export default function MatchAIScreen() {
       for await (const event of run1.events) {
         if (abortRef.current) break;
         if (event.type === 'thinkingDelta') {
-          if (!thinkStart) thinkStart = Date.now();
+          thinkingStarted = true;
           thoughtAcc += event.text;
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 100) {
@@ -711,10 +774,10 @@ export default function MatchAIScreen() {
           pass1Raw += event.text;
           const split = splitChannelThinking(pass1Raw);
           if (split.thought) {
-            if (!thinkStart) thinkStart = Date.now();
+            thinkingStarted = true;
             thoughtAcc = split.thought;
           }
-          if (split.answer && thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
+          if (split.answer && thinkingStarted && !thinkMs) thinkMs = Date.now() - t0;
           pass1Answer = split.answer;
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 100) {
@@ -729,20 +792,25 @@ export default function MatchAIScreen() {
       let finalStats = await run1.stats;
 
       // Recovery path for the leaked-tool-call failure mode (see
-      // detectLeakedToolCall) — only auto-recovered for get_today_fixtures
-      // since it takes no arguments; get_team_form would need a team name
-      // guessed out of garbled prose, which isn't reliable enough to
-      // invent on the model's behalf.
+      // detectLeakedToolCall) — get_today_fixtures needs no arguments so
+      // it's always recoverable; get_team_form/get_player_stats only
+      // recover when a confident entity name could be pulled from the
+      // model's own narration/thinking, since guessing wrong is worse
+      // than the honest fallback.
       let leakCleanedAnswer: string | null = null;
       if (toolCalls.length === 0 && pass1Answer) {
-        const leak = detectLeakedToolCall(pass1Answer);
+        const leak = detectLeakedToolCall(pass1Answer, thoughtAcc);
         if (leak.fabricated) {
           // The data itself is invented, not just the syntax — cleaning up
           // the text would still leave a confident answer built on a fake
           // fact. Replace the whole thing with an honest admission instead.
-          leakCleanedAnswer = "I don't have a reliable live source for that specific stat, so I won't guess a number — ask me about a team's recent form or today's fixtures instead, or check a stats site for individual player numbers.";
+          leakCleanedAnswer = "I don't have a reliable live source for that specific thing, so I won't guess a number — try asking again, or ask about a player's recent stats, a team's form, or today's fixtures instead.";
         } else if (leak.impliedFixturesCall) {
           toolCalls = [{ name: 'get_today_fixtures', arguments: {} } as any];
+        } else if (leak.impliedTeamForm) {
+          toolCalls = [{ name: 'get_team_form', arguments: { team_name: leak.impliedTeamForm } } as any];
+        } else if (leak.impliedPlayerStats) {
+          toolCalls = [{ name: 'get_player_stats', arguments: { player_name: leak.impliedPlayerStats } } as any];
         }
       }
 
@@ -787,6 +855,13 @@ export default function MatchAIScreen() {
                 toolResult = teamFix.length > 0 ? formatFixtureContext(teamFix) : `No recent data found for ${teamName}.`;
               }
               liveSources.push(source);
+            } else if (tc.name === 'get_player_stats') {
+              const playerName = String(tc.arguments.player_name ?? '');
+              setSlot(s => s ? { ...s, toolStatus: `Checking ${playerName || 'player'}'s recent stats...` } : s);
+              const bzKey = await getActiveBzKey().catch(() => '');
+              const stats = bzKey ? await fetchPlayerStats(bzKey, playerName, 5).catch(() => null) : null;
+              toolResult = stats ? formatPlayerStatsContext(stats) : `No recent stats found for ${playerName}.`;
+              liveSources.push('Bzzoiro Sports');
             }
           } catch { toolResult = 'Unable to fetch data.'; }
           toolHistory.push({ role: 'tool', content: toolResult });
@@ -841,7 +916,7 @@ export default function MatchAIScreen() {
       logInference('matchai', modelNameRef.current, finalStats?.timeToFirstToken ?? 0, totalMs, finalStats?.generatedTokens ?? 0).catch(() => {});
 
       const elapsed = Math.round(totalMs / 100) / 10;
-      if (thinkStart && !thinkMs) thinkMs = Date.now() - thinkStart;
+      if (thinkingStarted && !thinkMs) thinkMs = totalMs;
       if (sessionIdRef.current && answerAcc) {
         addMessage(sessionIdRef.current, 'assistant', answerAcc, {
           elapsed, toks: finalStats?.generatedTokens,
@@ -854,6 +929,7 @@ export default function MatchAIScreen() {
         setSlot(null);
         setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
+        setGenStartedAt(null);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setTimeout(() => springEntry(entryId), 20);
       }
@@ -868,6 +944,7 @@ export default function MatchAIScreen() {
         setSlot(null);
         setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
+        setGenStartedAt(null);
         setTimeout(() => springEntry(entryId), 20);
       }
     }
@@ -906,7 +983,7 @@ export default function MatchAIScreen() {
         <View style={styles.thoughtHeader}>
           <View style={[styles.thoughtDot, { backgroundColor: isStreaming ? '#f59e0b' : '#78716c' }]} />
           <Text style={[styles.thoughtLabel, { color: isStreaming ? '#f59e0b' : '#78716c' }]}>
-            {isStreaming ? 'Thinking...' : doneLabel}
+            {isStreaming ? `Thinking... ${liveElapsedS}s` : doneLabel}
           </Text>
           {!isStreaming && (
             <Text style={[styles.thoughtChevron, { color: '#78716c' }]}>{isOpen ? '‹' : '›'}</Text>
@@ -1059,7 +1136,12 @@ export default function MatchAIScreen() {
 
       {/* New Chat / History — a single dropdown instead of two competing
           header links, so the header row stays clean and centered. */}
-      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+      {/* statusBarTranslucent/navigationBarTranslucent: without these, RN's
+          Modal opens its own native Android window that doesn't inherit
+          the app's dark edge-to-edge theme — a likely source of the
+          "white flash" reported repeatedly, and pre-dates this session's
+          new modals. */}
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)} statusBarTranslucent navigationBarTranslucent>
         <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
           <View style={[styles.menuPanel, { top: insets.top + 52, backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
             <TouchableOpacity
@@ -1163,7 +1245,16 @@ export default function MatchAIScreen() {
                   {slot.answer.length > 0 ? (
                     <Text style={[styles.aiText, { color: theme.text }]}>{slot.answer}</Text>
                   ) : (
-                    <TypingDots color={accent} />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <TypingDots color={accent} />
+                      {/* Same live counter as the Think-mode header — Fast
+                          mode has no thinking block to host it, but the
+                          same "silent for 50s straight" problem applies
+                          before the first token of the actual answer. */}
+                      {liveElapsedS > 0 && (
+                        <Text style={{ fontSize: 12, color: theme.textSecondary }}>{liveElapsedS}s</Text>
+                      )}
+                    </View>
                   )}
                 </View>
               </View>

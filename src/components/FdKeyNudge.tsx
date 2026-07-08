@@ -42,8 +42,11 @@ export default function FdKeyNudge({ visible, onSaved, onDismiss }: {
     onDismiss();
   };
 
+  // See PhotoSourceSheet.tsx for why these two props matter — without
+  // them this modal opens its own native window that doesn't inherit the
+  // app's dark edge-to-edge theming.
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onDismiss}>
         <Pressable style={[styles.sheet, { backgroundColor: theme.cardAlt, borderColor: theme.border, paddingBottom: Math.max(insets.bottom, 20) }]}>
           <View style={[styles.grabber, { backgroundColor: theme.border }]} />

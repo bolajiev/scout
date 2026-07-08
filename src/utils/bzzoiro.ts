@@ -276,6 +276,24 @@ async function resolveBzTeamId(key: string, teamName: string): Promise<number | 
 // full squad is pulled in one call and sorted client-side instead. Many
 // backup/youth entries have a null rating (never played enough to be
 // scored) — those are filtered out rather than treated as a 0.
+// Checks whether a player actually featured in their most recent logged
+// match — verified live: the plain highest-card-rating pick occasionally
+// named someone injured, benched, or transferred out who hadn't actually
+// played the team's last match at all. A single-row stats fetch (most
+// recent appearance only) is cheap enough to run for a handful of
+// candidates without turning this into an N-calls-per-squad problem.
+async function playedRecently(key: string, playerId: number): Promise<boolean> {
+  try {
+    const res = await fetchWithTimeout(`${BASE}/api/v2/players/${playerId}/stats/?limit=1`, 4000, { headers: authHeaders(key) });
+    if (!res.ok) return false;
+    const data = await res.json();
+    const latest = (data.results ?? [])[0];
+    return !!latest && (latest.minutes_played ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchTopRatedPlayer(key: string, teamName: string): Promise<RatedPlayer | null> {
   try {
     const teamId = await resolveBzTeamId(key, teamName);
@@ -287,7 +305,13 @@ export async function fetchTopRatedPlayer(key: string, teamName: string): Promis
     const rated = results.filter(p => typeof p.rating === 'number');
     if (rated.length === 0) return null;
     rated.sort((a, b) => b.rating - a.rating);
-    const top = rated[0];
+    // Check the top 5 candidates' actual last-match involvement in
+    // parallel, then take the highest-rated one who really played —
+    // falling back to the plain #1 rating if none of them checks out
+    // (a real pick beats no pick, even if unverified).
+    const candidates = rated.slice(0, 5);
+    const playedFlags = await Promise.all(candidates.map(p => playedRecently(key, p.id)));
+    const top = candidates.find((_, i) => playedFlags[i]) ?? rated[0];
     return { name: top.name, rating: top.rating, position: top.position ?? '', nationality: top.nationality ?? '' };
   } catch {
     return null;
@@ -297,3 +321,81 @@ export async function fetchTopRatedPlayer(key: string, teamName: string): Promis
 export async function fetchBothTopRatedPlayers(key: string, nameA: string, nameB: string): Promise<[RatedPlayer | null, RatedPlayer | null]> {
   return Promise.all([fetchTopRatedPlayer(key, nameA), fetchTopRatedPlayer(key, nameB)]);
 }
+
+export interface PlayerAppearance {
+  goals: number;
+  assists: number;
+  minutesPlayed: number;
+  rating: number | null;
+}
+
+export interface PlayerStatsSummary {
+  name: string;
+  team: string;
+  appearances: PlayerAppearance[]; // most recent first
+}
+
+// A name search can match several players sharing a name (verified live:
+// "Mbappe" returns Ethan AND Kylian Mbappé, among others) — no query param
+// disambiguates by fame, so the highest-rated match is used as the best
+// guess for "the player everyone means" rather than whichever the API
+// happens to list first.
+async function resolveBzPlayerId(key: string, playerName: string): Promise<{ id: number; name: string; team: string } | null> {
+  try {
+    const res = await fetchWithTimeout(`${BASE}/api/v2/players/?name=${encodeURIComponent(playerName)}&limit=10`, 6000, { headers: authHeaders(key) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const results: any[] = data.results ?? [];
+    if (results.length === 0) return null;
+    const withRating = results.filter(p => typeof p.rating === 'number');
+    const best = (withRating.length > 0 ? withRating : results).sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))[0];
+    return { id: best.id, name: best.name, team: String(best.current_team_id ?? '') };
+  } catch {
+    return null;
+  }
+}
+
+// Real per-match stats — goals/assists/minutes/rating — the data source
+// that was missing entirely before this: Coach previously had no way to
+// answer "how many goals has X scored" except fabricating an answer, and
+// Predictor's "Player to Watch" had no way to check whether its pick
+// actually played recently. No date field comes back on these rows
+// (verified live), but they're returned most-recent-match-first.
+export async function fetchPlayerStats(key: string, playerName: string, limit = 5): Promise<PlayerStatsSummary | null> {
+  try {
+    const player = await resolveBzPlayerId(key, playerName);
+    if (!player) return null;
+    const res = await fetchWithTimeout(`${BASE}/api/v2/players/${player.id}/stats/?limit=${limit}`, 6000, { headers: authHeaders(key) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const results: any[] = data.results ?? [];
+    if (results.length === 0) return null;
+    return {
+      name: player.name,
+      team: player.team,
+      appearances: results.map(r => ({
+        goals: r.goals ?? 0,
+        assists: r.goal_assist ?? 0,
+        minutesPlayed: r.minutes_played ?? 0,
+        rating: typeof r.rating === 'number' ? r.rating : null,
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export const formatPlayerStatsContext = (stats: PlayerStatsSummary): string => {
+  const { appearances } = stats;
+  const totalGoals = appearances.reduce((s, a) => s + a.goals, 0);
+  const totalAssists = appearances.reduce((s, a) => s + a.assists, 0);
+  const lines = appearances.map((a, i) =>
+    `Match ${i + 1} ago: ${a.goals} goal${a.goals === 1 ? '' : 's'}, ${a.assists} assist${a.assists === 1 ? '' : 's'}, ${a.minutesPlayed} min${a.rating != null ? `, rating ${a.rating}` : ''}`
+  );
+  return [
+    `[PLAYER STATS — ${stats.name}, last ${appearances.length} appearances, via Bzzoiro Sports]`,
+    `Totals: ${totalGoals} goal${totalGoals === 1 ? '' : 's'}, ${totalAssists} assist${totalAssists === 1 ? '' : 's'}`,
+    ...lines,
+    '[END PLAYER STATS]',
+  ].join('\n');
+};

@@ -32,8 +32,13 @@ export default function PhotoSourceSheet({
     </TouchableOpacity>
   );
 
+  // BUG FIX: RN's Modal opens a separate native Android window by default,
+  // which does NOT inherit the app's edge-to-edge dark theme — it can show
+  // the OS's light-default system-bar chrome behind it, the "white flash"
+  // reported repeatedly. These two props route the modal through the same
+  // window/theming as the rest of the app.
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={[styles.sheet, { backgroundColor: theme.cardAlt, borderColor: theme.border, paddingBottom: Math.max(insets.bottom, 20) }]}>
           <View style={[styles.grabber, { backgroundColor: theme.border }]} />
