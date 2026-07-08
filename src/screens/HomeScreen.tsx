@@ -40,10 +40,11 @@ import {
   fmtMatchTime, teamAbbr, isWorldCup, badgeUrl, fixtureOrder, todayISO, WC_NAME,
   type Fixture,
 } from '../utils/fixtures';
-import { getActiveFdKey, getActiveBzKey } from '../utils/storage';
+import { getActiveFdKey, getActiveBzKey, getFdNudgeDismissed } from '../utils/storage';
 import { TOP_LEAGUES } from '../utils/bzzoiro';
 import FdKeyNudge from '../components/FdKeyNudge';
 import ReportBugLink from '../components/ReportBugLink';
+import { SkeletonHeroCard, SkeletonFixtureList } from '../components/Skeleton';
 import { isOnline } from '../utils/network';
 
 const HIT = { top: 10, bottom: 10, left: 10, right: 10 };
@@ -84,14 +85,26 @@ export default function HomeScreen() {
   const mountedRef = useRef(true);
   const lastFixtureFetchRef = useRef(0);
   const liveCountRef = useRef(0);
+  // BUG FIX: refreshFixtures used to depend on `fixtures.length` directly,
+  // so its identity changed on every single fetch that added/removed a
+  // fixture. The focus effect below depends on refreshFixtures — and
+  // React Navigation's useFocusEffect re-runs whenever its callback's
+  // identity changes, not just on a real focus event (the same gotcha as
+  // the modelId/qvacId bug). Net effect: any fixture-count change while
+  // already on Matches could re-trigger the "just focused" logic, and
+  // switching tabs and back always looked like a fresh reload even when
+  // the data was seconds old. Reading the count from a ref instead keeps
+  // refreshFixtures's identity permanently stable.
+  const fixturesLenRef = useRef(0);
 
   const refreshFixtures = useCallback((force = false) => {
     const stale = Date.now() - lastFixtureFetchRef.current > 3 * 60_000;
-    if (!force && !stale && fixtures.length > 0) return;
+    if (!force && !stale && fixturesLenRef.current > 0) return;
     lastFixtureFetchRef.current = Date.now();
     fetchAndCacheFixtures().then(({ fixtures: fx, fromCache, online }) => {
       if (!mountedRef.current) return;
       liveCountRef.current = fx.filter(isLive).length;
+      fixturesLenRef.current = fx.length;
       setFixtures(fx);
       setMatchOnline(online);
       setMatchFromCache(fromCache);
@@ -100,20 +113,26 @@ export default function HomeScreen() {
         isOnline().then(v => { if (mountedRef.current) setDeviceOffline(!v); });
       }
     }).catch(() => {}).finally(() => { if (mountedRef.current) setInitialLoading(false); });
-  }, [fixtures.length]);
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
     refreshFixtures(true);
+    // Home is a tab screen — it mounts once per app open and stays alive
+    // while switching tabs, so a mount-only effect is exactly "once per
+    // app open", not "once per visit". The nudge used to live in the
+    // useFocusEffect below and re-check (and potentially reappear) every
+    // single time the user came back to this tab from Coach/Predictor/etc.
+    getFdNudgeDismissed().then(dismissed => {
+      if (dismissed || !mountedRef.current) return;
+      getActiveFdKey().then(k => { if (mountedRef.current) setShowFdNudge(!k); }).catch(() => {});
+    }).catch(() => {});
     // Tab screen stays mounted while the app is open — tick every minute
     // during live matches so scores update; otherwise only when >3min stale.
     const interval = setInterval(() => refreshFixtures(liveCountRef.current > 0), 60_000);
     return () => { mountedRef.current = false; clearInterval(interval); };
   }, [refreshFixtures]);
 
-  const checkFdNudge = useCallback(() => {
-    getActiveFdKey().then(k => { if (mountedRef.current) setShowFdNudge(!k); }).catch(() => {});
-  }, []);
   const checkBzActive = useCallback(() => {
     getActiveBzKey().then(k => { if (mountedRef.current) setBzActive(!!k); }).catch(() => {});
   }, []);
@@ -121,10 +140,9 @@ export default function HomeScreen() {
   useFocusEffect(useCallback(() => {
     mountedRef.current = true;
     refreshFixtures();
-    checkFdNudge();
     checkBzActive();
     return () => { mountedRef.current = false; };
-  }, [refreshFixtures, checkFdNudge, checkBzActive]));
+  }, [refreshFixtures, checkBzActive]));
 
   // Live minute + goalscorer round-robin — football-data.org's bulk
   // /v4/matches list (used above for the fixture list) never includes
@@ -230,6 +248,12 @@ export default function HomeScreen() {
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       <StatusBar barStyle="light-content" />
 
+      <FdKeyNudge
+        visible={showFdNudge}
+        onSaved={() => { setShowFdNudge(false); lastFixtureFetchRef.current = 0; refreshFixtures(true); }}
+        onDismiss={() => setShowFdNudge(false)}
+      />
+
       {/* Stadium backdrop — fades smoothly into the black page */}
       <View style={styles.stadiumWrap} pointerEvents="none">
         <Image source={STADIUM} style={styles.stadiumImg} resizeMode="cover" />
@@ -269,7 +293,11 @@ export default function HomeScreen() {
           }
         >
           {/* Hero — translucent card floating over the stadium backdrop,
-              big kickoff time center, LIVE pill when in play */}
+              big kickoff time center, LIVE pill when in play. Was a plain
+              "Loading matches..." text with nothing shaped like the card
+              that was about to appear — skeleton now fills that same slot
+              so the reveal doesn't jump. */}
+          {!hero && initialLoading && <SkeletonHeroCard />}
           {hero && (
             <TouchableOpacity
               style={styles.hero}
@@ -330,10 +358,6 @@ export default function HomeScreen() {
           {/* No model strip here — model loading lives in Coach and
               Predictor now, the two screens that actually need one.
               Matches doesn't touch the model at all. */}
-
-          {showFdNudge && (
-            <FdKeyNudge onSaved={() => { setShowFdNudge(false); lastFixtureFetchRef.current = 0; refreshFixtures(true); }} />
-          )}
 
           {/* Competition filter chips */}
           {comps.length > 1 && (
@@ -429,14 +453,10 @@ export default function HomeScreen() {
           )}
 
           {/* Empty state — three distinct cases: still loading (first
-              fetch hasn't resolved, no message yet so it doesn't flash
-              "no fixtures" for a split second), no internet at all, or
-              online but our data sources are having trouble. */}
-          {fixtures.length === 0 && initialLoading && (
-            <View style={styles.empty}>
-              <Text style={[styles.emptySub, { color: theme.textSecondary }]}>Loading matches...</Text>
-            </View>
-          )}
+              fetch hasn't resolved — a shaped skeleton instead of a bare
+              "Loading matches..." string), no internet at all, or online
+              but our data sources are having trouble. */}
+          {fixtures.length === 0 && initialLoading && <SkeletonFixtureList />}
           {fixtures.length === 0 && !initialLoading && (
             <View style={styles.empty}>
               {deviceOffline ? (

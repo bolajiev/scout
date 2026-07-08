@@ -255,15 +255,15 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* ── Bzzoiro ML predictions ───────────────────────────── */}
-        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Match Predictions</Text>
+        {/* ── Bzzoiro Sports data ──────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Match Data (Bzzoiro)</Text>
         <View style={[styles.card, { backgroundColor: theme.card }]}>
           <View style={styles.cardRow}>
             <View style={styles.behaviorLeft}>
-              <Text style={[styles.rowLabel, { color: theme.text }]}>Real prediction odds</Text>
+              <Text style={[styles.rowLabel, { color: theme.text }]}>Live scores & form</Text>
               <Text style={[styles.rowHint, { color: bzKey && bzEnabled ? accent : theme.textSecondary }]}>
                 {!bzKey.trim()
-                  ? 'ON by default — real 1X2 probabilities from Bzzoiro Sports when a match is found. Paste your own key below to use your own quota instead of the shared one.'
+                  ? 'ON by default — live scores, World Cup/top-league fixtures, and real recent form from Bzzoiro Sports. Paste your own key below to use your own quota instead of the shared one.'
                   : bzEnabled
                     ? 'ON — using your own Bzzoiro Sports key'
                     : 'Using the shared default key instead of yours'}

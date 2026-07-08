@@ -1,9 +1,16 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-  <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
-    <item name="android:enforceNavigationBarContrast" tools:targetApi="29">true</item>
+  <!-- BUG FIX: was Theme.AppCompat.DayNight.NoActionBar — DayNight resolves
+       to its LIGHT variant on a phone set to system light mode, which is
+       where the light system nav bar / white strip at the bottom came
+       from. Scout has no light theme (getTheme() always returns
+       darkTheme) so the native theme should never day/night-switch either. -->
+  <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
     <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
     <item name="colorPrimary">@color/colorPrimary</item>
     <item name="android:statusBarColor">#050505</item>
+    <item name="android:navigationBarColor">#050505</item>
+    <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    <item name="android:windowLightStatusBar">false</item>
     <item name="android:windowBackground">@color/splashscreen_background</item>
   </style>
   <style name="Theme.App.SplashScreen" parent="AppTheme">

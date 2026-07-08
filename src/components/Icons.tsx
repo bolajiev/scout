@@ -31,11 +31,18 @@ export const IconTarget = ({ size = 24, color = '#fff' }: IconProps) => (
   </Svg>
 );
 
-// Camera — for Scout Lens
+// Camera — photo upload in Coach's composer
 export const IconCamera = ({ size = 24, color = '#fff' }: IconProps) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
     <Path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
     <Circle cx="12" cy="13" r="4" stroke={color} strokeWidth="1.8" />
+  </Svg>
+);
+
+// Close / remove — for dismissing a staged attachment, etc.
+export const IconClose = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path d="M5 5l14 14M19 5L5 19" stroke={color} strokeWidth="2" strokeLinecap="round" />
   </Svg>
 );
 

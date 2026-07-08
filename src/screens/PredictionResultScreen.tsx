@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, Image, StyleSheet, ScrollView, Animated } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute } from '@react-navigation/native';
 import { getTheme } from '../theme';
@@ -9,27 +9,19 @@ import ScreenHeader from '../components/ScreenHeader';
 import Glow from '../components/Glow';
 import TeamBadge from '../components/TeamBadge';
 import { teamAbbr } from '../utils/fixtures';
-import type { BzPrediction } from '../utils/bzzoiro';
-
-// Same ball asset used behind the Matches hero — one consistent football
-// motif across the app rather than a second, differently-styled decoration.
-const BALL = require('../../assets/ball.png');
 
 // The prediction result on its own page — pushed over the tabs when a
 // prediction completes, back button returns to the Predictor setup.
 // Verdict + analysis only; no action buttons by design.
-
-// Real probabilities from Bzzoiro's ML model, when the match resolved to a
-// known event — converts 0-1 probs to a 100-summing 3-way split. Falls back
-// to the LLM-confidence-derived split (below) when no match was found.
-function bzSplit(p: BzPrediction): { home: number; draw: number; away: number } | null {
-  if (p.probHome == null || p.probDraw == null || p.probAway == null) return null;
-  const total = p.probHome + p.probDraw + p.probAway;
-  if (total <= 0) return null;
-  const home = Math.round((p.probHome / total) * 100);
-  const draw = Math.round((p.probDraw / total) * 100);
-  return { home, draw, away: 100 - home - draw };
-}
+//
+// The 3-way odds used to come from Bzzoiro's cloud ML model when a match
+// resolved to a known event there — genuinely real numbers, but computed
+// by a remote service, which sat oddly inside an app whose whole pitch is
+// 100% on-device AI. Removed: the on-device model now outputs its own
+// HOME WIN / DRAW / AWAY WIN estimate directly, reasoning over the same
+// real recent-form data already in its prompt — still just a reasoning
+// model's own estimate rather than true statistics, but computed entirely
+// on-device, which is the point.
 
 function confidenceParts(raw: string): { pct: number | null } {
   const m = (raw ?? '').match(/(\d{1,3})/);
@@ -41,7 +33,27 @@ function confidenceParts(raw: string): { pct: number | null } {
   return { pct };
 }
 
-function outcomeSplit(confRaw: string, winnerIsDraw: boolean): { home: number; draw: number; away: number } {
+// Prefers the model's own HOME WIN / DRAW / AWAY WIN numbers — small
+// on-device models rarely land on exactly 100 total, so these are
+// normalized proportionally rather than trusted verbatim. Falls back to
+// the old confidence-derived split only if the model didn't produce
+// usable numbers for all three fields (older sessions resumed from
+// history, or a model that didn't follow the format).
+function outcomeSplit(
+  homeRaw: string, drawRaw: string, awayRaw: string,
+  confRaw: string, winnerIsDraw: boolean,
+): { home: number; draw: number; away: number } {
+  const num = (s: string) => {
+    const m = (s ?? '').match(/(\d{1,3}(?:\.\d+)?)/);
+    return m ? parseFloat(m[1]) : null;
+  };
+  const h = num(homeRaw), d = num(drawRaw), a = num(awayRaw);
+  if (h != null && d != null && a != null && h + d + a > 0) {
+    const total = h + d + a;
+    const home = Math.round((h / total) * 100);
+    const draw = Math.round((d / total) * 100);
+    return { home, draw, away: 100 - home - draw };
+  }
   const pct = confidenceParts(confRaw).pct ?? 55;
   const rem = 100 - pct;
   if (winnerIsDraw) {
@@ -52,7 +64,14 @@ function outcomeSplit(confRaw: string, winnerIsDraw: boolean): { home: number; d
   return { home: pct, draw, away: rem - draw };
 }
 
-const playerName = (s: string) => (s ?? '').split(/\s[—–-]\s|,\s|\s\(/)[0].trim();
+// KEY HOME/AWAY come back as "Name — why he decides this match" — splitting
+// out the reason too (previously discarded, only the bare name showed) so
+// the pick reads as a justified call instead of a name dropped with no
+// grounding.
+function splitPlayerClause(s: string): { name: string; reason: string } {
+  const parts = (s ?? '').split(/\s[—–-]\s|,\s|\s\(/);
+  return { name: (parts[0] ?? '').trim(), reason: parts.slice(1).join(' ').replace(/\)$/, '').trim() };
+}
 
 export default function PredictionResultScreen() {
   const route = useRoute<any>();
@@ -62,15 +81,14 @@ export default function PredictionResultScreen() {
 
   const {
     teamA = '', teamB = '', winner = '', score = '', confidence = '',
+    homeWin = '', draw: drawPct = '', awayWin = '',
     keyHome = '', keyAway = '', analysis = '', elapsed,
-    bzPrediction = null as BzPrediction | null,
+    homeRating = null, awayRating = null,
   } = route.params ?? {};
 
   const winnerIsDraw = /draw/i.test(winner);
   const winnerIsA = !winnerIsDraw && winner === teamA;
-  const realSplit = bzPrediction ? bzSplit(bzPrediction) : null;
-  const split = realSplit ?? outcomeSplit(confidence, winnerIsDraw);
-  const displayScore = score || bzPrediction?.mostLikelyScore || '';
+  const split = outcomeSplit(homeWin, drawPct, awayWin, confidence, winnerIsDraw);
 
   // The page itself now slides up as a deliberate reveal (see AppNavigator's
   // slide_from_bottom), but the verdict was still appearing instantly and
@@ -95,7 +113,7 @@ export default function PredictionResultScreen() {
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]} showsVerticalScrollIndicator={false}>
 
         {/* Verdict */}
-        <Animated.View style={[styles.verdict, { backgroundColor: '#0f0f0f', borderColor: theme.border }, cardStyle(verdictAnim)]}>
+        <Animated.View style={[styles.verdict, { backgroundColor: theme.card, borderColor: theme.border }, cardStyle(verdictAnim)]}>
           <Glow color={accent} opacity={0.14} anchor="tl" />
           <View style={styles.verdictTop}>
             <View style={styles.verdictSide}>
@@ -115,9 +133,9 @@ export default function PredictionResultScreen() {
               ? <>ENDS <Text style={{ color: accent }}>LEVEL</Text></>
               : <>{winner.toUpperCase()} <Text style={{ color: accent }}>TO WIN</Text></>}
           </Text>
-          {displayScore ? (
+          {score ? (
             <Text style={[styles.mlsLine, { color: theme.textSecondary }]}>
-              Most likely score <Text style={[styles.mlsScore, { color: theme.text }]}>{displayScore}</Text>
+              Most likely score <Text style={[styles.mlsScore, { color: theme.text }]}>{score}</Text>
             </Text>
           ) : null}
 
@@ -137,31 +155,73 @@ export default function PredictionResultScreen() {
             ))}
           </View>
           <Text style={[styles.oddsSource, { color: theme.textTertiary }]}>
-            {realSplit ? 'Real win probabilities · Bzzoiro ML model' : "Scout's own estimate from its confidence call"}
+            Scout's own estimate — not a bookmaker's real odds
           </Text>
         </Animated.View>
 
-        {/* Analysis */}
+        {/* Analysis — reasoning first, then the key-player call as a
+            conclusion drawn from it (was the other way round, reading as
+            an unexplained assertion before you'd seen any of the
+            reasoning behind it), each with its own small label so neither
+            looks like a stray sentence tacked onto the other's box. */}
         {(analysis || keyHome || keyAway) ? (
           <Animated.View style={cardStyle(analysisAnim)}>
             <Text style={[styles.analysisLabel, { color: theme.textTertiary }]}>ANALYSIS</Text>
             <View style={[styles.analysisCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-              <View style={styles.analysisBallWrap} pointerEvents="none">
-                <Image source={BALL} style={styles.analysisBall} />
-              </View>
-              {(keyHome || keyAway) && (
-                <Text style={[styles.keyLine, { color: theme.text }]}>
-                  {keyHome ? <Text style={{ color: accent, fontWeight: '800' }}>{playerName(keyHome)}</Text> : null}
-                  {keyHome ? ` (${teamAbbr(teamA)})` : ''}
-                  {keyHome && keyAway ? ' · ' : ''}
-                  {keyAway ? <Text style={{ color: accent, fontWeight: '800' }}>{playerName(keyAway)}</Text> : null}
-                  {keyAway ? ` (${teamAbbr(teamB)})` : ''}
-                  {' — the names deciding this.'}
-                </Text>
-              )}
               {analysis ? (
                 <Text selectable style={[styles.analysisText, { color: theme.textSecondary }]}>{analysis}</Text>
               ) : null}
+              {(keyHome || keyAway) && (
+                <View style={[styles.keySection, analysis ? { borderTopColor: theme.border, borderTopWidth: 1 } : null]}>
+                  <Text style={[styles.keyLabel, { color: theme.textTertiary }]}>PLAYERS TO WATCH</Text>
+                  {/* BUG FIX: was one joined line ("Name (FRA) · Name (MOR)")
+                      that read as two picks smooshed together rather than
+                      two distinct calls — each player now gets its own row,
+                      plus the model's actual reasoning clause (previously
+                      discarded by playerName's split) instead of a bare
+                      name with no justification. */}
+                  {/* Rating badge is the real Bzzoiro number, passed straight
+                      through from the fetch — not re-parsed from the
+                      model's own text, so it can't drift from what the
+                      data source actually says regardless of phrasing. */}
+                  {keyHome ? (() => {
+                    const { name, reason } = splitPlayerClause(keyHome);
+                    return (
+                      <View style={styles.keyRow}>
+                        <View style={styles.keyRowTop}>
+                          <Text style={[styles.keyRowName, { color: theme.text }]}>
+                            <Text style={{ color: accent, fontWeight: '800' }}>{name}</Text> ({teamAbbr(teamA)})
+                          </Text>
+                          {homeRating != null && (
+                            <View style={[styles.ratingBadge, { backgroundColor: accent + '18' }]}>
+                              <Text style={[styles.ratingBadgeText, { color: accent }]}>{homeRating}</Text>
+                            </View>
+                          )}
+                        </View>
+                        {reason ? <Text style={[styles.keyRowReason, { color: theme.textSecondary }]}>{reason}</Text> : null}
+                      </View>
+                    );
+                  })() : null}
+                  {keyAway ? (() => {
+                    const { name, reason } = splitPlayerClause(keyAway);
+                    return (
+                      <View style={styles.keyRow}>
+                        <View style={styles.keyRowTop}>
+                          <Text style={[styles.keyRowName, { color: theme.text }]}>
+                            <Text style={{ color: accent, fontWeight: '800' }}>{name}</Text> ({teamAbbr(teamB)})
+                          </Text>
+                          {awayRating != null && (
+                            <View style={[styles.ratingBadge, { backgroundColor: accent + '18' }]}>
+                              <Text style={[styles.ratingBadgeText, { color: accent }]}>{awayRating}</Text>
+                            </View>
+                          )}
+                        </View>
+                        {reason ? <Text style={[styles.keyRowReason, { color: theme.textSecondary }]}>{reason}</Text> : null}
+                      </View>
+                    );
+                  })() : null}
+                </View>
+              )}
               {elapsed != null && (
                 <View style={[styles.statRow, { borderTopColor: theme.border }]}>
                   <View style={[styles.statDot, { backgroundColor: accent }]} />
@@ -173,7 +233,7 @@ export default function PredictionResultScreen() {
         ) : null}
 
         <Text style={[styles.credit, { color: theme.textTertiary }]}>
-          Fixtures & badges: TheSportsDB · Form: football-data.org{realSplit ? ' · Odds: Bzzoiro Sports' : ''} · AI: on-device (QVAC)
+          Fixtures & badges: TheSportsDB · Form & player ratings: football-data.org, Bzzoiro Sports · AI: on-device (QVAC)
         </Text>
       </ScrollView>
     </View>
@@ -200,10 +260,15 @@ const styles = StyleSheet.create({
   oddsSource: { fontSize: 9.5, fontFamily: fonts.bodyMedium, textAlign: 'center', marginTop: 10 },
 
   analysisLabel: { fontSize: 9.5, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 1.5, marginTop: 14, marginBottom: 8, marginLeft: 2 },
-  analysisCard: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 8, overflow: 'hidden' },
-  analysisBallWrap: { position: 'absolute', right: -34, bottom: -34, width: 110, height: 110 },
-  analysisBall: { width: 110, height: 110, opacity: 0.1 },
-  keyLine: { fontSize: 11.5, lineHeight: 17 },
+  analysisCard: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 8 },
+  keySection: { paddingTop: 10, marginTop: 2, gap: 8 },
+  keyLabel: { fontSize: 9.5, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 1.2 },
+  keyRow: { gap: 2 },
+  keyRowTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  keyRowName: { fontSize: 13, lineHeight: 18 },
+  keyRowReason: { fontSize: 12, lineHeight: 17 },
+  ratingBadge: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  ratingBadgeText: { fontSize: 10.5, fontFamily: fonts.mono, fontWeight: '800' },
   analysisText: { fontSize: 12.5, lineHeight: 20 },
   statRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, paddingTop: 10, borderTopWidth: 1 },
   statDot: { width: 4, height: 4, borderRadius: 2 },

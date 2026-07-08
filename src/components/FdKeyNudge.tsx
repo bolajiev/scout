@@ -1,24 +1,30 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Linking } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Linking, Modal, Pressable } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { fonts } from '../theme/fonts';
-import { setFdApiKey, setFdKeyEnabled } from '../utils/storage';
+import { setFdApiKey, setFdKeyEnabled, setFdNudgeDismissed } from '../utils/storage';
 
-// Shown on Matches whenever no active football-data.org key is set — a
-// key unlocks accurate live scores/times for more competitions than the
-// free keyless source covers. No on/off toggle here on purpose: a toggle
-// is easy to flip and forget, so the only state that matters is "is a key
-// saved" — tap Add API, paste it, done, and the nudge is gone for good.
-export default function FdKeyNudge({ onSaved }: { onSaved: () => void }) {
+// A one-time-per-app-open modal (Home's mount effect decides `visible`,
+// gated on the persisted dismissed flag) — this used to be an inline
+// banner on Matches that re-checked and could reappear on every single
+// visit to the tab, not just once per app open.
+export default function FdKeyNudge({ visible, onSaved, onDismiss }: {
+  visible: boolean;
+  onSaved: () => void;
+  onDismiss: () => void;
+}) {
   const theme = getTheme(useTheme());
+  const insets = useSafeAreaInsets();
+  const accent = theme.accent;
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
   const [saving, setSaving] = useState(false);
 
   const done = async () => {
     const key = value.trim();
-    if (!key) { setOpen(false); return; }
+    if (!key) { setOpen(false); onDismiss(); return; }
     setSaving(true);
     try {
       await setFdApiKey(key);
@@ -31,54 +37,68 @@ export default function FdKeyNudge({ onSaved }: { onSaved: () => void }) {
     }
   };
 
+  const dontShowAgain = async () => {
+    await setFdNudgeDismissed().catch(() => {});
+    onDismiss();
+  };
+
   return (
-    <View style={[styles.wrap, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      {!open ? (
-        <View style={styles.row}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss}>
+      <Pressable style={styles.backdrop} onPress={onDismiss}>
+        <Pressable style={[styles.sheet, { backgroundColor: theme.cardAlt, borderColor: theme.border, paddingBottom: Math.max(insets.bottom, 20) }]}>
+          <View style={[styles.grabber, { backgroundColor: theme.border }]} />
+          <Text style={[styles.title, { color: theme.text }]}>Get more fixtures</Text>
           <Text style={[styles.text, { color: theme.textSecondary }]}>
-            Get more fixtures & accurate live scores — add a free football-data.org key.
+            Add a free football-data.org key for accurate live scores and more competitions.
           </Text>
-          <TouchableOpacity onPress={() => setOpen(true)} style={[styles.addBtn, { backgroundColor: theme.cardAlt, borderColor: theme.accent + '55' }]}>
-            <Text style={[styles.addBtnText, { color: theme.accent }]}>Add API</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={{ gap: 8 }}>
-          <View style={styles.row}>
-            <TextInput
-              style={[styles.input, { backgroundColor: theme.cardAlt, color: theme.text }]}
-              placeholder="Paste your football-data.org key"
-              placeholderTextColor={theme.textTertiary}
-              value={value}
-              onChangeText={setValue}
-              autoFocus
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <TouchableOpacity onPress={done} disabled={saving} style={[styles.doneBtn, { backgroundColor: theme.accent }]}>
-              <Text style={[styles.doneBtnText, { color: theme.accentFg }]}>Done</Text>
-            </TouchableOpacity>
-          </View>
-          <TouchableOpacity onPress={() => Linking.openURL('https://www.football-data.org/client/register')}>
-            <Text style={[styles.link, { color: theme.accent }]}>Get a free key →</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-    </View>
+          {!open ? (
+            <>
+              <TouchableOpacity onPress={() => setOpen(true)} style={[styles.addBtn, { backgroundColor: accent }]}>
+                <Text style={[styles.addBtnText, { color: theme.accentFg }]}>Add API key</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={dontShowAgain} style={styles.laterBtn}>
+                <Text style={[styles.laterText, { color: theme.textSecondary }]}>Don't show this again</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <View style={{ gap: 10 }}>
+              <TextInput
+                style={[styles.input, { backgroundColor: theme.card, color: theme.text }]}
+                placeholder="Paste your football-data.org key"
+                placeholderTextColor={theme.textTertiary}
+                value={value}
+                onChangeText={setValue}
+                autoFocus
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity onPress={() => Linking.openURL('https://www.football-data.org/client/register')}>
+                <Text style={[styles.link, { color: accent }]}>Get a free key →</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={done} disabled={saving} style={[styles.addBtn, { backgroundColor: accent }]}>
+                <Text style={[styles.addBtnText, { color: theme.accentFg }]}>{saving ? 'Saving...' : 'Done'}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    marginHorizontal: 16, marginBottom: 10,
-    borderRadius: 14, borderWidth: 1, padding: 12,
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
+  sheet: {
+    borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderBottomWidth: 0,
+    paddingHorizontal: 20, paddingTop: 10,
   },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  text: { flex: 1, fontSize: 12, fontFamily: fonts.bodyMedium, lineHeight: 16 },
-  addBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
-  addBtnText: { fontSize: 12, fontFamily: fonts.bodySemiBold },
-  input: { flex: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9, fontSize: 13, fontFamily: fonts.bodyMedium },
-  doneBtn: { borderRadius: 8, paddingHorizontal: 16, paddingVertical: 9 },
-  doneBtnText: { fontSize: 13, fontFamily: fonts.bodySemiBold },
-  link: { fontSize: 11, fontFamily: fonts.bodySemiBold, marginLeft: 2 },
+  grabber: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 14 },
+  title: { fontSize: 17, fontFamily: fonts.displayExtraBold, marginBottom: 6 },
+  text: { fontSize: 13, fontFamily: fonts.bodyMedium, lineHeight: 19, marginBottom: 18 },
+  addBtn: { borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  addBtnText: { fontSize: 14.5, fontFamily: fonts.bodySemiBold },
+  laterBtn: { paddingVertical: 14, alignItems: 'center' },
+  laterText: { fontSize: 13, fontFamily: fonts.bodyMedium },
+  input: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, fontFamily: fonts.bodyMedium },
+  link: { fontSize: 12, fontFamily: fonts.bodySemiBold, marginLeft: 2 },
 });

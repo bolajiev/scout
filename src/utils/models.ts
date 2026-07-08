@@ -26,7 +26,7 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
   {
     id: MODEL_KEYS.TEXT_INSTANT,
     name: 'Qwen3 0.6B',
-    badge: 'INSTANT',
+    badge: 'LOW-RAM',
     badgeColor: '#f59e0b',
     modelType: 'text',
     tagline: 'Fastest — loads in seconds.',
@@ -79,7 +79,7 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
     name: 'Gemma 4 2B',
     modelType: 'vision',
     tagline: 'Vision + text — the all-in-one model.',
-    description: 'Gemma 4 E2B by Google. Multimodal: powers Scout Lens (jerseys, badges, scoreboards) AND works for AI Coach and Predictor. One model for everything. Requires ~4 GB free RAM.',
+    description: 'Gemma 4 E2B by Google. Multimodal: powers photo uploads in AI Coach (jerseys, badges, scoreboards) AND works as a regular text model for Coach and Predictor. One model for everything. Requires ~4 GB free RAM.',
     size: '3.8 GB',
     sizeBytes: 3_462_678_272 + 557_367_776,
     mmprojBytes: 557_367_776,
@@ -100,11 +100,11 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
   {
     id: MODEL_KEYS.VISION_LITE,
     name: 'SmolVLM2 500M',
-    badge: 'INSTANT',
+    badge: 'LOW-RAM',
     badgeColor: '#f59e0b',
     modelType: 'vision',
     tagline: 'Light vision — fast scans, low RAM.',
-    description: 'SmolVLM2 500M is the light vision option for Scout Lens: loads in seconds and scans fast on any device. Less detailed than Gemma 4 but great for quick jersey and badge checks.',
+    description: 'SmolVLM2 500M is the light vision option for photo uploads in AI Coach: loads in seconds and scans fast on any device. Less detailed than Gemma 4 but great for quick jersey and badge checks.',
     size: '550 MB',
     sizeBytes: 436_808_704 + 108_785_184,
     mmprojBytes: 108_785_184,
@@ -134,6 +134,19 @@ export function pickTextCapable<T extends ModelInfo>(
   }
   return models.find(m => m.modelType === 'text')
     ?? models.find(m => m.supports?.includes('text'));
+}
+
+// Same idea, for the "attach an image in Coach" flow — picks a downloaded
+// vision-capable model, preferring one already resident in memory.
+export function pickVisionCapable<T extends ModelInfo>(
+  models: T[],
+  loadedId?: string | null,
+): T | undefined {
+  if (loadedId) {
+    const loaded = models.find(m => m.id === loadedId && m.modelType === 'vision');
+    if (loaded) return loaded;
+  }
+  return models.find(m => m.modelType === 'vision');
 }
 
 const HF_REGEX = /registry:\/\/hf\/([^/]+\/[^/]+)\/(resolve|blob)\/([^/]+)\/(.+)/;

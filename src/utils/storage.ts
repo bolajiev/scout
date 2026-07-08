@@ -36,6 +36,16 @@ export async function getFdKeyEnabled(): Promise<boolean> {
 export async function setFdKeyEnabled(on: boolean): Promise<void> {
   await AsyncStorage.setItem('@scout_fd_enabled', on ? 'true' : 'false');
 }
+// The football-data.org key nudge used to be an inline banner that re-checked
+// (and could reappear) every time Matches regained focus — now it's a
+// one-time-per-app-open modal, permanently silenced once the user taps
+// "Don't show again", independent of whether they ever add a key.
+export async function getFdNudgeDismissed(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem('@scout_fd_nudge_dismissed')) === 'true'; } catch { return false; }
+}
+export async function setFdNudgeDismissed(): Promise<void> {
+  await AsyncStorage.setItem('@scout_fd_nudge_dismissed', 'true');
+}
 // The key fixtures should actually use right now (empty = free source)
 export async function getActiveFdKey(): Promise<string> {
   const [key, enabled] = await Promise.all([getFdApiKey(), getFdKeyEnabled()]);

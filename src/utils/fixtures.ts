@@ -322,16 +322,20 @@ export const fetchAndCacheFixtures = async (): Promise<{
     const fdMatches = bzMatches.length === 0 && fdKey ? await fetchFdMatches(fdKey, today, plusDays(2)) : [];
     const keyedMatches = [...bzMatches, ...bzTopLeagueMatches, ...fdMatches];
 
-    let results: (Response | null)[] = [];
-    if (keyedMatches.length === 0) {
-      // Free keyless source: WC next events + today's soccer + next two days
-      results = await Promise.all([
-        fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`),
-        fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`),
-        fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(1)}&s=Soccer`),
-        fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(2)}&s=Soccer`),
-      ].map(p => p.then(r => r as Response | null).catch(() => null)));
-    }
+    // BUG FIX: this used to only query TheSportsDB when NO keyed source
+    // found anything at all — meaning the instant Bzzoiro found even one
+    // match (near-guaranteed once WC 2026 kicked off, since the shared
+    // default key is basically always active), TheSportsDB's entire unique
+    // league coverage silently disappeared for the rest of the day. The two
+    // sources cover different leagues, not a strict superset/subset, so
+    // always querying both and merging (keyed sources win on overlap, see
+    // dedup below) is the only way to not lose coverage either had alone.
+    const results = await Promise.all([
+      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=${WC_LEAGUE_ID}`),
+      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${today}&s=Soccer`),
+      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(1)}&s=Soccer`),
+      fetchWithTimeout(`https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${plusDays(2)}&s=Soccer`),
+    ].map(p => p.then(r => r as Response | null).catch(() => null)));
 
     const oks = results.map(r => !!r && r.ok);
     // Every source unreachable → we are offline; don't report success with 0 fixtures

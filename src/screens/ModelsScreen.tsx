@@ -484,7 +484,7 @@ export default function ModelsScreen() {
                 <Text style={[styles.countText, { color: theme.accentFg }]}>{downloadedModels.length}</Text>
               </View>
             </View>
-            {downloadedModels.map((m) => renderModelCard(m, true))}
+            {[...downloadedModels].sort((a, b) => a.sizeBytes - b.sizeBytes).map((m) => renderModelCard(m, true))}
           </>
         )}
 
@@ -496,7 +496,9 @@ export default function ModelsScreen() {
           All models run entirely on your device — your data never leaves your phone.
         </Text>
 
-        {AVAILABLE_MODELS.map((m) => renderModelCard(m, false))}
+        {/* Smaller/faster models first — the ones most likely to actually
+            work reliably on whatever device this is running on. */}
+        {[...AVAILABLE_MODELS].sort((a, b) => a.sizeBytes - b.sizeBytes).map((m) => renderModelCard(m, false))}
 
         <View style={{ height: 48 }} />
       </ScrollView>

@@ -2,7 +2,7 @@
 
 **Football chat and match prediction, powered by the QVAC SDK**
 
-Scout is a football AI app for Android. All *AI inference* — chat and match-prediction reasoning — runs **100% on-device through the [QVAC SDK](https://qvac.tether.io)**: no AI cloud, no LLM API keys, no account, and nothing you type or ask ever leaves the phone for the model to answer it. Separately, Scout also pulls in real football data (fixtures, live scores, team form, and genuine ML match-result probabilities) from a small set of sports-data APIs over the network — those calls send team/match names to third-party services, and one of them ships with a default API key baked in so the app works without any setup; see [Live data](#live-data) for exactly what goes out and when.
+Scout is a football AI app for Android. All *AI inference* — chat and match-prediction reasoning, including the win/draw/win probabilities shown on a prediction's result page — runs **100% on-device through the [QVAC SDK](https://qvac.tether.io)**: no AI cloud, no LLM API keys, no account, and nothing you type or ask ever leaves the phone for the model to answer it. Separately, Scout pulls in real football *data* (fixtures, live scores, team form) from a small set of sports-data APIs over the network — those calls send team/match names to third-party services to look matches up, and one of them ships with a default API key baked in so the app works without any setup; see [Live data](#live-data) for exactly what goes out and when. Deliberately not used: Bzzoiro's own cloud ML prediction endpoint — using a remote model to compute the odds would contradict the on-device pitch, so the on-device LLM computes that estimate itself instead, reasoning over the same real recent-form data.
 
 Vision (pointing the camera at a jersey/badge/scoreboard) shipped in an earlier build as a standalone "Scout Lens" screen; it's been pulled out of the tab bar while it's redesigned as an in-Coach camera upgrade instead. The vision models are still downloadable from the Models screen, but no screen currently uses them.
 
@@ -12,8 +12,8 @@ Vision (pointing the camera at a jersey/badge/scoreboard) shipped in an earlier 
 
 | Feature | Engine | What it does |
 |---|---|---|
-| **AI Coach** | QVAC LLM | Football chat with live tool calling — the model decides when to fetch today's fixtures, a team's recent results (Bzzoiro Sports, falling back to football-data.org or TheSportsDB), or football news to verify a claim/rumor (BBC Sport, Sky Sports, The Guardian RSS), and grounds its answers in real data. Every fetch is disclosed with a tappable chip showing the raw data used. Streams tokens live; in Think mode the reasoning stream shows too, then collapses to a tappable "Thought for X.Xs" row. Answers render as markdown. A small status pill shows whether the on-device model is loaded, loading, or needs attention, with a one-tap Stop. |
-| **Predictor** | QVAC LLM + Bzzoiro ML | Pick a fixture (World Cup 2026 and top-5-league matches with real team badges) or type any two teams. Recent form (last 5 real results) is fetched live and injected into the prompt; the model commits to a winner, score, confidence, and analysis. When the match resolves to a known Bzzoiro event, the result page's win-probability odds are the sports-data API's actual CatBoost model output, not a number derived from the LLM's own confidence wording — the UI labels which one you're looking at. |
+| **AI Coach** | QVAC LLM | Football chat with live tool calling — the model decides when to fetch today's fixtures or a team's recent results (Bzzoiro Sports, falling back to football-data.org or TheSportsDB), and grounds its answers in real data. Attach a photo (camera icon in the composer) for on-device vision identification, auto-switching to a downloaded vision model. Every fetch is disclosed with a tappable chip showing the raw data used. Streams tokens live; in Think mode the reasoning stream shows too, then collapses to a tappable "Thought for X.Xs" row. Answers render as markdown. A small status pill shows whether the on-device model is loaded, loading, or needs attention, with a one-tap Stop. |
+| **Predictor** | QVAC LLM | Pick a fixture (World Cup 2026 and top-5-league matches with real team badges) or type any two teams. Recent form (last 5 real results) and real player ratings (0-99, from Bzzoiro's player database) are fetched live and injected into the prompt; the model commits to a winner, score, confidence, analysis, and its own win/draw/win probability estimate — all reasoning done on-device, none of it a cloud ML call. The "Player to Watch" is the genuinely highest-rated player on the roster, not a model guess. |
 | **History** | SQLite | Every Coach conversation and Predictor call stored locally and replayable. |
 
 ---
@@ -31,7 +31,7 @@ const run1 = completion({
   modelId,
   history: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
   stream: true,
-  tools: SCOUT_TOOLS,      // get_today_fixtures, get_team_form, get_football_news
+  tools: SCOUT_TOOLS,      // get_today_fixtures, get_team_form
   captureThinking: thinkMode,
   generationParams: { ...genParams, reasoning_budget: thinkMode ? -1 : 0 },
 });
@@ -42,9 +42,9 @@ for await (const event of run1.events) {
 }
 
 const toolCalls = await run1.toolCalls;
-// execute against Bzzoiro/football-data.org/TheSportsDB (fixtures/form) or
-// football RSS feeds (news), push { role: 'tool', content } messages, then
-// run pass 2 for the final grounded answer — the raw tool result is also
+// execute against Bzzoiro/football-data.org/TheSportsDB (fixtures/form),
+// push { role: 'tool', content } messages, then run pass 2 for the final
+// grounded answer — the raw tool result is also
 // kept for the UI so the user can see exactly what data backed the answer
 ```
 
@@ -62,11 +62,11 @@ CONFIDENCE: High
 City's high press and recent 4-0 run give them the edge...
 ```
 
-Predictor always runs the model with `reasoning_budget: 0` — there's no Think-mode toggle here, every call commits directly to a verdict. In parallel with that on-device call (never adding wait time), Scout also tries to resolve the exact fixture against Bzzoiro Sports and fetch its real win-probability output; if found, the result page shows those actual numbers instead of a split derived from the LLM's own confidence wording, and says so.
+Predictor always runs the model with `reasoning_budget: 0` — there's no Think-mode toggle here, every call commits directly to a verdict. The prompt asks for an explicit HOME WIN / DRAW / AWAY WIN estimate alongside the winner/score/analysis, so the win-probability chips on the result page are the on-device model's own reasoning over the real recent-form data already in its prompt — normalized to sum to 100 client-side since small models rarely land on that exactly, but never computed by a remote service.
 
-### Vision (not currently wired into any screen)
+### Vision — photo upload in AI Coach
 
-The vision models (Gemma 4 2B + mmproj, SmolVLM2) remain downloadable and `llmManager.ensure()` still accepts a `projectionModelSrc` for multimodal loading — the plumbing from the old Scout Lens screen — but no current screen calls it. The plan is a camera icon in Coach's composer rather than a separate tab.
+A camera icon in Coach's composer lets you attach a photo (camera or gallery, via a custom in-theme bottom sheet). Tapping it checks for a downloaded vision model (Gemma 4 2B + mmproj, or SmolVLM2) and auto-switches to one — unloading a resident text model first if needed — or prompts to download one if neither exists. The photo is resized/compressed client-side (max 896px, `expo-image-manipulator`) before it reaches the model, since image tokens are the main cost on an already-slow on-device vision path. Tool calling is disabled for image messages — vision + tool-calling together is unreliable on these small quantized models.
 
 ### Model lifecycle
 
@@ -87,13 +87,11 @@ EAS Build reinstalls `node_modules`, which would silently revert these patches �
 
 Fixtures, scores, and form come from three sources, tried in priority order and merged so the same real match never shows twice:
 
-1. **[Bzzoiro Sports](https://sports.bzzoiro.com)** — the primary source when a key is active. Real fixtures/live scores/minute across 30+ leagues in one bulk call, a genuine CatBoost ML model for match-result probabilities/xG/BTTS (used in Predictor's result page), and the last-5-real-games form data fed into both Coach and Predictor's prompts. Ships with a **default key baked in at build time** (from an untracked `.env`, never committed) so the app works with no setup; a user's own key, pasted in Settings, always overrides it and is stored only in on-device `AsyncStorage`. Team/match names and dates are sent to this API to look matches up — nothing else about the device or user.
+1. **[Bzzoiro Sports](https://sports.bzzoiro.com)** — the primary source when a key is active. Real fixtures/live scores/minute across 30+ leagues in one bulk call, the last-5-real-games form data fed into both Coach and Predictor's prompts, and real 0-99 player ratings used to pick Predictor's "Player to Watch" (resolved via a team-name → team_id lookup, highest-rated squad member wins — never a model guess). Bzzoiro also offers a cloud ML match-prediction endpoint — deliberately not called, since using a remote model for the win-probability number would contradict the on-device pitch; only its data endpoints are used. Ships with a **default key baked in at build time** (from an untracked `.env`, never committed) so the app works with no setup; a user's own key, pasted in Settings, always overrides it and is stored only in on-device `AsyncStorage`. Team/match names and dates are sent to this API to look matches up — nothing else about the device or user.
 2. **[football-data.org](https://www.football-data.org)** — optional, user-supplied key only (no shared default). Falls back to this for the ~12 competitions it covers if Bzzoiro has nothing for that match.
 3. **[TheSportsDB](https://www.thesportsdb.com)** — free, keyless, always available. The final fallback for fixtures/team badges, and also how team crests get resolved by name when a fixture's own payload doesn't include one.
 
 Fixtures are cached in SQLite keyed by date — offline you get the last successful fetch, never a stale day. A lightweight connectivity check (a fast ping to a public endpoint, not a data-collection call) is used only to distinguish "no internet at all" from "online but these APIs are slow/down" in the UI copy — it doesn't gate any feature.
-
-[BBC Sport](https://feeds.bbci.co.uk/sport/football/rss.xml), [Sky Sports](https://www.skysports.com/rss/11095), and [The Guardian](https://www.theguardian.com/football/rss) RSS feeds (all public, no key) back the AI Coach's `get_football_news` tool — used only to verify a specific claim, transfer, injury, or club news story, never for tactics/history/opinion questions.
 
 None of the above are AI services — they return data, not model output. The actual chat/prediction reasoning stays on Bzzoiro/football-data.org/TheSportsDB's data as *input*, processed entirely by the on-device QVAC model.
 
@@ -105,12 +103,12 @@ Downloaded in-app (resumable) to app-private storage `DocumentDirectory/scout/mo
 
 | Model | Type | Size | Used for |
 |---|---|---|---|
-| Qwen3 0.6B | Text | 390 MB | Instant tier — loads in seconds, full chat/predict on any device |
+| Qwen3 0.6B | Text | 390 MB | Low-RAM tier — loads in seconds, full chat/predict on any device |
 | Qwen3 1.7B Q4 | Text | 1.1 GB | AI Coach, Predictor — fast, recommended |
 | MedPsy 1.7B (QVAC) | Text | 1.1 GB | Lighter-weight alternative |
 | MedPsy 4B (QVAC) | Text | 2.7 GB | Richer reasoning |
-| SmolVLM2 500M | Vision | 550 MB | Not currently used by any screen — fastest of the two if vision returns |
-| Gemma 4 2B Q4 + mmproj | Vision | 3.8 GB | Not currently used by any screen — richer identification if vision returns |
+| SmolVLM2 500M | Vision | 550 MB | Low-RAM tier for photo uploads in AI Coach |
+| Gemma 4 2B Q4 + mmproj | Vision | 3.8 GB | Richer photo identification in AI Coach |
 
 ---
 
@@ -133,10 +131,10 @@ Downloaded in-app (resumable) to app-private storage `DocumentDirectory/scout/mo
 npm install                 # postinstall re-applies QVAC patches automatically
 
 # Optional: EXPO_PUBLIC_BZ_API_KEY=<your key> in a .env file (untracked)
-# enables Bzzoiro Sports (real predictions, live scores, top-5-league/World
-# Cup chips) by default. Without it, the app still works — it falls back
-# to football-data.org (if a user later adds their own key in-app) and
-# then the free, keyless TheSportsDB, just without those extras.
+# enables Bzzoiro Sports (live scores, form data, top-5-league/World Cup
+# chips) by default. Without it, the app still works — it falls back to
+# football-data.org (if a user later adds their own key in-app) and then
+# the free, keyless TheSportsDB, just without those extras.
 
 npx tsc --noEmit --skipLibCheck
 

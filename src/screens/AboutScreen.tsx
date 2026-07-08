@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, Animated, ScrollView, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, StyleSheet, Animated, ScrollView, TouchableOpacity, Linking, Image } from 'react-native';
 import Constants from 'expo-constants';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
@@ -18,7 +18,7 @@ const MODULES = [
     tag: 'TOOL CALLING',
     tagColor: '#C6F53A',
     title: 'AI Coach',
-    desc: 'On-device LLM with tool calling: the model decides when to fetch today\'s fixtures, a team\'s form, or check football news to verify a claim — every fetch is disclosed and viewable. Streams its thinking process in Think mode.',
+    desc: 'On-device LLM with tool calling: the model decides when to fetch today\'s fixtures or a team\'s recent form — every fetch is disclosed and viewable. Attach a photo for on-device vision identification. Streams its thinking process in Think mode.',
   },
   {
     icon: (c: string) => <IconTarget size={18} color={c} />,
@@ -32,7 +32,7 @@ const MODULES = [
     tag: 'MATCHDAY',
     tagColor: '#C6F53A',
     title: 'Matches',
-    desc: 'Upcoming fixtures with scores and team badges, synced from free football data and cached locally — readable offline after one sync.',
+    desc: 'World Cup 2026 and top-league fixtures with live scores and team badges, merged from several football data sources and cached locally — readable offline after one sync.',
   },
 ];
 
@@ -54,8 +54,8 @@ export default function AboutScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Hero */}
         <View style={styles.hero}>
-          <View style={[styles.logoMark, { backgroundColor: accent }]}>
-            <Text style={styles.logoLetter}>S</Text>
+          <View style={styles.logoMark}>
+            <Image source={require('../../assets/icon.png')} style={styles.logoImage} resizeMode="cover" />
           </View>
           <Text style={[styles.appName, { color: theme.text }]}>Scout</Text>
           <Text style={[styles.tagline, { color: theme.textSecondary }]}>On-Device Football AI</Text>
@@ -107,10 +107,11 @@ export default function AboutScreen() {
         <Text style={[styles.sectionLabel, { color: theme.textSecondary, marginTop: 8 }]}>Built with</Text>
         <View style={[styles.techCard, { backgroundColor: theme.card }]}>
           {[
-            { name: 'QVAC SDK', note: 'All inference on-device: LLM, vision, tool calling, streaming' },
+            { name: 'QVAC SDK', note: 'All inference on-device: LLM, tool calling, streaming' },
             { name: 'Custom QVAC worker', note: 'Rebuilt LLM-only: 918 MB of native engines trimmed to 145 MB' },
-            { name: 'Models', note: 'Qwen3, Gemma 4, QVAC MedPsy, SmolVLM2 — 390 MB to 3.8 GB tiers' },
-            { name: 'TheSportsDB', note: 'Free keyless fixtures, form and badges (football-data.org optional)' },
+            { name: 'Text models', note: 'Qwen3, QVAC MedPsy — 390 MB to 2.7 GB tiers' },
+            { name: 'Vision models', note: 'Gemma 4, SmolVLM2 — downloadable, not yet wired into any screen' },
+            { name: 'Match data', note: 'Bzzoiro Sports (default key) + football-data.org + TheSportsDB, merged' },
             { name: 'Expo SDK 54', note: 'React Native, Android arm64' },
           ].map((t, i) => (
             <View key={t.name} style={[styles.techRow, { borderTopWidth: i > 0 ? 1 : 0, borderTopColor: theme.border }]}>
@@ -124,11 +125,12 @@ export default function AboutScreen() {
         <Text style={[styles.sectionLabel, { color: theme.textSecondary, marginTop: 8 }]}>Third-party disclosures</Text>
         <View style={[styles.techCard, { backgroundColor: theme.card }]}>
           {[
+            { name: 'Bzzoiro Sports', note: 'Live scores, fixtures, form & player ratings · sports.bzzoiro.com · Data lookup only, not AI' },
+            { name: 'football-data.org', note: 'Fixtures & form (optional user key) · Data lookup only, not AI' },
             { name: 'TheSportsDB', note: 'Fixture and form data · thesportsdb.com · Free public API · No account required' },
-            { name: 'BBC Sport, Sky Sports & The Guardian RSS', note: "AI Coach's news-verification tool · public RSS feeds, no key or account" },
-            { name: 'Gemma 4 E2B', note: 'Google model weights via HuggingFace (bartowski/google_gemma-4-E2B-it-GGUF)' },
-            { name: 'Qwen3 1.7B', note: 'Alibaba model weights via QVAC SDK registry' },
+            { name: 'Qwen3 0.6B / 1.7B', note: 'Alibaba model weights via QVAC SDK registry' },
             { name: 'MedPsy 1.7B / 4B', note: 'QVAC model weights — inference on-device only' },
+            { name: 'Gemma 4 E2B, SmolVLM2', note: 'Vision model weights — power photo uploads in AI Coach' },
           ].map((t, i) => (
             <View key={t.name} style={[styles.techRow, { borderTopWidth: i > 0 ? 1 : 0, borderTopColor: theme.border }]}>
               <Text style={[styles.techName, { color: theme.text }]}>{t.name}</Text>
@@ -164,8 +166,11 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 28 },
   hero: { alignItems: 'center', gap: 8, marginBottom: 28 },
-  logoMark: { width: 72, height: 72, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  logoLetter: { fontSize: 40, fontWeight: '900', color: '#fff', letterSpacing: -1 },
+  logoMark: {
+    width: 72, height: 72, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#fff', overflow: 'hidden',
+  },
+  logoImage: { width: 72, height: 72 },
   appName: { fontSize: 34, fontWeight: '900', letterSpacing: -1, marginTop: 4 },
   tagline: { fontSize: 14 },
   badgeRow: { flexDirection: 'row', gap: 8, marginTop: 4, flexWrap: 'wrap', justifyContent: 'center' },
@@ -193,9 +198,13 @@ const styles = StyleSheet.create({
   privacyBar: { width: 4 },
   privacyText: { flex: 1, fontSize: 13, lineHeight: 19, padding: 14 },
   techCard: { borderRadius: 14, marginBottom: 20, overflow: 'hidden' },
-  techRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 14 },
+  // BUG FIX: was flexDirection: 'row' with two unconstrained Text
+  // children — a long note (most of these are full sentences, not short
+  // labels) had nothing to wrap against and just ran off the right edge
+  // of the screen instead. Stacked layout wraps normally at any width.
+  techRow: { padding: 14, gap: 3 },
   techName: { fontSize: 14, fontWeight: '700' },
-  techNote: { fontSize: 13 },
+  techNote: { fontSize: 13, lineHeight: 18 },
   updateBtn: { borderRadius: 14, padding: 14, alignItems: 'center', marginBottom: 12, gap: 3 },
   updateBtnText: { fontSize: 14, fontWeight: '700' },
   updateBtnSub: { fontSize: 12 },

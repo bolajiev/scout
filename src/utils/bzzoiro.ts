@@ -1,13 +1,14 @@
 import type { Fixture } from './fixtures';
 import type { TeamForm } from './teamStats';
 
-// Bzzoiro Sports Data API (sports.bzzoiro.com) — free football data API with
-// genuine CatBoost ML match predictions (real 1X2 probabilities, xG,
-// over/under, BTTS, most-likely score), separate from Scout's on-device LLM
-// verdict. Predictor still uses the LLM for the narrative (key players,
-// analysis) — this only supplies real numbers for the odds display when a
-// match resolves to a known Bzzoiro event, replacing the fabricated
-// confidence-derived split.
+// Bzzoiro Sports Data API (sports.bzzoiro.com) — free football data API.
+// Used only for data lookups here: fixtures, live scores/minute, and last-N
+// real match results for grounding Coach/Predictor's prompts. Bzzoiro also
+// offers a cloud ML match-prediction endpoint, deliberately NOT used —
+// Scout's whole pitch is 100% on-device AI, and calling a remote ML model
+// for the win-probability number would quietly contradict that. The
+// on-device LLM computes its own win/draw/win estimate instead, reasoning
+// over the real recent-form data this file supplies.
 const BASE = 'https://sports.bzzoiro.com';
 const authHeaders = (key: string) => ({ Authorization: `Token ${key}` });
 
@@ -23,17 +24,6 @@ const fetchWithTimeout = async (url: string, ms = 8000, init?: RequestInit): Pro
   }
 };
 
-export interface BzPrediction {
-  probHome: number | null;
-  probDraw: number | null;
-  probAway: number | null;
-  predicted: 'H' | 'D' | 'A' | null;
-  xgHome: number | null;
-  xgAway: number | null;
-  mostLikelyScore: string | null;
-  confidence: number | null;
-}
-
 const norm = (s: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 // /api/v2/events/ is paginated ({count, next, previous, results}) despite
@@ -46,69 +36,6 @@ async function fetchBzEventsPage(url: string, key: string, ms = 8000): Promise<a
   if (!res.ok) return [];
   const data = await res.json();
   return Array.isArray(data) ? data : (data.results ?? []);
-}
-
-// Bzzoiro's internal event IDs aren't shared with TheSportsDB or
-// football-data.org, so a match has to be resolved by team name (+ optional
-// date window) before its prediction can be fetched.
-export async function findBzEventId(
-  key: string,
-  homeTeam: string,
-  awayTeam: string,
-  dateISO?: string | null,
-): Promise<number | null> {
-  try {
-    const params = new URLSearchParams({ team_name: homeTeam, limit: '20' });
-    if (dateISO) { params.set('date_from', dateISO); params.set('date_to', dateISO); }
-    const events = await fetchBzEventsPage(`${BASE}/api/v2/events/?${params}`, key);
-    const awayNorm = norm(awayTeam);
-    const match = events.find(e => {
-      const away = typeof e.away_team === 'string' ? e.away_team : (e.away_team?.name ?? e.away_team_name ?? '');
-      const an = norm(away);
-      return an && (an.includes(awayNorm) || awayNorm.includes(an));
-    });
-    return match?.id ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export async function fetchBzPrediction(key: string, eventId: number): Promise<BzPrediction | null> {
-  try {
-    const res = await fetchWithTimeout(`${BASE}/api/v2/events/${eventId}/prediction/`, 8000, { headers: authHeaders(key) });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const mr = data.markets?.match_result ?? {};
-    const xg = data.markets?.expected_goals ?? {};
-    const score = data.markets?.score ?? {};
-    if (mr.prob_home == null && mr.prob_draw == null && mr.prob_away == null) return null;
-    return {
-      probHome: mr.prob_home ?? null,
-      probDraw: mr.prob_draw ?? null,
-      probAway: mr.prob_away ?? null,
-      predicted: mr.predicted ?? null,
-      xgHome: xg.home ?? null,
-      xgAway: xg.away ?? null,
-      mostLikelyScore: score.most_likely ?? null,
-      confidence: data.model?.confidence ?? null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-// Best-effort one-shot: resolve the event, then fetch its prediction. Used
-// right before Predictor asks the on-device model to commit, in parallel
-// with that (slower) call so it never adds visible wait time.
-export async function findBzPrediction(
-  key: string,
-  homeTeam: string,
-  awayTeam: string,
-  dateISO?: string | null,
-): Promise<BzPrediction | null> {
-  const id = await findBzEventId(key, homeTeam, awayTeam, dateISO);
-  if (!id) return null;
-  return fetchBzPrediction(key, id);
 }
 
 export interface BzLiveMatch {
@@ -314,4 +241,59 @@ export async function fetchBzTeamForm(key: string, teamName: string, limit = 5):
 
 export async function fetchBothBzTeamForms(key: string, nameA: string, nameB: string, limit = 5): Promise<[TeamForm | null, TeamForm | null]> {
   return Promise.all([fetchBzTeamForm(key, nameA, limit), fetchBzTeamForm(key, nameB, limit)]);
+}
+
+export interface RatedPlayer {
+  name: string;
+  rating: number;
+  position: string;
+  nationality: string;
+}
+
+// Resolves a team name to Bzzoiro's own team_id — verified live that
+// /api/v2/teams/?search= silently ignores the search term (always returns
+// the same unrelated page), while ?name= does a real filtered match. Picks
+// the case-insensitive exact match among results since a bare name search
+// can return youth/reserve sides sharing the same name (e.g. "Real Madrid
+// Castilla U21" alongside the actual first team).
+async function resolveBzTeamId(key: string, teamName: string): Promise<number | null> {
+  try {
+    const res = await fetchWithTimeout(`${BASE}/api/v2/teams/?name=${encodeURIComponent(teamName)}&limit=10`, 5000, { headers: authHeaders(key) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const results: any[] = data.results ?? [];
+    const exact = results.find(t => (t.name ?? '').toLowerCase() === teamName.trim().toLowerCase());
+    return (exact ?? results[0])?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// The real, non-guessed answer to "who's the key player" — Bzzoiro's
+// player records carry a genuine 0-99 rating (same idea as FIFA/FM-style
+// ratings) for most senior pros. Verified live: /api/v2/players/?ordering=
+// -rating doesn't actually sort (the param is silently ignored), so the
+// full squad is pulled in one call and sorted client-side instead. Many
+// backup/youth entries have a null rating (never played enough to be
+// scored) — those are filtered out rather than treated as a 0.
+export async function fetchTopRatedPlayer(key: string, teamName: string): Promise<RatedPlayer | null> {
+  try {
+    const teamId = await resolveBzTeamId(key, teamName);
+    if (!teamId) return null;
+    const res = await fetchWithTimeout(`${BASE}/api/v2/players/?team_id=${teamId}&limit=50`, 6000, { headers: authHeaders(key) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const results: any[] = data.results ?? [];
+    const rated = results.filter(p => typeof p.rating === 'number');
+    if (rated.length === 0) return null;
+    rated.sort((a, b) => b.rating - a.rating);
+    const top = rated[0];
+    return { name: top.name, rating: top.rating, position: top.position ?? '', nationality: top.nationality ?? '' };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchBothTopRatedPlayers(key: string, nameA: string, nameB: string): Promise<[RatedPlayer | null, RatedPlayer | null]> {
+  return Promise.all([fetchTopRatedPlayer(key, nameA), fetchTopRatedPlayer(key, nameB)]);
 }

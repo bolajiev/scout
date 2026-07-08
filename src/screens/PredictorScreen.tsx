@@ -9,11 +9,13 @@ import { completion, cancel, InferenceCancelledError } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import { getTheme } from '../theme';
 import { fonts } from '../theme/fonts';
-import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, StackActions } from '@react-navigation/native';
 import { useTheme } from '../navigation/AppNavigator';
 import { IconTarget, IconStop } from '../components/Icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ModelStatusPill from '../components/ModelStatusPill';
+import ModelPickerModal from '../components/ModelPickerModal';
+import { SkeletonVerdictCard } from '../components/Skeleton';
 import ReportBugLink from '../components/ReportBugLink';
 import Glow from '../components/Glow';
 import { TAB_BAR_HEIGHT } from '../components/TabBar';
@@ -21,13 +23,13 @@ import TeamBadge from '../components/TeamBadge';
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
 import { syncModelsFromDisk, getGenParams, getDefaultModelId, getActiveFdKey, getActiveBzKey } from '../utils/storage';
-import { findBzPrediction } from '../utils/bzzoiro';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, teamAbbr, todayISO, type Fixture } from '../utils/fixtures';
 import { splitChannelThinking } from '../utils/thinkingSplit';
 import { createSession, addMessage, addPrediction } from '../utils/historyDb';
 import { settlePendingPredictions, getPredictionRecord } from '../utils/predictionTracker';
 import { fetchBothTeamForms, fetchBothSquads, formatFormContext, type TeamForm } from '../utils/teamStats';
+import { fetchBothTopRatedPlayers, type RatedPlayer } from '../utils/bzzoiro';
 import { matchClubs } from '../utils/topClubs';
 import { logInference } from '../utils/auditLogger';
 
@@ -35,7 +37,7 @@ const SYSTEM_PROMPT = `You are Scout's Predictor — a veteran football analyst 
 
 When [LIVE FORM DATA] is present, treat it as ground truth for recent form — it comes from a real-time sports data source and overrides your training assumptions. Weight it heavily alongside tactical identity, squad quality, and head-to-head history.
 
-When [CURRENT SQUADS] is present, KEY HOME and KEY AWAY must name a player from those lists only — never a player from your training memory who may have retired, transferred, or aged out of the squad since. If a squad list is present but doesn't include the star you'd expect, pick the most dangerous player who IS listed rather than the one you remember.
+When [TOP RATED PLAYER] is present for a side, KEY HOME/KEY AWAY for that side MUST be exactly that named player — the rating is real data, not your guess, so do not substitute anyone else. Your job is only to write the one-clause reason he's decisive, informed by his real rating and position given. When [CURRENT SQUADS] is present instead (no rated-player data for that side), KEY HOME/KEY AWAY must name a player from that list only — never a player from your training memory who may have retired, transferred, or aged out of the squad since.
 
 When no live data is present, commit anyway using historical record, playing style, squad depth, and tournament pedigree. Do NOT fabricate recent results — and do NOT complain about missing data. Express uncertainty ONLY through the CONFIDENCE field, never in the analysis text.
 
@@ -44,8 +46,11 @@ Always respond in EXACTLY this format, no deviation:
 WINNER: [team name or Draw]
 SCORE: [e.g. 2-1]
 CONFIDENCE: [a number 40-90, the percent chance your call is right — e.g. 72]
-KEY HOME: [home team's most dangerous player — why he decides this match, one short clause]
-KEY AWAY: [away team's most dangerous player — why he decides this match, one short clause]
+HOME WIN: [your own estimated probability the home team wins, a number 0-100]
+DRAW: [your own estimated probability of a draw, a number 0-100]
+AWAY WIN: [your own estimated probability the away team wins, a number 0-100 — all three should roughly sum to 100, weighted by the actual recent-form data above when present, not just the WINNER pick]
+KEY HOME: [home team's most dangerous player — the exact name from [TOP RATED PLAYER — HOME] when present — why he decides this match, one short clause]
+KEY AWAY: [away team's most dangerous player — the exact name from [TOP RATED PLAYER — AWAY] when present — why he decides this match, one short clause]
 ---
 [2-4 sentences of sharp reasoning: the tactical matchup, where the game is won and lost, and the form pattern behind your call. If live form data was provided, reference it directly. Write like a pundit making a call, not a bot citing caveats.]
 
@@ -61,15 +66,19 @@ const FIELD_PATTERNS: Record<string, RegExp> = {
   winner: /^winner\s*:\s*(.+)$/im,
   score: /^score\s*:\s*(.+)$/im,
   confidence: /^confidence\s*:\s*(.+)$/im,
+  homeWin: /^home\s*win\s*:\s*(.+)$/im,
+  draw: /^draw\s*:\s*(.+)$/im,
+  awayWin: /^away\s*win\s*:\s*(.+)$/im,
   keyHome: /^key\s*home(?:\s*player)?\s*:\s*(.+)$/im,
   keyAway: /^key\s*away(?:\s*player)?\s*:\s*(.+)$/im,
 };
-const STRUCTURED_LINE_RE = /^(winner|score|confidence|key\s*home|key\s*away)\s*:/i;
+const STRUCTURED_LINE_RE = /^(winner|score|confidence|home\s*win|draw|away\s*win|key\s*home|key\s*away)\s*:/i;
 const SEPARATOR_RE = /^-{3,}\s*$/;
 const STARS_RE = /\*+/g;
 
 interface ParsedPrediction {
   winner: string; score: string; confidence: string;
+  homeWin: string; draw: string; awayWin: string;
   keyHome: string; keyAway: string; analysis: string;
 }
 
@@ -84,22 +93,6 @@ function confidenceParts(raw: string): { pct: number | null; word: string } {
   }
   const word = pct == null ? raw : pct >= 72 ? 'High' : pct >= 55 ? 'Medium' : 'Low';
   return { pct, word };
-}
-
-// Three-way outcome split for the verdict chips, derived deterministically
-// from the model's single confidence number — the winner gets the model's
-// own certainty, the remainder splits draw-light. Not real probabilities
-// (the model doesn't produce a 3-way distribution) but anchored to what it
-// actually said rather than invented from nothing.
-function outcomeSplit(confRaw: string, winnerIsDraw: boolean): { home: number; draw: number; away: number; } {
-  const pct = confidenceParts(confRaw).pct ?? 55;
-  const rem = 100 - pct;
-  if (winnerIsDraw) {
-    const side = Math.round(rem / 2);
-    return { home: side, draw: pct, away: rem - side };
-  }
-  const draw = Math.round(rem * 0.45);
-  return { home: pct, draw, away: rem - draw };
 }
 
 // "Mbappé — pace in behind" → "Mbappé". Splits on the first spaced dash or
@@ -119,6 +112,7 @@ function parsePrediction(text: string): ParsedPrediction {
     : lines.filter(l => l.trim() && !STRUCTURED_LINE_RE.test(l.trim())).join('\n').trim();
   return {
     winner: field('winner'), score: field('score'), confidence: field('confidence'),
+    homeWin: field('homeWin'), draw: field('draw'), awayWin: field('awayWin'),
     keyHome: field('keyHome'), keyAway: field('keyAway'), analysis,
   };
 }
@@ -155,6 +149,8 @@ export default function PredictorScreen() {
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [pickableModels, setPickableModels] = useState<import('../types').DownloadedModel[]>([]);
   const [loadPct, setLoadPct] = useState(0);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [formA, setFormA] = useState<TeamForm | null>(null);
@@ -374,17 +370,11 @@ export default function PredictorScreen() {
     fetchFixtures();
   };
 
-  const loadModel = async () => {
+  const loadSpecificModel = async (model: import('../types').DownloadedModel) => {
     setLoadError(null);
     setModelLoading(true);
     setLoadPct(0);
     try {
-      const synced = await syncModelsFromDisk();
-      const model = pickTextCapable(synced, await getDefaultModelId(), llmManager.getLoadedModelId());
-      if (!model) {
-        if (mountedRef.current) { setNoModel(true); setModelLoading(false); }
-        return;
-      }
       // projectionModelSrc keeps a multimodal model (Gemma) consistent with
       // Scout Lens — the single resident model must be loaded with its mmproj
       const mid = await llmManager.ensure(
@@ -401,6 +391,29 @@ export default function PredictorScreen() {
         setModelLoading(false);
       }
     }
+  };
+
+  const loadModel = async () => {
+    const synced = await syncModelsFromDisk();
+    const model = pickTextCapable(synced, await getDefaultModelId(), llmManager.getLoadedModelId());
+    if (!model) {
+      if (mountedRef.current) setNoModel(true);
+      return;
+    }
+    await loadSpecificModel(model);
+  };
+
+  // Only shows the picker when there's an actual choice (2+ text models
+  // downloaded) — otherwise behaves exactly like the plain auto-pick.
+  const handleLoadPress = async () => {
+    const synced = await syncModelsFromDisk();
+    const textModels = synced.filter(m => m.modelType === 'text');
+    if (textModels.length > 1) {
+      setPickableModels(textModels);
+      setModelPickerOpen(true);
+      return;
+    }
+    await loadModel();
   };
 
   // Coach and Predictor each track their own modelId, but there's only one
@@ -437,15 +450,6 @@ export default function PredictorScreen() {
       getActiveFdKey().catch(() => ''),
       getActiveBzKey().catch(() => ''),
     ]);
-    // Kicked off now, awaited just before navigating — a couple of quick
-    // REST calls that easily finish inside the several seconds the LLM
-    // spends streaming its own verdict, so this never adds visible wait.
-    // Without a selected fixture's date, default to today — an unbounded
-    // team-name search could otherwise resolve to the wrong historical
-    // meeting between the same two teams from a past season.
-    const bzPredPromise = bzKey
-      ? findBzPrediction(bzKey, nameA, nameB, selectedFixture?.dateEvent ?? todayISO()).catch(() => null)
-      : Promise.resolve(null);
     // Hard ceiling on grounding data — fetchBothTeamForms can chain through
     // three fallback sources (Bzzoiro, football-data.org, TheSportsDB),
     // and TheSportsDB's own path alone is three sequential 6s-timeout
@@ -458,7 +462,7 @@ export default function PredictorScreen() {
     // get picked up naturally next time, they just don't block this run.
     const withDeadline = <T,>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
       Promise.race([p, new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))]);
-    const [[freshFormA, freshFormB], [freshSquadA, freshSquadB]] = await Promise.all([
+    const [[freshFormA, freshFormB], [freshSquadA, freshSquadB], [ratedA, ratedB]] = await Promise.all([
       withDeadline(
         fetchBothTeamForms(nameA, nameB, fdKey, bzKey).catch(() => [formA, formB] as [TeamForm | null, TeamForm | null]),
         6000,
@@ -469,6 +473,15 @@ export default function PredictorScreen() {
         6000,
         [squadA, squadB] as [string[], string[]],
       ),
+      // Real 0-99 player ratings from Bzzoiro — this is what actually picks
+      // KEY HOME/KEY AWAY now (highest-rated player on each squad), not the
+      // model guessing off a bare name list. Only runs when a Bzzoiro key
+      // is active; falls back to the squad-list mechanism below otherwise.
+      withDeadline(
+        bzKey ? fetchBothTopRatedPlayers(bzKey, nameA, nameB).catch(() => [null, null] as [RatedPlayer | null, RatedPlayer | null]) : Promise.resolve([null, null] as [RatedPlayer | null, RatedPlayer | null]),
+        6000,
+        [null, null] as [RatedPlayer | null, RatedPlayer | null],
+      ),
     ]);
     setFormA(freshFormA); setFormB(freshFormB);
     setSquadA(freshSquadA); setSquadB(freshSquadB);
@@ -478,18 +491,25 @@ export default function PredictorScreen() {
     const formBlock = (freshFormA || freshFormB)
       ? formatFormContext(nameA, freshFormA, nameB, freshFormB) + '\n\n'
       : '';
+    // Real rating data takes priority per side — only falls back to the
+    // weaker "pick from this name list" mechanism for a side Bzzoiro's
+    // player database doesn't cover.
+    const ratedLine = (label: string, p: RatedPlayer | null) =>
+      p ? `[TOP RATED PLAYER — ${label}] ${p.name} (${p.position}${p.nationality ? ', ' + p.nationality : ''}) — Rating: ${p.rating}/99\n` : '';
+    const ratedBlock = (ratedA || ratedB) ? `${ratedLine('HOME', ratedA)}${ratedLine('AWAY', ratedB)}\n` : '';
     // Real current squad names, so KEY HOME/KEY AWAY names a player who's
     // actually still on the team instead of whoever the model remembers
     // from training (verified: defaulted to Neymar for Brazil, who hasn't
-    // been part of the squad picture in years).
-    const squadBlock = (freshSquadA.length > 0 || freshSquadB.length > 0)
+    // been part of the squad picture in years). Only included per side
+    // without a rated-player hit above, since that's strictly better.
+    const squadBlock = ((!ratedA && freshSquadA.length > 0) || (!ratedB && freshSquadB.length > 0))
       ? `[CURRENT SQUADS — pick KEY HOME/KEY AWAY only from these names]\n`
-        + `${nameA}: ${freshSquadA.length > 0 ? freshSquadA.join(', ') : 'not found'}\n`
-        + `${nameB}: ${freshSquadB.length > 0 ? freshSquadB.join(', ') : 'not found'}\n`
+        + (!ratedA ? `${nameA}: ${freshSquadA.length > 0 ? freshSquadA.join(', ') : 'not found'}\n` : '')
+        + (!ratedB ? `${nameB}: ${freshSquadB.length > 0 ? freshSquadB.join(', ') : 'not found'}\n` : '')
         + `[END SQUADS]\n\n`
       : '';
     const userContext = context.trim() ? `\n\nAdditional context: ${context.trim()}` : '';
-    const prompt = `${squadBlock}${formBlock}Predict: ${nameA} vs ${nameB}${userContext}`;
+    const prompt = `${ratedBlock}${squadBlock}${formBlock}Predict: ${nameA} vs ${nameB}${userContext}`;
     const genStart = Date.now();
 
     try {
@@ -578,15 +598,19 @@ export default function PredictorScreen() {
         setIsGenerating(false);
         setPrediction('');
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        const bzPrediction = await bzPredPromise;
         // The result gets its own page — verdict + analysis with a back
         // button, instead of rendering under the fold on this screen.
         navigation.navigate('PredictionResult', {
           teamA: teamA.trim(), teamB: teamB.trim(),
           winner: p.winner, score: p.score, confidence: p.confidence,
+          homeWin: p.homeWin, draw: p.draw, awayWin: p.awayWin,
           keyHome: p.keyHome, keyAway: p.keyAway, analysis: p.analysis,
+          // Real ratings, sourced directly — not re-parsed from the
+          // model's own text, so the number shown is always exactly what
+          // Bzzoiro's player data actually says, regardless of how the
+          // model phrases its reasoning around it.
+          homeRating: ratedA?.rating ?? null, awayRating: ratedB?.rating ?? null,
           elapsed: secs,
-          bzPrediction,
         });
       }
     } catch (err) {
@@ -638,7 +662,7 @@ export default function PredictorScreen() {
         rightSlot={
           <>
             <TouchableOpacity
-              onPress={() => navigation.navigate('History', { tab: 'predictor' })}
+              onPress={() => navigation.dispatch(StackActions.push('History', { tab: 'predictor' }))}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Text style={[styles.historyBtn, { color: theme.textSecondary }]}>History</Text>
@@ -653,9 +677,17 @@ export default function PredictorScreen() {
         loadError={loadError}
         modelId={modelId}
         loadPct={loadPct}
-        onLoad={loadModel}
+        onLoad={handleLoadPress}
         onStop={stopModel}
         onGetModel={() => navigation.navigate('Models')}
+      />
+
+      <ModelPickerModal
+        visible={modelPickerOpen}
+        models={pickableModels}
+        currentModelId={modelId}
+        onSelect={loadSpecificModel}
+        onClose={() => setModelPickerOpen(false)}
       />
 
       <ScrollView
@@ -760,19 +792,11 @@ export default function PredictorScreen() {
         )}
 
         {/* Immediate feedback — visible from the instant Predict is pressed
-            until the first token arrives, so the wait never looks frozen */}
-        {isGenerating && prediction.length === 0 && (
-          <Animated.View style={[styles.resultCard, { backgroundColor: theme.card, opacity: pulsAnim }]}>
-            <View style={styles.resultContent}>
-              <Text style={[styles.resultLabel, { color: accent }]}>ANALYZING THE MATCHUP...</Text>
-              <Text style={[styles.resultText, { color: theme.textSecondary }]}>
-                {formA || formB
-                  ? 'Weighing recent form, tactical matchup, and squad quality.'
-                  : 'Weighing tactical matchup, squad quality, and history.'}
-              </Text>
-            </View>
-          </Animated.View>
-        )}
+            until the first token arrives, so the wait never looks frozen.
+            Was a plain "ANALYZING THE MATCHUP..." text block floating over
+            an otherwise empty screen — a skeleton shaped like the verdict
+            card that's about to land reads as content already arriving. */}
+        {isGenerating && prediction.length === 0 && <SkeletonVerdictCard />}
 
         {/* Streaming result — parsed live so raw WINNER:/SCORE: lines never
             show; fields pop in as chips, analysis streams below */}
@@ -848,12 +872,10 @@ export default function PredictorScreen() {
           </TouchableOpacity>
         </Animated.View>
 
-        {/* One attribution line, at the bottom */}
-        <View style={styles.disclosureRow}>
-          <Text style={[styles.disclosureText, { color: theme.textSecondary }]}>
-            Fixtures & badges: TheSportsDB · Form: football-data.org · AI: on-device (QVAC)
-          </Text>
-        </View>
+        {/* Full data-source attribution now lives once, on the result page
+            you land on right after predicting — showing the same line
+            again here, before you've even predicted anything, was just
+            repetition across a two-screen flow. */}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -898,8 +920,6 @@ const styles = StyleSheet.create({
   fixtureAway: { fontSize: 13, fontWeight: '700', flex: 1 },
   fixtureTime: { fontSize: 11, fontWeight: '700', marginTop: 2 },
   // Disclosure
-  disclosureRow: { paddingVertical: 4 },
-  disclosureText: { fontSize: 10, lineHeight: 15, textAlign: 'center' },
 
   teamCard: {
     flex: 1, borderRadius: 14, padding: 14,
