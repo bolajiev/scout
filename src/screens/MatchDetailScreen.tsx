@@ -105,7 +105,12 @@ export default function MatchDetailScreen() {
     );
   }
 
-  const predictThisMatch = () => navigation.navigate('Predictor', { fixtureId: fixture.idEvent });
+  // BUG FIX: 'Predictor' is a tab nested inside MainTabs, not a root-stack
+  // route — MatchDetailScreen is pushed on the root stack, a SIBLING of
+  // MainTabs, not a child of it. navigate('Predictor', ...) has no
+  // registered route to resolve to from here (same mistake askCoach below
+  // avoids by going through MainTabs explicitly).
+  const predictThisMatch = () => navigation.navigate('MainTabs', { screen: 'Predictor', params: { fixtureId: fixture.idEvent } });
   // Reuses the prefill mechanism MatchAIScreen already reads from route
   // params (route.params?.prefill, fired once the model's loaded) — no new
   // plumbing needed, just a real cross-feature entry point into it.

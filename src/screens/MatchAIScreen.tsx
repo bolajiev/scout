@@ -70,11 +70,16 @@ const dateContext = (): string => {
 // (pass 1 AND pass 2), so a bloated system prompt is a real, direct,
 // measurable cost on top of an already CPU-bound device, not just noise.
 // Consolidated to the same set of rules with far fewer words.
-const TOOLS_SYSTEM_SUFFIX = ` Your training data is stale and knows nothing live — never answer from memory, never say "I don't have real-time access." Real, working tools, at most one per question: get_today_fixtures (today's games/scores), get_team_form (a team's recent results), get_player_stats (a player's real goals/assists/minutes/rating, recent matches — not filtered by competition, so call it anyway for a tournament-specific question and just note the numbers are recent overall form, not filtered to that tournament, rather than refusing outright). Calling one actually fetches live data now — not a simulation, never something you "can't execute." The FIFA World Cup 2026 is happening this month, not a future event.
-
-Nothing covers general news/transfers/injuries or anything else — say so plainly rather than guessing. Never fabricate a tool result: no "tool_response", no JSON, no bracketed data block as your own text — that's for the real mechanism only. A real tool result in the conversation (a line like "[RECENT RESULTS — ...]") is data to reason over, never to quote or repeat verbatim.
-
-Only skip tools for pure tactics/history/opinion questions with no time-sensitive facts. When you decide to use a tool, call it through the actual function-calling mechanism only — never write the tool's name, or a sentence describing that you're about to use one, as part of your visible answer text. And never describe your own tools to the user by their internal function names (e.g. "get_today_fixtures") even when directly asked what you can do — describe them in plain English instead (e.g. "I can check today's fixtures or a team's recent results"). When a tool result names a competition/league for a match, mention it in your answer — never just "Team A vs Team B" when you know which tournament it's in.`;
+// BUG FIX: trimmed from ~1800 chars — this is read on EVERY completion()
+// call, and measured live at ~712 tokens combined with the base prompt,
+// which at a plausible on-device prompt-processing rate lines up with the
+// ~35s delay reported before any visible activity starts. Every distinct
+// instruction below is preserved, just said once instead of restated
+// across three paragraphs — including the "not a simulation" instruction,
+// which the model still ignored verbatim in its own reasoning ("Execute
+// Tool Call (Simulated)") even at the old, longer wording, so length
+// wasn't buying compliance either.
+const TOOLS_SYSTEM_SUFFIX = ` Your training data is stale — never answer live questions from memory, never say "I don't have real-time access." Tools, one per question: get_today_fixtures, get_team_form, get_player_stats (not competition-filtered — still call it for a tournament question, noting the numbers are overall recent form, not refusing outright). A tool call is REAL and runs now, not a simulation — never narrate it, never write its name in your answer, never fabricate a fake result (no "tool_response", no JSON block of your own) — a real result already in the conversation is data to reason over, never to quote back verbatim. Skip tools only for pure tactics/opinion questions with no time-sensitive facts. Describe tools in plain English if asked what you can do, never by function name. Mention the competition when a result names one. FIFA World Cup 2026 is happening this month, not a future event.`;
 
 const NO_TOOLS_SYSTEM_SUFFIX = ` This session has no live data tools available. For anything truly current (today's scores, this week's news) say briefly that you're working from general knowledge rather than inventing specific recent numbers — but still commit to a real, useful answer from what you do know. Never say "I don't have real-time access" as a refusal.`;
 
@@ -166,7 +171,10 @@ const FABRICATED_TOOL_RESPONSE_RE = /\[\/?\s*tool[_ ]?response\s*\]|\btool[_ ]?r
 // again for some other model/version, this recovers the REAL call from
 // Gemma's own documented raw shape rather than just discarding it:
 // "<|tool_call>call:NAME{key:<|"|>val<|"|>,...}<tool_call|>"
-const GEMMA_RAW_TOOL_CALL_RE = /call:(\w+)\{([^}]*)\}/;
+// BUG FIX: verified live — the model emitted "call: get_today_fixtures{}"
+// with a space after the colon, which this regex (requiring the name
+// directly against "call:") never matched. \s* tolerates it either way.
+const GEMMA_RAW_TOOL_CALL_RE = /call:\s*(\w+)\{([^}]*)\}/;
 function parseGemmaRawToolCall(text: string): { name: string; arguments: Record<string, string> } | null {
   const m = text.match(GEMMA_RAW_TOOL_CALL_RE);
   if (!m) return null;
@@ -903,6 +911,11 @@ export default function MatchAIScreen() {
 
     let liveSources: string[] = [];
     let liveDataAcc = '';
+    // Set when pass-2 fell back to a generic pointer message instead of a
+    // real answer (fabrication or empty output) — the real data is right
+    // there, so the raw-data card auto-opens instead of making the user
+    // find and tap the source chip themselves to see what was actually found.
+    let usedDataFallback = false;
     let answerAcc = '';
     let thoughtAcc = '';
     let lastFlush = 0;
@@ -1085,7 +1098,20 @@ export default function MatchAIScreen() {
         }
       }
 
-      if (toolCalls.length > 0 && mountedRef.current) {
+      // BUG FIX: this used to also require mountedRef.current — conflating
+      // "should tool execution + pass-2 run" (a business-logic decision
+      // about whether real tool data exists) with "is the component still
+      // mounted" (a pure UI-update concern). A long generation (5+ minutes
+      // isn't rare on-device) gives plenty of time for the user to
+      // background the app or navigate away mid-stream — when that
+      // happened, this whole block got skipped and fell through to the
+      // else branch's raw, unrecovered pass1Answer (potentially still
+      // containing leaked tool-call tokens), which then got saved to the
+      // database via addMessage below regardless of mount state — a leak
+      // that had nothing to do with a mismatched dialect, just this gate.
+      // Tool execution/pass-2 must run whenever real tool calls exist;
+      // mountedRef only gates the actual UI updates within it.
+      if (toolCalls.length > 0) {
         // ── Tool execution ──────────────────────────────────────────────────
         if (mountedRef.current) { setSlot(s => s ? { ...s, toolStatus: 'Fetching data...', answer: '' } : s); }
 
@@ -1153,14 +1179,26 @@ export default function MatchAIScreen() {
           liveDataAcc += (liveDataAcc ? '\n\n' : '') + toolResult;
         }
 
-        if (!mountedRef.current) return;
+        // BUG FIX: this used to bail out of the ENTIRE send() function here
+        // if unmounted — skipping pass-2 and the addMessage save further
+        // down, not just the UI update. A message could vanish from
+        // history entirely if the screen unmounted at exactly this point
+        // mid-generation. mountedRef only needs to gate the actual
+        // setSlot call, not the correctness of what gets computed/saved.
         if (abortRef.current) throw new InferenceCancelledError(run1.requestId, { text: pass1Answer });
-        setSlot(s => s ? { ...s, toolStatus: null, answer: '', liveSources: [...new Set(liveSources)], liveData: liveDataAcc } : s);
+        if (mountedRef.current) setSlot(s => s ? { ...s, toolStatus: null, answer: '', liveSources: [...new Set(liveSources)], liveData: liveDataAcc } : s);
 
         // ── Pass 2: final answer incorporating tool results ─────────────────
+        // BUG FIX: pass-2 used to reuse pass-1's system prompt unchanged —
+        // that prompt is about DECIDING whether to call a tool, which no
+        // longer applies here (one already ran). Verified live: without a
+        // pass-2-specific instruction, the model sometimes stalled/produced
+        // nothing usable right when real data was sitting in its own
+        // history — a direct nudge to just use it now is cheap insurance.
+        const pass2SystemPrompt = `${buildSystemPrompt(toolsActiveThisTurn)} You already have real, live data above from a tool call — read it and answer the user's question directly and completely using it now. Do not call another tool, do not narrate that you're checking anything, do not write a placeholder.`;
         const run2 = completion({
           modelId,
-          history: [{ role: 'system', content: buildSystemPrompt(toolsActiveThisTurn) }, ...toolHistory],
+          history: [{ role: 'system', content: pass2SystemPrompt }, ...toolHistory],
           stream: true,
           // Separate key from pass-1 — toolHistory has a different shape
           // (includes the tool result message), so it needs its own cache
@@ -1198,6 +1236,15 @@ export default function MatchAIScreen() {
             }
           }
         }
+        // BUG FIX: this loop breaking on abort was never followed by an
+        // actual throw — pass-1's own loop, the tool-fetch loop, and the
+        // pre-pass-2 check all correctly stop the whole pipeline this way,
+        // but pass-2 (the slowest phase, and the one most likely to be
+        // running when someone actually reaches for Stop) just silently
+        // kept going with whatever partial text had streamed so far,
+        // fabrication-checked and saved it as if it were a real completed
+        // answer. Stop now behaves the same way here as everywhere else.
+        if (abortRef.current) throw new InferenceCancelledError(run2.requestId, { text: answerAcc });
         finalStats = await run2.stats;
         // BUG FIX: pass-2 had ZERO fabrication check — verified live, fed a
         // REAL toolResult (today's actual TheSportsDB fixtures) in its own
@@ -1210,6 +1257,7 @@ export default function MatchAIScreen() {
         // source" apology, which would be actively misleading.
         if (FABRICATED_TOOL_RESPONSE_RE.test(answerAcc)) {
           answerAcc = "I mixed that up — the real data I found is shown below.";
+          usedDataFallback = true;
         } else if (!answerAcc.trim()) {
           // BUG FIX: verified live (Think mode) — pass-2 can ALSO ignore
           // reasoning_budget: 0 and burn its entire token budget on hidden
@@ -1219,6 +1267,7 @@ export default function MatchAIScreen() {
           // liveDataAcc/liveSources with its own card below, so this
           // points at that instead of showing nothing.
           answerAcc = "Here's what I found — see the data below.";
+          usedDataFallback = true;
         }
       } else {
         answerAcc = leakCleanedAnswer ?? pass1Answer;
@@ -1251,6 +1300,7 @@ export default function MatchAIScreen() {
 
       if (mountedRef.current) {
         const finished: Entry = { id: entryId, question: q, image: image ?? undefined, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, device: finalStats?.backendDevice, liveSources: [...new Set(liveSources)], liveData: liveDataAcc || undefined };
+        if (usedDataFallback) setDataOpen(p => ({ ...p, [entryId]: true }));
         setSlot(null);
         // Only append to the visible chat if we're still looking at the
         // conversation this reply actually belongs to — see mySessionId
@@ -1625,6 +1675,13 @@ export default function MatchAIScreen() {
             returnKeyType="send"
             blurOnSubmit={false}
             onSubmitEditing={() => { if (input.trim()) send(); }}
+            // BUG FIX: Android's autofill suggestion strip renders as a
+            // native overlay in the OS's OWN theme (often light), entirely
+            // independent of the app's dark theme — no app-level styling
+            // can reach it. That's the actual source of the white strip
+            // that appeared specifically while typing. Disabling autofill
+            // on this field stops Android from drawing it at all.
+            importantForAutofill="no"
           />
           <View style={styles.composerRow}>
             <TouchableOpacity

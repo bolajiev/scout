@@ -750,6 +750,11 @@ export default function PredictorScreen() {
                   onChangeText={t => { setTeamA(t); setParsed(null); }}
                   returnKeyType="next"
                   editable={!isGenerating}
+                  // BUG FIX: Android's autofill suggestion strip renders in
+                  // the OS's own (often light) theme, independent of the
+                  // app's dark theme — the actual source of the white strip
+                  // that appeared while typing (same fix as Coach's input).
+                  importantForAutofill="no"
                 />
               </View>
               <Text style={[styles.vsChip, { color: theme.textTertiary }]}>VS</Text>
@@ -763,6 +768,7 @@ export default function PredictorScreen() {
                   onChangeText={t => { setTeamB(t); setParsed(null); }}
                   returnKeyType="done"
                   editable={!isGenerating}
+                  importantForAutofill="no"
                 />
               </View>
             </View>

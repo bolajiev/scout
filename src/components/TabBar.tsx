@@ -56,12 +56,15 @@ export default function TabBar({ state, navigation }: BottomTabBarProps) {
           not absolutely positioned, so it's centered by construction. */}
       <View style={styles.third}>{sideTab('Home', 'Matches', IconCalendar)}</View>
       <View style={styles.third}>
-        <TouchableOpacity
-          style={[styles.center, { backgroundColor: theme.accent, shadowColor: theme.accent, borderColor: theme.background }]}
-          activeOpacity={0.85}
-          onPress={() => go('MatchAI')}
-        >
-          <IconBall size={17} color={theme.accentFg} />
+        {/* BUG FIX: was raised out of the bar as a floating circular
+            button (marginTop: -22) — now sits flush with Matches/Predict
+            like a normal third tab. Coach can never show a "focused" muted
+            state the way the other two do (its own screen hides this bar
+            entirely), so it stays accent-colored always rather than
+            following the focused/unfocused pattern. */}
+        <TouchableOpacity style={styles.side} activeOpacity={0.75} onPress={() => go('MatchAI')}>
+          <IconBall size={17} color={theme.accent} />
+          <Text style={[styles.label, { color: theme.accent }]}>Coach</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.third}>{sideTab('Predictor', 'Predict', IconTarget)}</View>
@@ -78,11 +81,4 @@ const styles = StyleSheet.create({
   third: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   side: { alignItems: 'center', gap: 2 },
   label: { fontSize: 9, fontFamily: fonts.bodySemiBold },
-  center: {
-    marginTop: -22,
-    width: 40, height: 40, borderRadius: 20, borderWidth: 4,
-    alignItems: 'center', justifyContent: 'center',
-    shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
-  },
 });
