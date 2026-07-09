@@ -216,10 +216,11 @@ export const fetchBothTeamForms = async (
   nameB: string,
   fdKey?: string,
   bzKey?: string,
+  bzTimeoutMs?: number,
 ): Promise<[TeamForm | null, TeamForm | null]> => {
   if (bzKey) {
     try {
-      const [bzA, bzB] = await fetchBothBzTeamForms(bzKey, nameA, nameB, 5);
+      const [bzA, bzB] = await fetchBothBzTeamForms(bzKey, nameA, nameB, 5, bzTimeoutMs);
       if (bzA && bzB) return [bzA, bzB];
       if (bzA || bzB) {
         // Only one side missing — one fallback pass covers both instead of
@@ -282,9 +283,14 @@ export const formatFixtureContext = (fixtures: Array<{
   strHomeTeam: string; strAwayTeam: string; strLeague: string; strTime: string;
 }>): string => {
   if (fixtures.length === 0) return '';
-  const lines = fixtures.slice(0, 6).map(f =>
-    `${f.strHomeTeam} vs ${f.strAwayTeam} (${f.strLeague}${f.strTime ? ', ' + f.strTime.slice(0, 5) : ''})`
-  );
+  // BUG FIX: an empty strLeague (verified live — several real TheSportsDB
+  // fixtures came back with no league name at all) rendered as a bare
+  // leading comma, "(, 16:00)" — visibly broken, and it fed the model text
+  // it couldn't possibly cite a real competition from.
+  const lines = fixtures.slice(0, 6).map(f => {
+    const parts = [f.strLeague, f.strTime ? f.strTime.slice(0, 5) : ''].filter(Boolean);
+    return `${f.strHomeTeam} vs ${f.strAwayTeam}${parts.length ? ` (${parts.join(', ')})` : ''}`;
+  });
   return [
     `[LIVE FIXTURES — Today via TheSportsDB]`,
     ...lines,

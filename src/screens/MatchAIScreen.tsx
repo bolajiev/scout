@@ -74,7 +74,7 @@ const TOOLS_SYSTEM_SUFFIX = ` Your training data is stale and knows nothing live
 
 Nothing covers general news/transfers/injuries or anything else — say so plainly rather than guessing. Never fabricate a tool result: no "tool_response", no JSON, no bracketed data block as your own text — that's for the real mechanism only. A real tool result in the conversation (a line like "[RECENT RESULTS — ...]") is data to reason over, never to quote or repeat verbatim.
 
-Only skip tools for pure tactics/history/opinion questions with no time-sensitive facts. When you decide to use a tool, call it through the actual function-calling mechanism only — never write the tool's name, or a sentence describing that you're about to use one, as part of your visible answer text. And never describe your own tools to the user by their internal function names (e.g. "get_today_fixtures") even when directly asked what you can do — describe them in plain English instead (e.g. "I can check today's fixtures or a team's recent results").`;
+Only skip tools for pure tactics/history/opinion questions with no time-sensitive facts. When you decide to use a tool, call it through the actual function-calling mechanism only — never write the tool's name, or a sentence describing that you're about to use one, as part of your visible answer text. And never describe your own tools to the user by their internal function names (e.g. "get_today_fixtures") even when directly asked what you can do — describe them in plain English instead (e.g. "I can check today's fixtures or a team's recent results"). When a tool result names a competition/league for a match, mention it in your answer — never just "Team A vs Team B" when you know which tournament it's in.`;
 
 const NO_TOOLS_SYSTEM_SUFFIX = ` This session has no live data tools available. For anything truly current (today's scores, this week's news) say briefly that you're working from general knowledge rather than inventing specific recent numbers — but still commit to a real, useful answer from what you do know. Never say "I don't have real-time access" as a refusal.`;
 
@@ -146,7 +146,12 @@ function toolDialectForModelName(name: string): ToolDialect | undefined {
 // formats) and then answered off its own made-up data. Cosmetically
 // stripping the JSON isn't enough here — the DATA itself is fake, so the
 // whole answer built on it has to be discarded, not just cleaned up.
-const FABRICATED_TOOL_RESPONSE_RE = /\btool[_ ]?response\b\s*:?\s*[\[{]/i;
+// Broadened after a second live fabrication: the model wrapped the same
+// invented data in its OWN bracket tag — "[tool_response]\n{...}\n
+// [/tool_response]" — which the original pattern (requiring "tool_response"
+// to be immediately followed by "[" or "{") never matched, since a "]"
+// closing the opening tag sits in between. Matches either shape now.
+const FABRICATED_TOOL_RESPONSE_RE = /\[\/?\s*tool[_ ]?response\s*\]|\btool[_ ]?response\b\s*:?\s*[\[{]/i;
 
 // Defense-in-depth backstop for the raw-token leak fixed by passing
 // toolDialect explicitly above — if a dialect mismatch ever slips through
@@ -870,6 +875,14 @@ export default function MatchAIScreen() {
         modelId,
         history: [{ role: 'system', content: buildSystemPrompt(toolsEnabledRef.current) }, ...history],
         stream: true,
+        // Scout never used this before — every turn re-sent and re-processed
+        // the ENTIRE system prompt + full history from scratch, every time.
+        // Per the SDK's own docs: "When cache exists, only the last message
+        // is sent to the model" — a real, sizeable prompt-processing cost
+        // eliminated from turn 2 onward in a conversation, not just a
+        // generation-speed tweak. Keyed per session so switching
+        // conversations doesn't cross-contaminate caches.
+        kvCache: mySessionId ?? true,
         // Vision + tool-calling together is unreliable on these on-device
         // models (see the supportsTools comment in loadModel) — an image
         // message always skips tools rather than risking the same
@@ -1042,6 +1055,10 @@ export default function MatchAIScreen() {
           modelId,
           history: [{ role: 'system', content: buildSystemPrompt(toolsEnabledRef.current) }, ...toolHistory],
           stream: true,
+          // Separate key from pass-1 — toolHistory has a different shape
+          // (includes the tool result message), so it needs its own cache
+          // entry rather than colliding with pass-1's under the same key.
+          kvCache: mySessionId ? `${mySessionId}:tools` : true,
           captureThinking: false,
           generationParams: { ...genParams, reasoning_budget: 0 as 0 },
         });
@@ -1066,6 +1083,18 @@ export default function MatchAIScreen() {
           }
         }
         finalStats = await run2.stats;
+        // BUG FIX: pass-2 had ZERO fabrication check — verified live, fed a
+        // REAL toolResult (today's actual TheSportsDB fixtures) in its own
+        // history, the model still invented its own "[tool_response]" block
+        // with entirely different, made-up fixtures and answered off THAT
+        // instead of the real data it was given. Unlike pass-1's fabrication
+        // (where no real data exists at all), the real result is already
+        // sitting in liveDataAcc/liveSources and gets its own card below —
+        // so the fallback here points at that instead of a blanket "no
+        // source" apology, which would be actively misleading.
+        if (FABRICATED_TOOL_RESPONSE_RE.test(answerAcc)) {
+          answerAcc = "I mixed that up — the real data I found is shown below.";
+        }
       } else {
         answerAcc = leakCleanedAnswer ?? pass1Answer;
       }
@@ -1428,16 +1457,7 @@ export default function MatchAIScreen() {
                   {slot.answer.length > 0 ? (
                     <Text style={[styles.aiText, { color: theme.text }]}>{slot.answer}</Text>
                   ) : (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <TypingDots color={accent} />
-                      {/* Same live counter as the Think-mode header — Fast
-                          mode has no thinking block to host it, but the
-                          same "silent for 50s straight" problem applies
-                          before the first token of the actual answer. */}
-                      {liveElapsedS > 0 && (
-                        <Text style={{ fontSize: 12, color: theme.textSecondary }}>{liveElapsedS}s</Text>
-                      )}
-                    </View>
+                    <TypingDots color={accent} />
                   )}
                 </View>
               </View>

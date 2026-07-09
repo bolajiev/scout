@@ -12,6 +12,19 @@
     <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     <item name="android:windowLightStatusBar">false</item>
     <item name="android:windowBackground">@color/splashscreen_background</item>
+    <!-- BUG FIX: the persistent light strip at the bottom of every screen,
+         keyboard up or down — expo-modules-core's EdgeToEdgePackage reads
+         this exact theme attribute (android:enforceNavigationBarContrast,
+         API 29+) in onCreate and feeds it straight into
+         window.isNavigationBarContrastEnforced; RN's own edge-to-edge setup
+         turns that flag ON unconditionally first, and Expo's re-read
+         defaults to `true` when this attribute is absent (verified in
+         expo-modules-core's EdgeToEdgePackage.kt:
+         `typedArray.getBoolean(0, true)`). With it on, Android draws its
+         own translucent contrast scrim over the navigation bar regardless
+         of the explicit dark navigationBarColor above — unrelated to the
+         keyboard, which is why it showed up with or without one on screen. -->
+    <item name="android:enforceNavigationBarContrast" tools:targetApi="29">false</item>
   </style>
   <style name="Theme.App.SplashScreen" parent="AppTheme">
     <item name="android:windowBackground">@drawable/ic_launcher_background</item>

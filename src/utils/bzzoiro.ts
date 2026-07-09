@@ -25,6 +25,11 @@ const fetchWithTimeout = async (url: string, ms = 8000, init?: RequestInit): Pro
 };
 
 const norm = (s: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+// Same team name, different squad entirely — verified live: searching
+// "Spain" for recent form pulled in "Spain U19 3-0 Croatia U19" because
+// "spain" is a clean substring of "spainu19", contaminating a senior
+// team's form with youth-international results.
+const AGE_GRADE_RE = /\b(u1[0-9]|u2[0-9]|u23|ii|res(?:erves?)?|youth|women)\b/i;
 // Length-guarded containment match — bare `.includes()` with no minimum
 // let a short substring match unrelated names (verified live elsewhere in
 // this app: "brazil" contains "az"). Same fix applied here as
@@ -32,7 +37,9 @@ const norm = (s: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const fuzzyNameMatch = (a: string, b: string): boolean => {
   const na = norm(a), nb = norm(b);
   if (!na || !nb) return false;
-  return na === nb || (na.length >= 4 && nb.includes(na)) || (nb.length >= 4 && na.includes(nb));
+  if (na === nb) return true;
+  if (AGE_GRADE_RE.test(a) !== AGE_GRADE_RE.test(b)) return false;
+  return (na.length >= 4 && nb.includes(na)) || (nb.length >= 4 && na.includes(nb));
 };
 
 // /api/v2/events/ is paginated ({count, next, previous, results}) despite
@@ -212,18 +219,23 @@ export async function fetchBzTopLeagueMatches(key: string, from: string, to: str
 // into teamStats.ts's existing TeamForm/formatFormContext plumbing rather
 // than inventing a parallel prompt block. Bzzoiro's status=finished filter
 // already returns most-recent-first, verified live.
-export async function fetchBzTeamForm(key: string, teamName: string, limit = 5): Promise<TeamForm | null> {
+export async function fetchBzTeamForm(key: string, teamName: string, limit = 5, timeoutMs = 3500): Promise<TeamForm | null> {
   try {
     const today = new Date().toISOString().split('T')[0];
     const params = new URLSearchParams({ team_name: teamName, status: 'finished', date_to: today, limit: String(limit) });
-    // Short timeout — this runs on Predictor's critical path before the
-    // model call even starts, and it's a best-effort enrichment with two
-    // more fallback sources behind it (football-data.org, TheSportsDB).
-    // The default 8s here would mean a team Bzzoiro doesn't cover pays a
-    // full 8s tax, THEN tries the next source, stacking up to 20-30s of
-    // dead air before the model starts — which read as "predictor is
-    // completely broken" even though it was just queued behind slow misses.
-    const events = await fetchBzEventsPage(`${BASE}/api/v2/events/?${params}`, key, 3500);
+    // Default is short (3.5s) for Predictor's critical path, which runs
+    // this before the model call even starts with two more fallback
+    // sources behind it (football-data.org, TheSportsDB) — the default 8s
+    // there would mean a team Bzzoiro doesn't cover pays a full 8s tax,
+    // THEN tries the next source, stacking up to 20-30s of dead air before
+    // the model starts. MatchDetailScreen has no such urgency (it's already
+    // showing a skeleton) and was silently inheriting this same aggressive
+    // timeout — verified live: real recent-form data existed for Norway/
+    // England/Spain/Belgium and came back well inside 6-7s, but the 3.5s
+    // cutoff killed the request first and fell through to "no recent form
+    // found" even though the data was real and on its way. Callers with
+    // more headroom pass a longer timeoutMs explicitly.
+    const events = await fetchBzEventsPage(`${BASE}/api/v2/events/?${params}`, key, timeoutMs);
     if (events.length === 0) return null;
     const parsed = events.map(e => {
       const home = bzTeamName(e.home_team, e.home_team_name);
@@ -267,8 +279,8 @@ export async function fetchBzTeamForm(key: string, teamName: string, limit = 5):
   }
 }
 
-export async function fetchBothBzTeamForms(key: string, nameA: string, nameB: string, limit = 5): Promise<[TeamForm | null, TeamForm | null]> {
-  return Promise.all([fetchBzTeamForm(key, nameA, limit), fetchBzTeamForm(key, nameB, limit)]);
+export async function fetchBothBzTeamForms(key: string, nameA: string, nameB: string, limit = 5, timeoutMs = 3500): Promise<[TeamForm | null, TeamForm | null]> {
+  return Promise.all([fetchBzTeamForm(key, nameA, limit, timeoutMs), fetchBzTeamForm(key, nameB, limit, timeoutMs)]);
 }
 
 export interface RatedPlayer {

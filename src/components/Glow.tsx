@@ -26,12 +26,19 @@ export default function Glow({
             "cut in half" at the top rather than a soft corner bleed.
             Moving the center just inside the frame lets the full shape
             render and fade naturally in every direction. */}
+        {/* BUG FIX: separate rx/ry (react-native-svg's own extension beyond
+            the SVG spec, which only defines a single scalar `r`) made a
+            visible hard seam on wide cards on Android — verified live on
+            MatchDetail's hero card. objectBoundingBox units already stretch
+            a plain circular `r` to match the box's own aspect ratio, which
+            is wide enough here on its own; the extra non-uniform rx/ry
+            stretch on top of that was one transform too many for Android's
+            native radial-gradient shader to get right. */}
         <RadialGradient
           id={id}
           cx={anchor === 'tr' ? '0.85' : '0.15'}
           cy="0.12"
-          rx="0.9"
-          ry="0.7"
+          r="0.85"
         >
           <Stop offset="0" stopColor={color} stopOpacity={opacity} />
           <Stop offset="1" stopColor={color} stopOpacity="0" />

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { getTheme } from '../theme';
@@ -13,6 +13,8 @@ import { badgeUrl, teamAbbr, fmtMatchTime, isLive, isFinished, todayISO, type Fi
 import { fetchBothTeamForms, type TeamForm } from '../utils/teamStats';
 import { fetchHeadToHead, fetchLineups, type H2HMatch, type MatchLineups } from '../utils/bzzoiro';
 import { getActiveBzKey, getActiveFdKey } from '../utils/storage';
+
+const PITCH = require('../../assets/pitch.jpg');
 
 // The match-tap landing page — was a direct jump to Predictor ("quick
 // predict"), which skipped straight past any of the context a fan
@@ -46,11 +48,24 @@ export default function MatchDetailScreen() {
       const bzKey = await getActiveBzKey().catch(() => '');
       const fdKey = await getActiveFdKey().catch(() => '');
       const [[fA, fB], h2hResult] = await Promise.all([
-        fetchBothTeamForms(fixture.strHomeTeam, fixture.strAwayTeam, fdKey, bzKey).catch(() => [null, null] as [TeamForm | null, TeamForm | null]),
+        // Generous timeout — unlike Predictor, this screen has no pre-
+        // inference urgency (a skeleton is already showing), and the tight
+        // 3.5s default tuned for Predictor's critical path was cutting off
+        // real Bzzoiro data before it arrived (verified live: Norway/
+        // England/Spain/Belgium all had real recent results that came back
+        // within 6-7s).
+        fetchBothTeamForms(fixture.strHomeTeam, fixture.strAwayTeam, fdKey, bzKey, 7000).catch(() => [null, null] as [TeamForm | null, TeamForm | null]),
         bzKey ? fetchHeadToHead(bzKey, fixture.strHomeTeam, fixture.strAwayTeam).catch(() => []) : Promise.resolve([]),
       ]);
       if (!mountedRef.current) return;
       setFormA(fA); setFormB(fB); setH2h(h2hResult);
+      // BUG FIX: this used to await lineups BEFORE setLoading(false) —
+      // form/H2H sat fully resolved in state while the skeleton kept
+      // showing for however long the separate lineups fetch took, so
+      // "already-ready" data appeared to show up late for no reason.
+      // Lineups now populate independently; its own section only renders
+      // once `lineups` is set, so it needs no shared loading flag at all.
+      setLoading(false);
       // Lineups need the SPECIFIC Bzzoiro event id — only available when
       // this exact fixture came from Bzzoiro in the first place (idEvent
       // is prefixed "bz-"), not for a TheSportsDB-sourced one.
@@ -61,7 +76,6 @@ export default function MatchDetailScreen() {
           if (mountedRef.current) setLineups(lu);
         }
       }
-      if (mountedRef.current) setLoading(false);
     })();
     return () => { mountedRef.current = false; };
   }, [fixture?.idEvent]);
@@ -114,8 +128,12 @@ export default function MatchDetailScreen() {
       <ScreenHeader title={`${fixture.strHomeTeam} vs ${fixture.strAwayTeam}`} subtitle={fixture.strLeague} />
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 100 }]} showsVerticalScrollIndicator={false}>
 
-        {/* Hero */}
-        <Animated.View style={[styles.hero, { backgroundColor: theme.card, borderColor: theme.border, opacity: fadeAnim }]}>
+        {/* Hero — soft pitch photo behind the card only (not full-bleed like
+            Home's stadium backdrop), muted under a tinted scrim so team
+            names/scores stay legible on top. */}
+        <Animated.View style={[styles.hero, { borderColor: theme.border, opacity: fadeAnim }]}>
+          <Image source={PITCH} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: theme.card, opacity: 0.82 }]} />
           <Glow color={accent} opacity={0.14} anchor="tr" />
           <View style={styles.heroTeams}>
             <View style={styles.heroTeamCol}>
