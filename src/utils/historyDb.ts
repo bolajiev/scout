@@ -107,10 +107,17 @@ export const createSession = (screen: ScreenType, title: string): string => {
   return id;
 };
 
+// The EXISTS filter excludes sessions with zero messages — a session
+// whose message inserts failed after the session itself was created
+// (possible before createPredictionSession made that one transaction)
+// used to render as a blank, title-only card with no content. Filtering
+// here cleans up any that already exist, not just prevents new ones.
 export const getSessions = (screen: ScreenType, limit = 50): Session[] =>
   getDb()
     .getAllSync<{ id: string; screen: string; title: string; created_at: number }>(
-      'SELECT * FROM sessions WHERE screen = ? ORDER BY created_at DESC LIMIT ?',
+      `SELECT * FROM sessions WHERE screen = ?
+       AND EXISTS (SELECT 1 FROM messages WHERE messages.session_id = sessions.id)
+       ORDER BY created_at DESC LIMIT ?`,
       [screen, limit],
     )
     .map(r => ({ id: r.id, screen: r.screen as ScreenType, title: r.title, createdAt: r.created_at }));
@@ -153,6 +160,62 @@ export const addMessage = (
     'INSERT INTO messages (id, session_id, role, content, created_at, meta) VALUES (?, ?, ?, ?, ?, ?)',
     [uid(), sessionId, role, content, Date.now(), meta ? JSON.stringify(meta) : null],
   );
+};
+
+// Session + its first (user) message in one transaction — same fix as
+// createPredictionSession, applied to Coach. Coach used to call
+// createSession() then addMessage() as two separate statements in one
+// try/catch; if the message insert failed after the session insert
+// succeeded, the assistant reply (added later, unconditionally, once
+// generation finishes) still attached fine — leaving a session with an
+// assistant turn but NO user turn. getSessions()'s "has any message"
+// filter didn't catch this (it has a message, just the wrong one), so it
+// still showed up in History; tapping it opened a chat with nothing to
+// restore since the resume logic looks for a user message specifically.
+export const startChatSession = (screen: ScreenType, title: string, firstUserMessage: string, meta?: MessageMeta): string => {
+  const db = getDb();
+  const id = uid();
+  db.withTransactionSync(() => {
+    db.runSync(
+      'INSERT INTO sessions (id, screen, title, created_at) VALUES (?, ?, ?, ?)',
+      [id, screen, title.slice(0, 120), Date.now()],
+    );
+    db.runSync(
+      'INSERT INTO messages (id, session_id, role, content, created_at, meta) VALUES (?, ?, ?, ?, ?, ?)',
+      [uid(), id, 'user', firstUserMessage, Date.now(), meta ? JSON.stringify(meta) : null],
+    );
+  });
+  return id;
+};
+
+// Session + both messages in one transaction — PredictorScreen used to
+// call createSession() then addMessage() twice as three separate
+// statements wrapped in a single try/catch that silently swallowed any
+// error. If the session insert succeeded but either message insert then
+// failed for any reason, the result was an orphaned session with a real
+// title but zero messages — which is exactly what rendered as a blank
+// card in History (title still showed, but the collapsed row read as
+// empty content once a user genuinely hit a save-time failure). Wrapping
+// all three in one transaction means it's all-or-nothing — no more
+// half-saved sessions to leave behind.
+export const createPredictionSession = (title: string, userContent: string, assistantContent: string): string => {
+  const db = getDb();
+  const id = uid();
+  db.withTransactionSync(() => {
+    db.runSync(
+      'INSERT INTO sessions (id, screen, title, created_at) VALUES (?, ?, ?, ?)',
+      [id, 'predictor', title.slice(0, 120), Date.now()],
+    );
+    db.runSync(
+      'INSERT INTO messages (id, session_id, role, content, created_at, meta) VALUES (?, ?, ?, ?, ?, ?)',
+      [uid(), id, 'user', userContent, Date.now(), null],
+    );
+    db.runSync(
+      'INSERT INTO messages (id, session_id, role, content, created_at, meta) VALUES (?, ?, ?, ?, ?, ?)',
+      [uid(), id, 'assistant', assistantContent, Date.now(), null],
+    );
+  });
+  return id;
 };
 
 export const getMessages = (sessionId: string): Message[] =>

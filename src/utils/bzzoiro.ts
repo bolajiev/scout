@@ -25,6 +25,15 @@ const fetchWithTimeout = async (url: string, ms = 8000, init?: RequestInit): Pro
 };
 
 const norm = (s: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+// Length-guarded containment match — bare `.includes()` with no minimum
+// let a short substring match unrelated names (verified live elsewhere in
+// this app: "brazil" contains "az"). Same fix applied here as
+// teamStats.ts's matchesTeamName.
+const fuzzyNameMatch = (a: string, b: string): boolean => {
+  const na = norm(a), nb = norm(b);
+  if (!na || !nb) return false;
+  return na === nb || (na.length >= 4 && nb.includes(na)) || (nb.length >= 4 && na.includes(nb));
+};
 
 // /api/v2/events/ is paginated ({count, next, previous, results}) despite
 // the published OpenAPI spec documenting it as a bare array — verified
@@ -124,7 +133,16 @@ function mapBzEvent(e: any, leagueNames?: Map<number, string>, leagueNameOverrid
     strAwayTeam: bzTeamName(e.away_team, e.away_team_name),
     strLeague: bzNormalizeLeague(leagueNameOverride ?? e.league?.name ?? e.league_name ?? leagueNames?.get(e.league_id) ?? ''),
     strTime: `${hh}:${mm}:00`,
-    dateEvent: e.event_date?.split('T')[0] ?? null,
+    // BUG FIX: this used to take the date substring straight from the raw
+    // event_date STRING, while strTime above is derived from the
+    // UTC-normalized `utc` object — if Bzzoiro ever returns a timestamp
+    // with a non-UTC offset, those two disagree (e.g.
+    // "2026-07-09T23:30:00-05:00" is really "2026-07-10T04:30:00Z": the
+    // raw string gives dateEvent="2026-07-09" paired with strTime="04:30",
+    // tagging a match with the wrong day). Deriving both from the same
+    // normalized `utc` object keeps them consistent regardless of what
+    // offset the API happens to send.
+    dateEvent: !isNaN(utc.getTime()) ? utc.toISOString().split('T')[0] : (e.event_date?.split('T')[0] ?? null),
     intHomeScore: started && e.home_score != null ? String(e.home_score) : null,
     intAwayScore: started && e.away_score != null ? String(e.away_score) : null,
     strHomeTeamBadge: null, // Bzzoiro doesn't expose crest URLs — TeamBadge resolves by name instead
@@ -207,16 +225,26 @@ export async function fetchBzTeamForm(key: string, teamName: string, limit = 5):
     // completely broken" even though it was just queued behind slow misses.
     const events = await fetchBzEventsPage(`${BASE}/api/v2/events/?${params}`, key, 3500);
     if (events.length === 0) return null;
-    const qNorm = norm(teamName);
     const parsed = events.map(e => {
       const home = bzTeamName(e.home_team, e.home_team_name);
       const away = bzTeamName(e.away_team, e.away_team_name);
-      const isHome = norm(home).includes(qNorm) || qNorm.includes(norm(home));
+      // BUG FIX: this used to check ONLY the home side and unconditionally
+      // assume away otherwise — no length guard on the substring check
+      // either (teamStats.ts's matchesTeamName already learned that
+      // lesson: "brazil" contains "az"). If the home check ever failed
+      // for a real home match (spelling/alias mismatch) this silently
+      // flipped every W to an L and vice versa in the form fed to
+      // Coach/Predictor, invisible in the UI but backwards. Now checks
+      // both sides explicitly and skips the match entirely if neither
+      // side can be confidently matched, rather than guessing.
+      const isHomeMatch = fuzzyNameMatch(home, teamName);
+      const isAwayMatch = fuzzyNameMatch(away, teamName);
+      const isHome = isHomeMatch ? true : isAwayMatch ? false : null;
       const homeScore: number | null = e.home_score;
       const awayScore: number | null = e.away_score;
-      const gf = isHome ? homeScore : awayScore;
-      const ga = isHome ? awayScore : homeScore;
-      return { home, away, isHome, homeScore, awayScore, gf, ga, date: e.event_date?.split('T')[0] ?? '' };
+      const gf = isHome === true ? homeScore : isHome === false ? awayScore : null;
+      const ga = isHome === true ? awayScore : isHome === false ? homeScore : null;
+      return { home, away, isHome: isHome === true, homeScore, awayScore, gf, ga, date: e.event_date?.split('T')[0] ?? '' };
     }).filter(m => m.gf != null && m.ga != null);
     if (parsed.length === 0) return null;
     return {

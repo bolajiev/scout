@@ -25,7 +25,7 @@ import { llmManager } from '../utils/modelManager';
 import { pickTextCapable, pickVisionCapable } from '../utils/models';
 import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId, getActiveBzKey, toPath } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
-import { createSession, addMessage, getMessages } from '../utils/historyDb';
+import { startChatSession, addMessage, getMessages } from '../utils/historyDb';
 import { formatFixtureContext, fetchTeamForm } from '../utils/teamStats';
 import { fetchBzTeamForm, fetchPlayerStats, formatPlayerStatsContext } from '../utils/bzzoiro';
 import { splitChannelThinking } from '../utils/thinkingSplit';
@@ -71,6 +71,8 @@ These tools are REAL and already working — calling one actually fetches live d
 The FIFA World Cup 2026 is happening RIGHT NOW, this month — it is not a future event you lack data on. If asked about it, call get_today_fixtures rather than assuming it "hasn't happened yet."
 
 No tool covers general news, transfers, or injuries. If asked something none of your three tools can answer, say plainly that you don't have a reliable live source for that specific thing rather than guessing. NEVER invent a fake tool result to look like you checked — do not write words like "tool_response", a JSON array, or any bracketed data block as part of your answer; that text is reserved for the real function-calling mechanism only, and writing it yourself is always fabrication, never a real lookup.
+
+When a tool result appears in the conversation (a message starting with a line like "[RECENT RESULTS — ...]" or "[LIVE FIXTURES — ...]" or "[PLAYER STATS — ...]"), that is DATA for you to read and reason over — never quote, copy, or repeat those bracketed header/footer lines, or the raw data lines beneath them, verbatim in your answer. Write a normal, natural sentence using what the data tells you instead.
 
 Only skip tools for pure tactics/history/opinion questions with no time-sensitive facts. When you decide to use a tool, call it through the actual function-calling mechanism only — never write the tool's name, or a sentence describing that you're about to use one, as part of your visible answer text. And never describe your own tools to the user by their internal function names (e.g. "get_today_fixtures") even when directly asked what you can do — describe them in plain English instead (e.g. "I can check today's fixtures or a team's recent results").`;
 
@@ -133,17 +135,44 @@ const FABRICATED_TOOL_RESPONSE_RE = /\btool[_ ]?response\b\s*:?\s*[\[{]/i;
 // Verified live (Think mode): the model's own reasoning explicitly stated
 // "Since I cannot actually execute the tool here, I must state that I am
 // checking the form" — it doesn't believe its tool access is real, so it
-// narrates a confident-sounding status line ("Checking the team form for
-// Argentina...") and then produces nothing further, a dead end with no
-// recovery. Unlike the no-argument fixtures case, these two need a name —
-// pulled from the model's own narration/thinking with a deliberately
-// narrow pattern (a capitalized name right after "form for" / "stats
-// for") so a low-confidence guess falls through to the honest fallback
-// instead of firing a tool call with a garbage argument.
-const TEAM_FORM_ENTITY_RE = /\bform\s+for\s+([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,2})/;
-const PLAYER_STATS_ENTITY_RE = /\bstats?\s+for\s+([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,2})/;
+// narrates a confident-sounding status line and then produces nothing
+// further, a dead end with no recovery. The exact phrasing varies too
+// much to catch reliably ("checking the team form for Argentina...", "I
+// am checking Messi's last few match statistics now.", "I need to check
+// his recent match statistics for that." — the last one doesn't even
+// name the player, it's in the PREVIOUS message) — so the primary source
+// for the entity name is the user's own question, not the narration.
+// People reliably capitalize a name even in casual, lowercase-everything-
+// else text (verified in the same screenshots), which is a much stronger
+// signal than trying to parse the model's inconsistent prose.
+const STOPWORDS = new Set(['I', 'How', 'What', 'Who', 'When', 'Where', 'Why', 'Ok', 'Is', 'Are', 'Do', 'Does', 'Can', 'Will', 'The', 'A', 'An']);
+function extractProperNoun(text: string): string | null {
+  const matches = [...text.matchAll(/\b([A-Z][a-zA-Z'\-]+(?:\s+[A-Z][a-zA-Z'\-]+){0,2})\b/g)]
+    .map(m => m[1])
+    .filter(name => !STOPWORDS.has(name.split(' ')[0]));
+  return matches[0] ?? null;
+}
+const PLAYER_HINT_RE = /\b(goal|goals|assist|score|scored|player)\b/i;
+const TEAM_HINT_RE = /\b(form|result|results|performance|team)\b/i;
 
-function detectLeakedToolCall(text: string, thinking: string): {
+// Defensive backstop for pass 2 (the answer after a REAL tool call ran) —
+// unlike pass 1, nothing sanitized this path before. get_today_fixtures/
+// get_team_form/get_player_stats all feed their raw result back as a
+// `[LABEL — source]\n...\n[END LABEL]`-shaped tool message; a small model
+// can plausibly echo those exact header/footer lines back verbatim
+// instead of writing its own sentence. Strips only the marker lines
+// themselves (not the prose around them), so a genuine slip never shows
+// the internal formatting even though the system prompt now also tells
+// the model directly not to do this.
+// Header and footer labels aren't symmetric ("[RECENT RESULTS — ...]" ends
+// with "[END RESULTS]", not "[END RECENT RESULTS]") — matched exactly as
+// each formatter in teamStats.ts/MatchAIScreen.tsx/bzzoiro.ts actually
+// emits them, not guessed.
+const DATA_MARKER_LINE_RE = /^\[(?:RECENT RESULTS|LIVE FIXTURES|PLAYER STATS)[^\]]*\]$|^\[END (?:RESULTS|FIXTURES|PLAYER STATS)\]$/gm;
+const stripLeakedDataMarkers = (text: string): string =>
+  text.replace(DATA_MARKER_LINE_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+
+function detectLeakedToolCall(text: string, thinking: string, userQuestion: string): {
   impliedFixturesCall: boolean;
   impliedTeamForm: string | null;
   impliedPlayerStats: string | null;
@@ -162,13 +191,40 @@ function detectLeakedToolCall(text: string, thinking: string): {
   const impliedFixturesCall = !fabricated
     && new RegExp(`\\bget_today_fixtures\\b`, 'i').test(text)
     && !new RegExp(`\\bget_team_form\\b`, 'i').test(text);
+  // The dead-end pattern: toolCalls is already empty (checked by the
+  // caller) and the answer itself is just a stalled "checking..." status
+  // line rather than a real answer — that combination is the actual
+  // signal something's stuck, independent of exact wording.
+  const looksStuck = !fabricated && !impliedFixturesCall
+    && /\b(check(?:ing)?|need to|going to|let me|i'll)\b/i.test(text);
   const combined = `${text}\n${thinking}`;
-  const formMatch = !fabricated && !impliedFixturesCall ? combined.match(TEAM_FORM_ENTITY_RE) : null;
-  const statsMatch = !fabricated && !impliedFixturesCall && !formMatch ? combined.match(PLAYER_STATS_ENTITY_RE) : null;
+  let impliedTeamForm: string | null = null;
+  let impliedPlayerStats: string | null = null;
+  if (looksStuck) {
+    const isPlayer = PLAYER_HINT_RE.test(combined) || PLAYER_HINT_RE.test(userQuestion);
+    const isTeam = TEAM_HINT_RE.test(combined) || TEAM_HINT_RE.test(userQuestion);
+    // Explicit "for X" in the model's own narration is the highest-
+    // confidence source when present; the user's actual question is the
+    // fallback, since it reliably names the subject even when the
+    // narration doesn't (verified: "I need to check his recent match
+    // statistics for that." never names Messi at all — only the
+    // question two turns back does).
+    const name = combined.match(/\bfor\s+([A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){0,2})/)?.[1]
+      ?? extractProperNoun(userQuestion)
+      ?? extractProperNoun(combined);
+    if (name) {
+      // A player question beats a team one when both hint patterns are
+      // present (e.g. "how many goals for Argentina" mentions both
+      // "goals" and a country) — asking about goals/assists is asking
+      // about a person's stat far more often than a team's.
+      if (isPlayer || !isTeam) impliedPlayerStats = name;
+      else impliedTeamForm = name;
+    }
+  }
   return {
     impliedFixturesCall,
-    impliedTeamForm: formMatch ? formMatch[1] : null,
-    impliedPlayerStats: statsMatch ? statsMatch[1] : null,
+    impliedTeamForm,
+    impliedPlayerStats,
     fabricated,
   };
 }
@@ -426,6 +482,14 @@ export default function MatchAIScreen() {
           }
         }
         if (restored.length > 0) {
+          // BUG FIX: resuming a DIFFERENT session while a generation from
+          // the previous one is still streaming used to leave that
+          // generation's live bubble (slot/isGenerating) rendering on top
+          // of the just-restored, unrelated conversation — the in-flight
+          // reply keeps going in the background (it still saves correctly
+          // to ITS OWN session, see mySessionId in send()) but has no
+          // business appearing in THIS view anymore.
+          if (sessionIdRef.current !== resumeId) setSlot(null);
           setEntries(restored);
           sessionIdRef.current = resumeId;
           setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 120);
@@ -611,13 +675,16 @@ export default function MatchAIScreen() {
   // cameras) means more image tokens for the encoder to chew through before
   // the model can say a word. Downscaling to a sane chat-image size cuts
   // that cost without a visible quality loss for "what is this" questions.
-  const IMAGE_MAX_DIM = 896;
+  // Pushed down further from 896 — vision inference is still the slowest
+  // path in the app by a wide margin (100s+ observed), and identifying a
+  // jersey/badge/scoreboard doesn't need much resolution to work.
+  const IMAGE_MAX_DIM = 640;
   const prepareImage = async (uri: string): Promise<string> => {
     try {
       const result = await ImageManipulator.manipulateAsync(
         uri,
         [{ resize: { width: IMAGE_MAX_DIM } }],
-        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG },
+        { compress: 0.6, format: ImageManipulator.SaveFormat.JPEG },
       );
       return result.uri;
     } catch {
@@ -672,12 +739,31 @@ export default function MatchAIScreen() {
     const entryId = `e-${Date.now()}`;
     entryAnimsRef.current[entryId] = { ty: new Animated.Value(24), op: new Animated.Value(0) };
 
+    // BUG FIX: this send() call must keep writing to THE SESSION IT
+    // STARTED IN, even if the user navigates to History and resumes a
+    // DIFFERENT past conversation while this generation is still running
+    // in the background — sessionIdRef.current is a shared mutable ref
+    // that resume's useFocusEffect reassigns, so re-reading it at
+    // completion time (rather than using the value captured here, right
+    // now) could write this reply into whatever OTHER session happens to
+    // be active when the model finally finishes, appending it to the
+    // wrong conversation both on screen and in SQLite.
+    let mySessionId = sessionIdRef.current;
     try {
-      if (!sessionIdRef.current) sessionIdRef.current = createSession('matchai', q);
-      // BUG FIX: the image URI was never persisted here at all — only kept
-      // in React state, so it silently vanished the moment you navigated
-      // away and the screen remounted from stored history instead.
-      addMessage(sessionIdRef.current, 'user', q, image ? { image } : undefined);
+      if (!mySessionId) {
+        // BUG FIX: this used to be createSession() + addMessage() as two
+        // separate statements in one try/catch — if the message insert
+        // failed after the session insert succeeded, the assistant reply
+        // (added later, unconditionally) still attached fine, leaving a
+        // session with an assistant turn but no user turn: it still
+        // showed up in History (has a message) but opened into a chat
+        // with nothing to restore. startChatSession does both in one
+        // transaction, same fix as Predictor's createPredictionSession.
+        mySessionId = startChatSession('matchai', q, q, image ? { image } : undefined);
+        sessionIdRef.current = mySessionId;
+      } else {
+        addMessage(mySessionId, 'user', q, image ? { image } : undefined);
+      }
     } catch {}
 
     // Only the last 4 exchanges go to the model — prompt processing on CPU
@@ -724,7 +810,7 @@ export default function MatchAIScreen() {
       // budget as a football analysis, so capping it tighter buys real
       // speed without cutting a normal answer off mid-thought.
       const genParams = {
-        predict: image ? 350 : thinkingOn ? gp.maxTokens + 500 : gp.maxTokens,
+        predict: image ? 220 : thinkingOn ? gp.maxTokens + 500 : gp.maxTokens,
         temp: gp.temp,
         top_k: gp.top_k,
         top_p: gp.top_p,
@@ -788,8 +874,18 @@ export default function MatchAIScreen() {
         }
       }
 
+      // BUG FIX: Stop only broke out of the streaming loop above — nothing
+      // stopped the pipeline from then reading toolCalls, running the
+      // live network tool-fetch loop, and kicking off an entirely NEW
+      // Pass-2 completion() anyway. Throwing here (rather than a bare
+      // return) routes through the SAME catch block below that already
+      // knows how to clean up a cancelled run correctly — a bare return
+      // would skip that and leave isGenerating/slot stuck forever.
+      if (abortRef.current) throw new InferenceCancelledError(run1.requestId, { text: pass1Answer });
+
       let toolCalls = (await run1.toolCalls) ?? [];
       let finalStats = await run1.stats;
+      if (abortRef.current) throw new InferenceCancelledError(run1.requestId, { text: pass1Answer });
 
       // Recovery path for the leaked-tool-call failure mode (see
       // detectLeakedToolCall) — get_today_fixtures needs no arguments so
@@ -799,7 +895,12 @@ export default function MatchAIScreen() {
       // than the honest fallback.
       let leakCleanedAnswer: string | null = null;
       if (toolCalls.length === 0 && pass1Answer) {
-        const leak = detectLeakedToolCall(pass1Answer, thoughtAcc);
+        // Includes the last couple questions, not just the current one —
+        // verified live: "I need to check his recent match statistics for
+        // that." doesn't name anyone at all; "his" refers to a name the
+        // user gave two messages earlier, not this one.
+        const recentQuestions = [...entries.slice(-2).map(e => e.question), q].join('\n');
+        const leak = detectLeakedToolCall(pass1Answer, thoughtAcc, recentQuestions);
         if (leak.fabricated) {
           // The data itself is invented, not just the syntax — cleaning up
           // the text would still leave a confident answer built on a fake
@@ -821,6 +922,7 @@ export default function MatchAIScreen() {
         const toolHistory = [...history, { role: 'assistant' as const, content: pass1Answer }];
 
         for (const tc of toolCalls) {
+          if (abortRef.current) throw new InferenceCancelledError(run1.requestId, { text: pass1Answer });
           let toolResult = 'No data available.';
           try {
             if (tc.name === 'get_today_fixtures') {
@@ -869,6 +971,7 @@ export default function MatchAIScreen() {
         }
 
         if (!mountedRef.current) return;
+        if (abortRef.current) throw new InferenceCancelledError(run1.requestId, { text: pass1Answer });
         setSlot(s => s ? { ...s, toolStatus: null, answer: '', liveSources: [...new Set(liveSources)], liveData: liveDataAcc } : s);
 
         // ── Pass 2: final answer incorporating tool results ─────────────────
@@ -903,6 +1006,10 @@ export default function MatchAIScreen() {
       } else {
         answerAcc = leakCleanedAnswer ?? pass1Answer;
       }
+      // Applied once here, covering both the pass-2 (real tool result) and
+      // pass-1-fallback paths in one place, right before the answer is
+      // ever stored or shown as final — see stripLeakedDataMarkers above.
+      answerAcc = stripLeakedDataMarkers(answerAcc);
 
       if (mountedRef.current) {
         setSlot(s => s ? { ...s, answer: answerAcc, thought: thoughtAcc, isThinking: false } : s);
@@ -917,8 +1024,9 @@ export default function MatchAIScreen() {
 
       const elapsed = Math.round(totalMs / 100) / 10;
       if (thinkingStarted && !thinkMs) thinkMs = totalMs;
-      if (sessionIdRef.current && answerAcc) {
-        addMessage(sessionIdRef.current, 'assistant', answerAcc, {
+      // mySessionId, not sessionIdRef.current — see the capture above.
+      if (mySessionId && answerAcc) {
+        addMessage(mySessionId, 'assistant', answerAcc, {
           elapsed, toks: finalStats?.generatedTokens,
           thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined,
         });
@@ -927,7 +1035,11 @@ export default function MatchAIScreen() {
       if (mountedRef.current) {
         const finished: Entry = { id: entryId, question: q, image: image ?? undefined, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, liveSources: [...new Set(liveSources)], liveData: liveDataAcc || undefined };
         setSlot(null);
-        setEntries(prev => [...prev, finished]);
+        // Only append to the visible chat if we're still looking at the
+        // conversation this reply actually belongs to — see mySessionId
+        // above. It's already saved to its own session's row regardless,
+        // so switching back to that conversation later still shows it.
+        if (mySessionId === sessionIdRef.current) setEntries(prev => [...prev, finished]);
         setIsGenerating(false);
         setGenStartedAt(null);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -948,7 +1060,15 @@ export default function MatchAIScreen() {
         setTimeout(() => springEntry(entryId), 20);
       }
     }
-  }, [input, isGenerating, modelId, entries, thinkingOn]);
+  // BUG FIX: pendingImage was missing here — send() reads it at the top
+  // (`const image = pendingImage`) but the callback only got recreated
+  // when the other deps changed. Attaching a photo while a vision model
+  // was ALREADY resident (ensureVisionModel returns early, modelId never
+  // changes) meant send's closure still had the OLD pendingImage value —
+  // verified: send a second photo with no typed text right after the
+  // first reply and hit Send immediately, and it silently no-ops because
+  // `image` was stale-null and `q` came back empty.
+  }, [input, isGenerating, modelId, entries, thinkingOn, pendingImage]);
 
   // Fire prefill after send() is memoized with the real modelId
   useEffect(() => {

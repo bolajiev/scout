@@ -23,9 +23,23 @@ class LLMManager {
     if (this.pendingId === model.id && this.pending) {
       return this.pending;
     }
+    // BUG FIX: a DIFFERENT model requested while one is already loading
+    // used to fall through both guards above (pendingId differs, and
+    // qvacId is still null since the first load hasn't resolved yet) and
+    // fire a SECOND native loadModel() concurrently — two loads racing
+    // for the one resident-model slot, with whichever happens to resolve
+    // LAST silently overwriting the other's qvacId/storageId regardless
+    // of which was actually requested more recently. Queue behind the
+    // existing pending load instead of racing it.
+    if (this.pending) {
+      await this.pending.catch(() => {});
+      return this.ensure(model, modelConfig, onProgress);
+    }
     // Different model — unload current first
     if (this.qvacId) {
-      await unloadModel({ modelId: this.qvacId }).catch(() => {});
+      await unloadModel({ modelId: this.qvacId }).catch(err => {
+        console.warn('[modelManager] unload failed, clearing local state anyway — native side may still hold the model resident:', err);
+      });
       this.qvacId = null;
       this.storageId = null;
     }
@@ -83,7 +97,9 @@ class LLMManager {
 
   async release(): Promise<void> {
     if (this.qvacId) {
-      await unloadModel({ modelId: this.qvacId }).catch(() => {});
+      await unloadModel({ modelId: this.qvacId }).catch(err => {
+        console.warn('[modelManager] unload failed, clearing local state anyway — native side may still hold the model resident:', err);
+      });
     }
     this.qvacId = null;
     this.storageId = null;

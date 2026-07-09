@@ -116,8 +116,16 @@ export const fixtureOrder = (f: Fixture): number => {
 export const findClosestMatch = (fixtures: Fixture[]): Fixture | null => {
   if (fixtures.length === 0) return null;
 
+  // BUG FIX: when no World Cup match is in the current fetch window, this
+  // used to fall straight back to ALL fixtures with zero regard for
+  // league prominence — verified live, an Estonian Esiliiga match became
+  // the featured hero card purely because it kicked off soonest, ahead of
+  // any top-5-league match also in the list. Falls back one tier at a
+  // time instead: WC, then any notable competition (leagueRank <= 3),
+  // only reaching truly any-league as the last resort.
   const wc = fixtures.filter(isWorldCup);
-  const pool = wc.length > 0 ? wc : fixtures;
+  const notable = fixtures.filter(f => leagueRank(f.strLeague) <= 3);
+  const pool = wc.length > 0 ? wc : notable.length > 0 ? notable : fixtures;
 
   const now = new Date();
   const nowMins = now.getUTCHours() * 60 + now.getUTCMinutes();
@@ -349,16 +357,34 @@ export const fetchAndCacheFixtures = async (): Promise<{
     // scores/minute when keyed), then TheSportsDB. Dedup by team-pair + date
     // so the same real match never appears twice across sources, plus by
     // idEvent within a source.
+    //
+    // BUG FIX: this used to key on `name.slice(0, 6)` for both teams —
+    // football-data.org supplies short names ("Man United") while
+    // TheSportsDB/Bzzoiro supply full names ("Manchester United"); those
+    // truncate to different 6-char prefixes ("man un" vs "manche") so the
+    // SAME real match slipped past the dedup and showed twice. In the
+    // other direction, unrelated teams sharing a 6-char prefix ("Barcelona"
+    // vs "Barcelona SC", an Ecuadorian club) truncate to the identical key
+    // and would have been wrongly merged into one. A containment check on
+    // the FULL normalized name (with a minimum length so short/common
+    // words can't false-positive) handles the short-vs-full-name case
+    // correctly without introducing the truncation's own false positives.
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const teamsMatch = (a: string, b: string): boolean => {
+      const na = norm(a), nb = norm(b);
+      if (!na || !nb) return false;
+      if (na === nb) return true;
+      return (na.length >= 4 && nb.includes(na)) || (nb.length >= 4 && na.includes(nb));
+    };
+    const isSameFixture = (a: Fixture, b: Fixture): boolean =>
+      (a.dateEvent ?? '') === (b.dateEvent ?? '') && teamsMatch(a.strHomeTeam, b.strHomeTeam) && teamsMatch(a.strAwayTeam, b.strAwayTeam);
+
     const seenId = new Set<string>();
-    const seenMatch = new Set<string>();
-    const matchKey = (f: Fixture) =>
-      `${f.strHomeTeam.toLowerCase().slice(0, 6)}|${f.strAwayTeam.toLowerCase().slice(0, 6)}|${f.dateEvent ?? ''}`;
     const merged: Fixture[] = [];
 
     for (const f of keyedMatches) {
-      if (!seenId.has(f.idEvent) && !seenMatch.has(matchKey(f))) {
+      if (!seenId.has(f.idEvent) && !merged.some(m => isSameFixture(m, f))) {
         seenId.add(f.idEvent);
-        seenMatch.add(matchKey(f));
         merged.push(f);
       }
     }
@@ -376,9 +402,8 @@ export const fetchAndCacheFixtures = async (): Promise<{
         strHomeTeamBadge: e.strHomeTeamBadge ?? null,
         strAwayTeamBadge: e.strAwayTeamBadge ?? null,
       };
-      if (seenMatch.has(matchKey(f))) continue;
+      if (merged.some(m => isSameFixture(m, f))) continue;
       seenId.add(f.idEvent);
-      seenMatch.add(matchKey(f));
       merged.push(f);
     }
 

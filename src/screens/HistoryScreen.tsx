@@ -119,7 +119,18 @@ export default function HistoryScreen() {
       {
         text: 'Delete', style: 'destructive',
         onPress: () => {
-          try { deleteSession(sessionId); } catch {}
+          // BUG FIX: the UI used to update unconditionally regardless of
+          // whether the delete actually succeeded — a failed delete meant
+          // the session vanished from THIS screen but was still in
+          // SQLite, silently reappearing the next time getSessions() ran
+          // (tab switch, app restart) with no indication anything had
+          // gone wrong.
+          try {
+            deleteSession(sessionId);
+          } catch (e) {
+            Alert.alert('Could not delete', 'Something went wrong — please try again.');
+            return;
+          }
           setRefreshTick(t => t + 1);
           setMessages(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
           if (expanded === sessionId) setExpanded(null);

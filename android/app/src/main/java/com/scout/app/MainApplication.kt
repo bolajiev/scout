@@ -2,6 +2,7 @@ package com.scout.app
 
 import android.app.Application
 import android.content.res.Configuration
+import androidx.appcompat.app.AppCompatDelegate
 
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
@@ -40,6 +41,16 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    // Scout has no light theme (getTheme() in JS always returns darkTheme),
+    // but the app's Configuration.uiMode still followed the DEVICE's own
+    // system-wide dark/light setting — which some IMEs (on-screen
+    // keyboards) read independently of this app's own AppCompat theme to
+    // decide their OWN color scheme. On a phone set to system light mode,
+    // that meant a light-themed keyboard popping up over an otherwise
+    // all-dark app, reading as a "white page" flash whenever typing
+    // started. Forcing night mode here (not just in styles.xml) is the
+    // one API that actually overrides Configuration.uiMode app-wide.
+    AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
     DefaultNewArchitectureEntryPoint.releaseLevel = try {
       ReleaseLevel.valueOf(BuildConfig.REACT_NATIVE_RELEASE_LEVEL.uppercase())
     } catch (e: IllegalArgumentException) {

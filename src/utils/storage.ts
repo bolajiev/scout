@@ -335,7 +335,11 @@ export async function clearAllData(): Promise<void> {
     const { getDb } = require('./historyDb') as typeof import('./historyDb');
     const db = getDb();
     db.withTransactionSync(() => {
-      db.execSync('DELETE FROM messages; DELETE FROM sessions; DELETE FROM fixtures;');
+      // BUG FIX: predictions was never included here — "Clear All Data"
+      // claims to remove "all history" (and the README/Privacy section
+      // claims "every SQLite table"), but the W/L track record lived in
+      // its own separate table and silently survived a full wipe.
+      db.execSync('DELETE FROM messages; DELETE FROM sessions; DELETE FROM fixtures; DELETE FROM predictions;');
     });
   } catch (e) {
     console.warn('[storage] SQLite clear failed:', e);

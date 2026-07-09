@@ -26,7 +26,7 @@ import { syncModelsFromDisk, getGenParams, getDefaultModelId, getActiveFdKey, ge
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, teamAbbr, todayISO, type Fixture } from '../utils/fixtures';
 import { splitChannelThinking } from '../utils/thinkingSplit';
-import { createSession, addMessage, addPrediction } from '../utils/historyDb';
+import { createPredictionSession, addPrediction } from '../utils/historyDb';
 import { settlePendingPredictions, getPredictionRecord } from '../utils/predictionTracker';
 import { fetchBothTeamForms, fetchBothSquads, formatFormContext, type TeamForm } from '../utils/teamStats';
 import { fetchBothTopRatedPlayers, type RatedPlayer } from '../utils/bzzoiro';
@@ -170,6 +170,17 @@ export default function PredictorScreen() {
   // so route.params changing is the only signal a new tap happened).
   const applyHandoff = (fixtureId: string | null | undefined) => {
     if (!fixtureId || fixtureId === lastHandoffRef.current) return;
+    // BUG FIX: switching to a different fixture (tapping a match card
+    // elsewhere while a prediction is still streaming for the current
+    // one) used to yank the on-screen teams/badges to the new fixture
+    // immediately — then, when the OLD generation finished, it still
+    // navigated to PredictionResult with the OLD (now off-screen) team
+    // names, landing the user on a result page for a match they'd
+    // already moved away from. Deliberately not marking fixtureId as
+    // handled here (lastHandoffRef stays put) — if it's still the
+    // intended target once generation ends, tapping it again picks it
+    // up normally instead of ever silently dropping it.
+    if (isGenerating) return;
     const f = allFixturesRef.current.find(x => x.idEvent === fixtureId);
     if (!f) return;
     lastHandoffRef.current = fixtureId;
@@ -571,15 +582,15 @@ export default function PredictorScreen() {
       const totalMs = Date.now() - genStart;
       logInference('predictor', modelNameRef.current, stats?.timeToFirstToken ?? 0, totalMs, stats?.generatedTokens ?? 0).catch(() => {});
 
-      // Save prediction to SQLite history
+      // Save prediction to SQLite history — session + both messages in one
+      // transaction now (see createPredictionSession), so a save failure
+      // can't leave an orphaned title-only session with no content behind.
       if (streamed) {
         try {
-          const sessionId = createSession('predictor', `${teamA} vs ${teamB}`);
           const historyPrompt = context.trim()
             ? `${teamA} vs ${teamB}\n\nContext: ${context.trim()}`
             : `${teamA} vs ${teamB}`;
-          addMessage(sessionId, 'user', historyPrompt);
-          addMessage(sessionId, 'assistant', streamed);
+          createPredictionSession(`${teamA} vs ${teamB}`, historyPrompt, streamed);
         } catch {}
       }
 
@@ -588,12 +599,17 @@ export default function PredictorScreen() {
         setElapsed(secs);
         const p = parsePrediction(streamed);
         setParsed(p);
-        // Record the call for the accountability track record
+        // Record the call for the accountability track record — a failure
+        // here means this prediction can never be graded (permanently
+        // missing from the W/L record with no way to know), so at least
+        // surface it instead of swallowing it silently.
         if (p.winner) {
           try {
             addPrediction(teamA.trim(), teamB.trim(), p.winner, p.score, p.confidence);
             setRecord(getPredictionRecord());
-          } catch {}
+          } catch (e) {
+            console.warn('[Predictor] addPrediction failed — this call will never be graded:', e);
+          }
         }
         setIsGenerating(false);
         setPrediction('');
@@ -743,6 +759,7 @@ export default function PredictorScreen() {
                   value={teamA}
                   onChangeText={t => { setTeamA(t); setParsed(null); }}
                   returnKeyType="next"
+                  editable={!isGenerating}
                 />
               </View>
               <Text style={[styles.vsChip, { color: theme.textTertiary }]}>VS</Text>
@@ -755,6 +772,7 @@ export default function PredictorScreen() {
                   value={teamB}
                   onChangeText={t => { setTeamB(t); setParsed(null); }}
                   returnKeyType="done"
+                  editable={!isGenerating}
                 />
               </View>
             </View>
