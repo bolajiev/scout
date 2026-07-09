@@ -13,6 +13,7 @@ import { IconSettings, IconModels, IconClock } from '../components/Icons';
 import { TAB_BAR_HEIGHT } from '../components/TabBar';
 import { HalfwayDivider } from '../components/PitchLines';
 import TeamBadge from '../components/TeamBadge';
+import LiveDot from '../components/LiveDot';
 
 const STADIUM = require('../../assets/stadium.jpg');
 const BALL = require('../../assets/ball.png');
@@ -324,7 +325,7 @@ export default function HomeScreen() {
                 </Text>
                 {isLive(hero) ? (
                   <View style={[styles.livePill, { backgroundColor: theme.live }]}>
-                    <View style={styles.livePillDot} />
+                    <LiveDot color="#fff" size={6} />
                     <Text style={styles.livePillText}>{hero.minute ? `${hero.minute}'` : 'LIVE'}</Text>
                   </View>
                 ) : !isFinished(hero) ? (
@@ -435,9 +436,12 @@ export default function HomeScreen() {
                           {isFinished(f) ? (
                             <Text style={[styles.fixStatus, { color: theme.textSecondary }]}>FT</Text>
                           ) : isLive(f) ? (
-                            <Text style={[styles.fixStatus, { color: theme.live }]}>
-                              {f.minute ? `${f.minute}'` : 'LIVE'}
-                            </Text>
+                            <View style={styles.fixLiveRow}>
+                              <LiveDot color={theme.live} size={5} />
+                              <Text style={[styles.fixStatus, { color: theme.live }]}>
+                                {f.minute ? `${f.minute}'` : 'LIVE'}
+                              </Text>
+                            </View>
                           ) : null}
                         </>
                       ) : (
@@ -536,7 +540,6 @@ const styles = StyleSheet.create({
   heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
   heroEyebrow: { flex: 1, fontSize: 10, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 1.2 },
   livePill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 4 },
-  livePillDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
   livePillText: { fontSize: 10.5, fontFamily: fonts.mono, fontWeight: '800', color: '#fff', letterSpacing: 0.3 },
   nextPill: { borderRadius: 999, borderWidth: 1, paddingHorizontal: 9, paddingVertical: 4 },
   nextPillText: { fontSize: 9.5, fontFamily: fonts.mono, fontWeight: '800', letterSpacing: 0.5 },
@@ -567,6 +570,7 @@ const styles = StyleSheet.create({
   fixKick: { fontSize: 13, fontFamily: fonts.displayBold, fontVariant: ['tabular-nums'] },
   fixScore: { fontSize: 15, fontFamily: fonts.displayExtraBold, fontVariant: ['tabular-nums'] },
   fixStatus: { fontSize: 9, fontFamily: fonts.bodySemiBold, letterSpacing: 0.8, marginTop: 1 },
+  fixLiveRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
 
   // Empty state
   empty: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32, gap: 6 },

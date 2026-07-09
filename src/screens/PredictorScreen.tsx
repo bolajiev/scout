@@ -22,7 +22,7 @@ import { TAB_BAR_HEIGHT } from '../components/TabBar';
 import TeamBadge from '../components/TeamBadge';
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable } from '../utils/models';
-import { syncModelsFromDisk, getGenParams, getDefaultModelId, getActiveFdKey, getActiveBzKey } from '../utils/storage';
+import { syncModelsFromDisk, getGenParams, getDefaultModelId, setDefaultModelId, getActiveFdKey, getActiveBzKey } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, teamAbbr, todayISO, type Fixture } from '../utils/fixtures';
 import { splitChannelThinking } from '../utils/thinkingSplit';
@@ -249,17 +249,11 @@ export default function PredictorScreen() {
   }, [teamA, teamB]);
 
 
-  useEffect(() => {
-    if (isGenerating) {
-      Animated.loop(Animated.sequence([
-        Animated.timing(pulsAnim, { toValue: 0.55, duration: 600, useNativeDriver: true }),
-        Animated.timing(pulsAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-      ])).start();
-    } else {
-      pulsAnim.stopAnimation();
-      pulsAnim.setValue(1);
-    }
-  }, [isGenerating]);
+  // BUG FIX: this used to pulse continuously the whole time isGenerating
+  // was true — but that's also the entire time the button reads "Stop",
+  // so a long prediction meant the Stop button itself sat there blinking
+  // for the whole wait, distracting during exactly the moment someone's
+  // staring at the screen the most. No longer pulses at all.
 
   // Reveal animation when streaming finishes
   useEffect(() => {
@@ -345,11 +339,33 @@ export default function PredictorScreen() {
 
   const loadModel = async () => {
     const synced = await syncModelsFromDisk();
-    const model = pickTextCapable(synced, await getDefaultModelId(), llmManager.getLoadedModelId());
+    const defaultId = await getDefaultModelId();
+    // BUG FIX: this used to always silently auto-pick — a user with
+    // several downloaded models never got asked which one they actually
+    // wanted. Ask up front, once, the first time there's a real choice
+    // and no preference has ever been recorded — not on every tab visit
+    // (the already-loaded-model check keeps it from interrupting a switch
+    // between Coach/Predictor once something's resident).
+    const textModels = synced.filter(m => m.modelType === 'text');
+    if (textModels.length > 1 && !defaultId && !llmManager.getLoadedModelId()) {
+      setPickableModels(textModels);
+      setModelPickerOpen(true);
+      return;
+    }
+    const model = pickTextCapable(synced, defaultId, llmManager.getLoadedModelId());
     if (!model) {
       if (mountedRef.current) setNoModel(true);
       return;
     }
+    await loadSpecificModel(model);
+  };
+
+  // Picking from the modal (proactive first-load prompt or a manual
+  // re-pick) sets that choice as the ongoing default too — otherwise the
+  // silent auto-pick path above would go right back to asking, or worse,
+  // silently reverting to whatever pickTextCapable's own fallback prefers.
+  const selectModel = async (model: import('../types').DownloadedModel) => {
+    await setDefaultModelId(model.id).catch(() => {});
     await loadSpecificModel(model);
   };
 
@@ -473,7 +489,19 @@ export default function PredictorScreen() {
         stream: true,
         captureThinking: false,
         generationParams: {
-          predict: 380,
+          // BUG FIX: this was a flat 380 regardless of the user's actual
+          // response-length setting (gp.maxTokens, fetched above and then
+          // silently discarded) — 8 structured fields (WINNER/SCORE/
+          // CONFIDENCE/HOME WIN/DRAW/AWAY WIN/KEY HOME/KEY AWAY) plus a
+          // real analysis paragraph all competing for the same 380 tokens
+          // left very little room before getting cut off mid-sentence,
+          // and "Detailed" mode (1536) got zero benefit from its own
+          // setting. Floored at 380 (short mode's existing behavior), but
+          // capped at 700 rather than letting Detailed's full 1536 through
+          // unchanged — ctx_size here is only 2048, and system prompt +
+          // form/rating/squad context already eats a real chunk of that;
+          // 1536 alone would risk overflowing the window on top of it.
+          predict: Math.min(Math.max(gp.maxTokens, 380), 700),
           temp: gp.temp,
           top_k: gp.top_k,
           top_p: gp.top_p,
@@ -538,17 +566,27 @@ export default function PredictorScreen() {
         setElapsed(secs);
         const p = parsePrediction(streamed);
         setParsed(p);
+        // BUG FIX: same dead-end already fixed in Coach — a model can burn
+        // its entire token budget on hidden reasoning (reasoning_budget: 0
+        // doesn't guarantee compliance) and leave nothing real behind.
+        // This used to navigate to PredictionResult unconditionally, a
+        // completely blank verdict card with zero explanation. Show an
+        // honest retry prompt on THIS screen instead of a broken page.
+        if (!p.winner) {
+          setIsGenerating(false);
+          setPrediction('');
+          setPredictError("Didn't get a usable prediction — try again.");
+          return;
+        }
         // Record the call for the accountability track record — a failure
         // here means this prediction can never be graded (permanently
         // missing from the W/L record with no way to know), so at least
         // surface it instead of swallowing it silently.
-        if (p.winner) {
-          try {
-            addPrediction(teamA.trim(), teamB.trim(), p.winner, p.score, p.confidence);
-            setRecord(getPredictionRecord());
-          } catch (e) {
-            console.warn('[Predictor] addPrediction failed — this call will never be graded:', e);
-          }
+        try {
+          addPrediction(teamA.trim(), teamB.trim(), p.winner, p.score, p.confidence);
+          setRecord(getPredictionRecord());
+        } catch (e) {
+          console.warn('[Predictor] addPrediction failed — this call will never be graded:', e);
         }
         setIsGenerating(false);
         setPrediction('');
@@ -566,6 +604,7 @@ export default function PredictorScreen() {
           // model phrases its reasoning around it.
           homeRating: ratedA?.rating ?? null, awayRating: ratedB?.rating ?? null,
           elapsed: secs,
+          device: stats?.backendDevice,
         });
       }
     } catch (err) {
@@ -592,7 +631,19 @@ export default function PredictorScreen() {
 
   // Only recomputed when the streamed text actually grows — a re-render
   // triggered by anything else (e.g. the pulse animation) reuses this
-  const live = useMemo(() => parsePrediction(prediction), [prediction]);
+  // BUG FIX: parsing the raw in-progress tail line caused fields to
+  // visibly flicker — e.g. "KEY AWAY" streams in before its colon/value
+  // does, doesn't match a structured field yet so it briefly leaked into
+  // the live analysis text, then vanished the instant the value completed
+  // and it got recognized as a real field. Only complete, newline-
+  // terminated lines get parsed while still streaming; the line actively
+  // being typed just isn't shown yet until it's finished.
+  const live = useMemo(() => {
+    const safeText = isGenerating && !prediction.endsWith('\n')
+      ? prediction.slice(0, prediction.lastIndexOf('\n') + 1)
+      : prediction;
+    return parsePrediction(safeText);
+  }, [prediction, isGenerating]);
 
   const accent = theme.accent;
 
@@ -641,7 +692,7 @@ export default function PredictorScreen() {
         visible={modelPickerOpen}
         models={pickableModels}
         currentModelId={modelId}
-        onSelect={loadSpecificModel}
+        onSelect={selectModel}
         onClose={() => setModelPickerOpen(false)}
       />
 

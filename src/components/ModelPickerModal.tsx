@@ -32,7 +32,11 @@ export default function ModelPickerModal({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={[styles.sheet, { backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
+          <View style={[styles.grabber, { backgroundColor: theme.border }]} />
           <Text style={[styles.title, { color: theme.text }]}>Choose a model</Text>
+          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
+            This becomes your default until you change it here or in Settings.
+          </Text>
           <FlatList
             data={models}
             keyExtractor={m => m.id}
@@ -65,7 +69,9 @@ export default function ModelPickerModal({
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, borderWidth: 1, borderBottomWidth: 0, padding: 16, paddingBottom: 28 },
-  title: { fontSize: 15, fontFamily: fonts.displayExtraBold, marginBottom: 10 },
+  grabber: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 14 },
+  title: { fontSize: 15, fontFamily: fonts.displayExtraBold, marginBottom: 4 },
+  subtitle: { fontSize: 12, fontFamily: fonts.bodyMedium, lineHeight: 17, marginBottom: 14 },
   row: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingVertical: 13, borderTopWidth: 1,

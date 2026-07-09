@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Image, Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { getTheme } from '../theme';
@@ -106,6 +106,13 @@ export default function MatchDetailScreen() {
   }
 
   const predictThisMatch = () => navigation.navigate('Predictor', { fixtureId: fixture.idEvent });
+  // Reuses the prefill mechanism MatchAIScreen already reads from route
+  // params (route.params?.prefill, fired once the model's loaded) — no new
+  // plumbing needed, just a real cross-feature entry point into it.
+  const askCoach = () => navigation.navigate('MainTabs', {
+    screen: 'MatchAI',
+    params: { prefill: `Tell me about ${fixture.strHomeTeam} vs ${fixture.strAwayTeam} — recent form, and what to watch for.` },
+  });
 
   // Won/draws/won tally from TODAY's home team's perspective — each h2h
   // match is an old fixture where either side could have been "home", so
@@ -164,7 +171,7 @@ export default function MatchDetailScreen() {
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
       <ScreenHeader title={`${fixture.strHomeTeam} vs ${fixture.strAwayTeam}`} subtitle={fixture.strLeague} />
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 100 }]} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 155 }]} showsVerticalScrollIndicator={false}>
 
         {/* Hero — soft pitch photo behind the card only (not full-bleed like
             Home's stadium backdrop), muted under a tinted scrim so team
@@ -195,12 +202,13 @@ export default function MatchDetailScreen() {
               <Text style={[styles.heroTeamName, { color: theme.text }]} numberOfLines={1}>{fixture.strAwayTeam}</Text>
             </View>
           </View>
-          {(eventExtra?.roundName || eventExtra?.venueName || eventExtra?.weather) && (
+          {(eventExtra?.roundName || eventExtra?.venueName || eventExtra?.weather || eventExtra?.attendance) && (
             <Text style={[styles.heroMeta, { color: theme.textTertiary }]} numberOfLines={1}>
               {[
                 eventExtra?.roundName,
                 eventExtra?.venueName ? (eventExtra.venueCity ? `${eventExtra.venueName}, ${eventExtra.venueCity}` : eventExtra.venueName) : null,
                 eventExtra?.weather ? `${weatherEmoji(eventExtra.weather.description)} ${eventExtra.weather.temperatureC != null ? `${Math.round(eventExtra.weather.temperatureC)}°C` : eventExtra.weather.description}` : null,
+                eventExtra?.attendance ? `👥 ${eventExtra.attendance.toLocaleString()}` : null,
               ].filter(Boolean).join(' · ')}
             </Text>
           )}
@@ -216,48 +224,56 @@ export default function MatchDetailScreen() {
               <FormRow form={formB} teamName={fixture.strAwayTeam} />
             </View>
 
-            {/* Head to head */}
-            <Text style={[styles.sectionLabel, { color: theme.textTertiary }]}>HEAD-TO-HEAD</Text>
-            <View style={[styles.sectionCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-              {h2hSummary && (
-                <View style={styles.h2hSummary}>
-                  <View style={styles.h2hSummaryRow}>
-                    <View style={styles.h2hSummaryCol}>
-                      <Text style={[styles.h2hSummaryCount, { color: accent }]}>{h2hSummary.homeWins}</Text>
-                      <Text style={[styles.h2hSummaryLabel, { color: theme.textTertiary }]} numberOfLines={1}>{fixture.strHomeTeam} won</Text>
+            {/* Head to head — hidden entirely when there's nothing real to
+                show, rather than a card just to say "not available"/"no
+                meetings found". International fixtures between two given
+                teams can legitimately be years apart or missing from the
+                data source entirely (verified live: Bzzoiro's own France
+                record has no 2022 World Cup semifinal vs Morocco at all,
+                despite carrying other real matches back to 2014) — that's
+                a genuine gap in the underlying data, not something to
+                paper over with an empty card. */}
+            {h2h && h2h.length > 0 && (
+              <>
+                <Text style={[styles.sectionLabel, { color: theme.textTertiary }]}>HEAD-TO-HEAD</Text>
+                <View style={[styles.sectionCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                  {h2hSummary && (
+                    <View style={styles.h2hSummary}>
+                      <View style={styles.h2hSummaryRow}>
+                        <View style={styles.h2hSummaryCol}>
+                          <Text style={[styles.h2hSummaryCount, { color: accent }]}>{h2hSummary.homeWins}</Text>
+                          <Text style={[styles.h2hSummaryLabel, { color: theme.textTertiary }]} numberOfLines={1}>{fixture.strHomeTeam} won</Text>
+                        </View>
+                        <View style={styles.h2hSummaryCol}>
+                          <Text style={[styles.h2hSummaryCount, { color: theme.textSecondary }]}>{h2hSummary.draws}</Text>
+                          <Text style={[styles.h2hSummaryLabel, { color: theme.textTertiary }]}>Draws</Text>
+                        </View>
+                        <View style={styles.h2hSummaryCol}>
+                          <Text style={[styles.h2hSummaryCount, { color: theme.error }]}>{h2hSummary.awayWins}</Text>
+                          <Text style={[styles.h2hSummaryLabel, { color: theme.textTertiary }]} numberOfLines={1}>{fixture.strAwayTeam} won</Text>
+                        </View>
+                      </View>
+                      <View style={[styles.h2hSummaryBar, { backgroundColor: theme.border }]}>
+                        <View style={{ flex: h2hSummary.homeWins, backgroundColor: accent }} />
+                        <View style={{ flex: h2hSummary.draws, backgroundColor: theme.textTertiary }} />
+                        <View style={{ flex: h2hSummary.awayWins, backgroundColor: theme.error }} />
+                      </View>
+                      <View style={[styles.divider, { backgroundColor: theme.border }]} />
                     </View>
-                    <View style={styles.h2hSummaryCol}>
-                      <Text style={[styles.h2hSummaryCount, { color: theme.textSecondary }]}>{h2hSummary.draws}</Text>
-                      <Text style={[styles.h2hSummaryLabel, { color: theme.textTertiary }]}>Draws</Text>
+                  )}
+                  {h2h.map((m, i) => (
+                    <View key={i} style={[styles.h2hRow, i > 0 ? { borderTopWidth: 1, borderTopColor: theme.border } : null]}>
+                      <Text style={[styles.h2hDate, { color: theme.textTertiary }]} numberOfLines={1}>
+                        {m.date}{m.league ? ` · ${m.league}` : ''}
+                      </Text>
+                      <Text style={[styles.h2hScore, { color: theme.text }]} numberOfLines={1}>
+                        {m.homeTeam} <Text style={{ fontFamily: fonts.mono, color: accent }}>{m.homeScore}-{m.awayScore}</Text> {m.awayTeam}
+                      </Text>
                     </View>
-                    <View style={styles.h2hSummaryCol}>
-                      <Text style={[styles.h2hSummaryCount, { color: theme.error }]}>{h2hSummary.awayWins}</Text>
-                      <Text style={[styles.h2hSummaryLabel, { color: theme.textTertiary }]} numberOfLines={1}>{fixture.strAwayTeam} won</Text>
-                    </View>
-                  </View>
-                  <View style={[styles.h2hSummaryBar, { backgroundColor: theme.border }]}>
-                    <View style={{ flex: h2hSummary.homeWins, backgroundColor: accent }} />
-                    <View style={{ flex: h2hSummary.draws, backgroundColor: theme.textTertiary }} />
-                    <View style={{ flex: h2hSummary.awayWins, backgroundColor: theme.error }} />
-                  </View>
-                  <View style={[styles.divider, { backgroundColor: theme.border }]} />
+                  ))}
                 </View>
-              )}
-              {!h2h ? (
-                <Text style={[styles.emptyText, { color: theme.textTertiary }]}>Not available for this match.</Text>
-              ) : h2h.length === 0 ? (
-                <Text style={[styles.emptyText, { color: theme.textTertiary }]}>No recent meetings found.</Text>
-              ) : (
-                h2h.map((m, i) => (
-                  <View key={i} style={[styles.h2hRow, i > 0 ? { borderTopWidth: 1, borderTopColor: theme.border } : null]}>
-                    <Text style={[styles.h2hDate, { color: theme.textTertiary }]}>{m.date}</Text>
-                    <Text style={[styles.h2hScore, { color: theme.text }]} numberOfLines={1}>
-                      {m.homeTeam} <Text style={{ fontFamily: fonts.mono, color: accent }}>{m.homeScore}-{m.awayScore}</Text> {m.awayTeam}
-                    </Text>
-                  </View>
-                ))
-              )}
-            </View>
+              </>
+            )}
 
             {/* Lineups — honest about predicted vs confirmed, since Bzzoiro
                 serves AI-guessed probable XIs days ahead of a real team sheet */}
@@ -280,6 +296,36 @@ export default function MatchDetailScreen() {
                 </View>
               </>
             )}
+
+            {/* Highlights — only ever present for finished matches, real
+                YouTube links (verified live). */}
+            {eventExtra?.highlights && eventExtra.highlights.length > 0 && (
+              <>
+                <Text style={[styles.sectionLabel, { color: theme.textTertiary }]}>HIGHLIGHTS</Text>
+                <View style={[styles.sectionCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                  {eventExtra.highlights.map((h, i) => (
+                    <TouchableOpacity
+                      key={i}
+                      style={[styles.highlightRow, i > 0 ? { borderTopWidth: 1, borderTopColor: theme.border } : null]}
+                      onPress={() => Linking.openURL(h.url).catch(() => {})}
+                      activeOpacity={0.7}
+                    >
+                      {h.thumbnail ? (
+                        <Image source={{ uri: h.thumbnail }} style={styles.highlightThumb} resizeMode="cover" />
+                      ) : (
+                        <View style={[styles.highlightThumb, { backgroundColor: theme.cardAlt }]} />
+                      )}
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.highlightTitle, { color: theme.text }]} numberOfLines={2}>{h.title}</Text>
+                        <Text style={[styles.highlightKind, { color: accent }]}>
+                          {h.kind === 'full' ? 'FULL HIGHLIGHTS' : 'CLIP'} ▶
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
           </>
         )}
 
@@ -287,6 +333,9 @@ export default function MatchDetailScreen() {
       </ScrollView>
 
       <View style={[styles.ctaWrap, { backgroundColor: theme.background, paddingBottom: Math.max(insets.bottom, 14) }]}>
+        <TouchableOpacity style={[styles.ctaBtnGhost, { borderColor: theme.border }]} onPress={askCoach} activeOpacity={0.75}>
+          <Text style={[styles.ctaBtnGhostText, { color: theme.text }]}>Ask Coach about this match</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={[styles.ctaBtn, { backgroundColor: accent }]} onPress={predictThisMatch} activeOpacity={0.85}>
           <Text style={[styles.ctaBtnText, { color: theme.accentFg }]}>Predict This Match →</Text>
         </TouchableOpacity>
@@ -342,7 +391,14 @@ const styles = StyleSheet.create({
   lineupFormation: { fontSize: 11, fontFamily: fonts.mono, fontWeight: '700', marginBottom: 6 },
   lineupPlayer: { fontSize: 12, fontFamily: fonts.bodyMedium, lineHeight: 18 },
 
-  ctaWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingTop: 10, paddingHorizontal: 16 },
+  highlightRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
+  highlightThumb: { width: 72, height: 44, borderRadius: 8 },
+  highlightTitle: { fontSize: 12.5, fontFamily: fonts.bodySemiBold, lineHeight: 17 },
+  highlightKind: { fontSize: 9.5, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 0.4, marginTop: 4 },
+
+  ctaWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingTop: 10, paddingHorizontal: 16, gap: 10 },
   ctaBtn: { borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
   ctaBtnText: { fontSize: 15, fontFamily: fonts.displayExtraBold },
+  ctaBtnGhost: { borderRadius: 16, paddingVertical: 14, alignItems: 'center', borderWidth: 1 },
+  ctaBtnGhostText: { fontSize: 14, fontFamily: fonts.bodySemiBold },
 });

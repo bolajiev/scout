@@ -23,13 +23,13 @@ import ModelPickerModal from '../components/ModelPickerModal';
 import PhotoSourceSheet from '../components/PhotoSourceSheet';
 import { llmManager } from '../utils/modelManager';
 import { pickTextCapable, pickVisionCapable } from '../utils/models';
-import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId, getActiveBzKey, toPath } from '../utils/storage';
+import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId, setDefaultModelId, getActiveBzKey, toPath } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { startChatSession, addMessage, getMessages } from '../utils/historyDb';
-import { formatFixtureContext, fetchTeamForm } from '../utils/teamStats';
-import { fetchBzTeamForm, fetchPlayerStats, formatPlayerStatsContext } from '../utils/bzzoiro';
+import { formatFixtureContext } from '../utils/teamStats';
+import { fetchBzTeamForm, fetchPlayerStats, formatPlayerStatsContext, fetchBzMatches } from '../utils/bzzoiro';
 import { splitChannelThinking } from '../utils/thinkingSplit';
-import { fetchAndCacheFixtures } from '../utils/fixtures';
+import { getCachedFixturesNow, todayISO } from '../utils/fixtures';
 import { logInference } from '../utils/auditLogger';
 
 
@@ -124,10 +124,18 @@ const SCOUT_TOOLS: Tool[] = [
 // rather than trusting auto-detect, is the real fix — not another prompt
 // tweak or leak-regex, since this isn't narrated text, it's the model's
 // genuine native tool-call syntax slipping through unparsed.
+// BUG FIX: MedPsy used to fall through to "let the SDK auto-detect" —
+// verified against the SDK's own actual detection source
+// (dist/server/utils/tools/dialect.js, detectToolDialectFromName): it
+// pattern-matches the registry filename against qwen3.5/3.6, gemma-4,
+// gpt-oss, and lfm specifically, defaulting to "hermes" for anything that
+// doesn't match — which is every model Scout ships except Gemma. Made
+// explicit for MedPsy too rather than leaving its correctness resting on
+// an implicit fallback nobody had actually verified until now.
 function toolDialectForModelName(name: string): ToolDialect | undefined {
   if (/gemma/i.test(name)) return 'gemma4';
-  if (/qwen/i.test(name)) return 'hermes';
-  return undefined; // let the SDK auto-detect for anything else (e.g. MedPsy)
+  if (/qwen|medpsy/i.test(name)) return 'hermes';
+  return undefined;
 }
 
 // Small/quantized on-device models sometimes narrate the tool-calling
@@ -170,6 +178,26 @@ function parseGemmaRawToolCall(text: string): { name: string; arguments: Record<
     args[key.trim()] = value;
   }
   return { name: m[1], arguments: args };
+}
+
+// Same backstop, for the OTHER dialect Scout actually ships models in —
+// Qwen and MedPsy both resolve to "hermes" (see toolDialectForModelName
+// above), whose raw shape is a JSON payload wrapped in a tag:
+// "<tool_call>\n{\"name\": \"get_team_form\", \"arguments\": {...}}\n</tool_call>"
+// The Gemma backstop only matches gemma4's own distinct call:NAME{...}
+// syntax, so a hermes-dialect leak would have slipped past it entirely —
+// this was a real gap, not just Gemma-specific insurance.
+const HERMES_RAW_TOOL_CALL_RE = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/i;
+function parseHermesRawToolCall(text: string): { name: string; arguments: Record<string, any> } | null {
+  const m = text.match(HERMES_RAW_TOOL_CALL_RE);
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(m[1]);
+    if (parsed && typeof parsed.name === 'string') {
+      return { name: parsed.name, arguments: parsed.arguments ?? {} };
+    }
+  } catch { /* malformed JSON in the leaked tag — nothing safe to recover */ }
+  return null;
 }
 
 // Verified live (Think mode): the model's own reasoning explicitly stated
@@ -355,6 +383,7 @@ interface Entry {
   thinkingMs?: number;
   elapsed?: number;
   toks?: number;
+  device?: 'cpu' | 'gpu';  // which backend actually ran this — real, on-device inference proof
   liveSources?: string[];  // deduped source names, e.g. ['TheSportsDB', 'Bzzoiro Sports']
   liveData?: string;  // the raw tool result the model actually saw — user-visible on demand
 }
@@ -617,11 +646,36 @@ export default function MatchAIScreen() {
   // multiple text models are downloaded (see rightSlot's onLoad override).
   const loadModel = async () => {
     const synced = await syncModelsFromDisk();
-    const model = pickTextCapable(synced, await getDefaultModelId(), llmManager.getLoadedModelId());
+    const defaultId = await getDefaultModelId();
+    // BUG FIX: this used to always silently auto-pick — a user with
+    // several downloaded models never got asked which one they actually
+    // wanted; they'd only discover the choice existed at all by noticing
+    // the "wrong" one had loaded and manually hitting Load Model/Try
+    // Again. Ask up front, once, the first time there's a real choice and
+    // no preference has ever been recorded — not on every tab visit (the
+    // already-loaded-model check keeps it from interrupting a switch
+    // between Coach/Predictor once something's resident).
+    const textModels = synced.filter(m => m.modelType === 'text');
+    if (textModels.length > 1 && !defaultId && !llmManager.getLoadedModelId()) {
+      setPickableModels(textModels);
+      setModelPickerOpen(true);
+      return;
+    }
+    const model = pickTextCapable(synced, defaultId, llmManager.getLoadedModelId());
     if (!model) {
       if (mountedRef.current) setNoModel(true);
       return;
     }
+    await loadSpecificModel(model);
+  };
+
+  // Picking from the modal (either the proactive first-load prompt above
+  // or a manual "Load Model" re-pick) sets that choice as the ongoing
+  // default too — otherwise every single future load (including the
+  // silent auto-pick path above) would go right back to asking, or worse,
+  // silently reverting to whatever pickTextCapable's own fallback prefers.
+  const selectModel = async (model: import('../types').DownloadedModel) => {
+    await setDefaultModelId(model.id).catch(() => {});
     await loadSpecificModel(model);
   };
 
@@ -998,12 +1052,14 @@ export default function MatchAIScreen() {
       // supposed to rule out.
       if (toolsActiveThisTurn && toolCalls.length === 0 && pass1Answer) {
         // Highest-priority recovery: this is the model's REAL, structured
-        // tool-call attempt (Gemma's raw dialect tokens), not a
-        // hallucination or narration — trust its name/arguments directly
-        // rather than falling through to the fuzzier narration-based
-        // recovery below. Only acted on if the name matches a real tool,
-        // so unrelated bracket-ish text can't misfire this.
-        const rawCall = parseGemmaRawToolCall(pass1Answer);
+        // tool-call attempt (raw dialect tokens), not a hallucination or
+        // narration — trust its name/arguments directly rather than
+        // falling through to the fuzzier narration-based recovery below.
+        // Tries both dialects Scout actually loads models in — Gemma's
+        // call:NAME{...} shape and hermes's <tool_call>{...}</tool_call>
+        // JSON shape (Qwen/MedPsy) — only acted on if the name matches a
+        // real tool, so unrelated bracket/tag-ish text can't misfire this.
+        const rawCall = parseGemmaRawToolCall(pass1Answer) ?? parseHermesRawToolCall(pass1Answer);
         if (rawCall && SCOUT_TOOLS.some(t => t.name === rawCall.name)) {
           toolCalls = [{ name: rawCall.name, arguments: rawCall.arguments } as any];
         }
@@ -1041,36 +1097,49 @@ export default function MatchAIScreen() {
           try {
             if (tc.name === 'get_today_fixtures') {
               setSlot(s => s ? { ...s, toolStatus: "Checking today's fixtures..." } : s);
-              const { fixtures } = await fetchAndCacheFixtures();
+              // BUG FIX: this used to always run a full fetchAndCacheFixtures()
+              // — a live Bzzoiro call PLUS 4 separate TheSportsDB HTTP calls —
+              // on every single fixtures question, even when the Matches tab
+              // had already fetched (and cached) the exact same data moments
+              // earlier. Verified live: one of these calls alone took 238.6s.
+              // Reads the cache first (instant); only reaches for a live call
+              // — Bzzoiro only, no TheSportsDB — when nothing's cached yet.
+              let fixtures = getCachedFixturesNow();
+              if (fixtures.length === 0) {
+                const bzKey = await getActiveBzKey().catch(() => '');
+                fixtures = bzKey ? await fetchBzMatches(bzKey, todayISO(), todayISO()).catch(() => []) : [];
+              }
               toolResult = formatFixtureContext(fixtures) || 'No fixtures scheduled today.';
-              liveSources.push('TheSportsDB');
+              liveSources.push('Bzzoiro Sports');
             } else if (tc.name === 'get_team_form') {
               const teamName = String(tc.arguments.team_name ?? '');
               setSlot(s => s ? { ...s, toolStatus: `Checking ${teamName || 'team'}'s recent form...` } : s);
               const bzKey = await getActiveBzKey().catch(() => '');
-              const bzForm = bzKey ? await fetchBzTeamForm(bzKey, teamName, 5).catch(() => null) : null;
-              const form = bzForm ?? await fetchTeamForm(teamName);
-              const source = bzForm ? 'Bzzoiro Sports' : 'TheSportsDB';
+              const form = bzKey ? await fetchBzTeamForm(bzKey, teamName, 5).catch(() => null) : null;
               if (form && form.events.length > 0) {
                 const lines = form.events.map(e =>
                   `${e.date} vs ${e.opponent}: ${e.score} (${e.result})${e.league ? ' — ' + e.league : ''}`
                 );
                 toolResult = [
-                  `[RECENT RESULTS — ${form.teamName} via ${source}]`,
+                  `[RECENT RESULTS — ${form.teamName} via Bzzoiro Sports]`,
                   `Form (most recent last): ${form.form.join(' ')}`,
                   ...lines,
                   '[END RESULTS]',
                 ].join('\n');
               } else {
-                // Fall back to today's fixtures involving the team
-                const { fixtures } = await fetchAndCacheFixtures();
-                const teamFix = fixtures.filter(f =>
+                // BUG FIX: this used to fall back to a live
+                // fetchAndCacheFixtures() (Bzzoiro + TheSportsDB) filtered
+                // for the team — another full multi-source round trip when
+                // Bzzoiro itself already came up empty. Checks the cache
+                // (instant) and otherwise says so honestly rather than
+                // reaching for a different source silently.
+                const teamFix = getCachedFixturesNow().filter(f =>
                   f.strHomeTeam?.toLowerCase().includes(teamName.toLowerCase()) ||
                   f.strAwayTeam?.toLowerCase().includes(teamName.toLowerCase())
                 );
                 toolResult = teamFix.length > 0 ? formatFixtureContext(teamFix) : `No recent data found for ${teamName}.`;
               }
-              liveSources.push(source);
+              liveSources.push('Bzzoiro Sports');
             } else if (tc.name === 'get_player_stats') {
               const playerName = String(tc.arguments.player_name ?? '');
               setSlot(s => s ? { ...s, toolStatus: `Checking ${playerName || 'player'}'s recent stats...` } : s);
@@ -1098,7 +1167,16 @@ export default function MatchAIScreen() {
           // entry rather than colliding with pass-1's under the same key.
           kvCache: mySessionId ? `${mySessionId}:tools` : true,
           captureThinking: false,
-          generationParams: { ...genParams, reasoning_budget: 0 as 0 },
+          // BUG FIX: this used to inherit genParams.predict unchanged — in
+          // Fast mode that's gp.maxTokens (384 for the default "short"
+          // length), the SAME cap a bare opinion answer gets. But pass-2's
+          // job is specifically to reference real tool data (a multi-
+          // fixture list, a team's last 5 results) — a genuinely more
+          // token-hungry answer than "no tools needed" prose, and it was
+          // getting cut off mid-sentence at exactly the moment it needed
+          // more room, not less. Floors pass-2's budget regardless of
+          // Fast/Think mode.
+          generationParams: { ...genParams, predict: Math.max(genParams.predict, 600), reasoning_budget: 0 as 0 },
         });
         currentRunRef.current = run2;
 
@@ -1132,6 +1210,15 @@ export default function MatchAIScreen() {
         // source" apology, which would be actively misleading.
         if (FABRICATED_TOOL_RESPONSE_RE.test(answerAcc)) {
           answerAcc = "I mixed that up — the real data I found is shown below.";
+        } else if (!answerAcc.trim()) {
+          // BUG FIX: verified live (Think mode) — pass-2 can ALSO ignore
+          // reasoning_budget: 0 and burn its entire token budget on hidden
+          // reasoning-shaped text, leaving nothing for a real answer and
+          // showing as a blank bubble even though the real tool result
+          // came back fine. That result is already sitting in
+          // liveDataAcc/liveSources with its own card below, so this
+          // points at that instead of showing nothing.
+          answerAcc = "Here's what I found — see the data below.";
         }
       } else {
         answerAcc = leakCleanedAnswer ?? pass1Answer;
@@ -1163,7 +1250,7 @@ export default function MatchAIScreen() {
       }
 
       if (mountedRef.current) {
-        const finished: Entry = { id: entryId, question: q, image: image ?? undefined, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, liveSources: [...new Set(liveSources)], liveData: liveDataAcc || undefined };
+        const finished: Entry = { id: entryId, question: q, image: image ?? undefined, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, device: finalStats?.backendDevice, liveSources: [...new Set(liveSources)], liveData: liveDataAcc || undefined };
         setSlot(null);
         // Only append to the visible chat if we're still looking at the
         // conversation this reply actually belongs to — see mySessionId
@@ -1286,7 +1373,7 @@ export default function MatchAIScreen() {
               )}
               {entry.elapsed != null && (
                 <Text style={[styles.stat, { color: theme.textSecondary }]}>
-                  {entry.elapsed}s{entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''}
+                  {entry.elapsed}s{entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''}{entry.device ? ` · ${entry.device.toUpperCase()}` : ''}
                 </Text>
               )}
               <TouchableOpacity
@@ -1448,7 +1535,7 @@ export default function MatchAIScreen() {
         visible={modelPickerOpen}
         models={pickableModels}
         currentModelId={modelId}
-        onSelect={loadSpecificModel}
+        onSelect={selectModel}
         onClose={() => setModelPickerOpen(false)}
       />
 

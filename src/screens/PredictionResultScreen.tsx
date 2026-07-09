@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, Animated } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Animated, TouchableOpacity, Share } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute } from '@react-navigation/native';
 import { getTheme } from '../theme';
@@ -8,6 +8,7 @@ import { useTheme } from '../navigation/AppNavigator';
 import ScreenHeader from '../components/ScreenHeader';
 import Glow from '../components/Glow';
 import TeamBadge from '../components/TeamBadge';
+import { IconShare } from '../components/Icons';
 import { teamAbbr } from '../utils/fixtures';
 
 // The prediction result on its own page — pushed over the tabs when a
@@ -83,7 +84,7 @@ export default function PredictionResultScreen() {
     teamA = '', teamB = '', winner = '', score = '', confidence = '',
     homeWin = '', draw: drawPct = '', awayWin = '',
     keyHome = '', keyAway = '', analysis = '', elapsed,
-    homeRating = null, awayRating = null,
+    homeRating = null, awayRating = null, device,
   } = route.params ?? {};
 
   const winnerIsDraw = /draw/i.test(winner);
@@ -107,9 +108,27 @@ export default function PredictionResultScreen() {
     transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
   });
 
+  const share = () => {
+    const lines = [
+      `${teamA} vs ${teamB}`,
+      winner ? `Scout's call: ${winner}${score ? ` (${score})` : ''}` : null,
+      confidence ? `Confidence: ${confidence}` : null,
+      'Predicted 100% on-device with Scout.',
+    ].filter(Boolean);
+    Share.share({ message: lines.join('\n') }).catch(() => {});
+  };
+
   return (
     <View style={[styles.root, { backgroundColor: theme.background }]}>
-      <ScreenHeader title={`${teamA} vs ${teamB}`} subtitle="Scout's call · on-device" />
+      <ScreenHeader
+        title={`${teamA} vs ${teamB}`}
+        subtitle="Scout's call · on-device"
+        rightSlot={
+          <TouchableOpacity onPress={share} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <IconShare size={20} color={theme.textSecondary} />
+          </TouchableOpacity>
+        }
+      />
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]} showsVerticalScrollIndicator={false}>
 
         {/* Verdict */}
@@ -225,7 +244,9 @@ export default function PredictionResultScreen() {
               {elapsed != null && (
                 <View style={[styles.statRow, { borderTopColor: theme.border }]}>
                   <View style={[styles.statDot, { backgroundColor: accent }]} />
-                  <Text style={[styles.stat, { color: theme.textTertiary }]}>Generated in {elapsed}s, entirely on-device</Text>
+                  <Text style={[styles.stat, { color: theme.textTertiary }]}>
+                    Generated in {elapsed}s, entirely on-device{device ? ` (${String(device).toUpperCase()})` : ''}
+                  </Text>
                 </View>
               )}
             </View>

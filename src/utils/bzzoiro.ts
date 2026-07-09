@@ -527,11 +527,24 @@ export async function fetchLineups(key: string, bzEventId: number): Promise<Matc
   }
 }
 
+export interface EventHighlight {
+  kind: string;
+  title: string;
+  url: string;
+  thumbnail: string | null;
+}
+
 export interface EventExtra {
   roundName: string | null;
   weather: { description: string; temperatureC: number | null; windSpeedKmh: number | null } | null;
   venueName: string | null;
   venueCity: string | null;
+  attendance: number | null;
+  // Only ever present for finished matches — verified live (a completed
+  // Round of 16 game): real YouTube links with thumbnails, "full" match
+  // recaps plus press-conference clips. Absent entirely for anything not
+  // yet played.
+  highlights: EventHighlight[];
 }
 
 // Round/weather/venue — verified live on a real finished match (venue_id
@@ -541,7 +554,7 @@ export interface EventExtra {
 // lookup — best-effort, since a fixture with no matching venue just means
 // this section quietly doesn't render rather than erroring.
 export async function fetchEventExtra(key: string, bzEventId: number): Promise<EventExtra> {
-  const empty: EventExtra = { roundName: null, weather: null, venueName: null, venueCity: null };
+  const empty: EventExtra = { roundName: null, weather: null, venueName: null, venueCity: null, attendance: null, highlights: [] };
   try {
     const res = await fetchWithTimeout(`${BASE}/api/v2/events/${bzEventId}/`, 6000, { headers: authHeaders(key) });
     if (!res.ok) return empty;
@@ -563,7 +576,19 @@ export async function fetchEventExtra(key: string, bzEventId: number): Promise<E
         }
       } catch { /* venue lookup is best-effort — round/weather still render without it */ }
     }
-    return { roundName: data.round_name ?? null, weather, venueName, venueCity };
+    const highlights: EventHighlight[] = Array.isArray(data.highlights)
+      ? data.highlights
+        .filter((h: any) => typeof h?.url === 'string')
+        .map((h: any) => ({ kind: h.kind ?? '', title: h.title ?? '', url: h.url, thumbnail: h.thumbnail ?? null }))
+      : [];
+    return {
+      roundName: data.round_name ?? null,
+      weather,
+      venueName,
+      venueCity,
+      attendance: typeof data.attendance === 'number' ? data.attendance : null,
+      highlights,
+    };
   } catch {
     return empty;
   }

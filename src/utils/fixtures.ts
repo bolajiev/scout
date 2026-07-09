@@ -199,6 +199,15 @@ const rowToFixture = (r: FixtureRow): Fixture => ({
   strAwayTeamBadge: r.away_badge,
 });
 
+// Coach's get_today_fixtures tool reads this directly instead of doing its
+// own live fetch — verified live, that used to mean a SECOND full
+// fetchAndCacheFixtures() call (Bzzoiro + 4 separate TheSportsDB HTTP
+// calls) on every single fixtures question, on top of whatever the
+// Matches tab had already fetched moments earlier. This is instant (a
+// synchronous SQLite read of whatever's already cached), so it only
+// falls back to a live call at all when nothing's cached yet.
+export const getCachedFixturesNow = (): Fixture[] => loadFixturesFromDb(todayISO());
+
 const loadFixturesFromDb = (date: string): Fixture[] => {
   const db = getDb();
   const rows = db.getAllSync<FixtureRow>('SELECT * FROM fixtures WHERE cache_date = ?', [date]);
