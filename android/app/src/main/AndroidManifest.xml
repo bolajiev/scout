@@ -22,7 +22,17 @@
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"/>
-    <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.App.SplashScreen" android:exported="true" android:screenOrientation="portrait">
+    <!-- BUG FIX: adjustResize + edgeToEdgeEnabled is a known problematic
+         combination — the native window resize recalculates system-bar
+         insets, and under mandatory edge-to-edge the freshly-exposed area
+         can render as whatever the OS default is (light) before the app's
+         own content repaints it dark, sometimes NOT reverting cleanly
+         once the keyboard closes. Every screen already handles the
+         keyboard itself via KeyboardAvoidingView (JS-driven, reacting to
+         native keyboard show/hide events directly) — adjustPan means the
+         native window never resizes at all, so there's no OS-level gap
+         for this to happen in the first place. -->
+    <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode" android:launchMode="singleTask" android:windowSoftInputMode="adjustPan" android:theme="@style/Theme.App.SplashScreen" android:exported="true" android:screenOrientation="portrait">
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
         <category android:name="android.intent.category.LAUNCHER"/>

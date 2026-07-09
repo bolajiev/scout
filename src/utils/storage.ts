@@ -10,6 +10,19 @@ export function toPath(uri: string): string {
   return uri.startsWith('file://') ? uri.slice(7) : uri;
 }
 
+// The QVAC SDK's own docs flag this as "required on Android for fast GPU
+// startup" — without a persistent directory, the OpenCL backend has nowhere
+// to cache compiled kernel binaries, so every GPU model load pays a
+// from-scratch JIT-compile tax instead of a one-time cost. Created lazily,
+// same dir reused across app runs.
+export function getOpenclCacheDir(): string {
+  const dir = new Directory(Paths.document, 'scout', 'opencl-cache');
+  try {
+    dir.create({ intermediates: true, idempotent: true });
+  } catch { /* best-effort — a failed cache dir just means slower GPU startup, not a hard failure */ }
+  return toPath(dir.uri);
+}
+
 const KEYS = {
   SETTINGS: '@scout_settings',
   INFERENCE_LOGS: '@scout_inference_logs',
@@ -82,7 +95,15 @@ export async function getActiveBzKey(): Promise<string> {
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
-  accelerator: 'cpu',
+  // BUG FIX: was 'cpu' — every model load, text or vision, defaulted to
+  // unaccelerated CPU inference unless a user happened to manually flip
+  // this in Settings, which is exactly why the same model (Gemma) reads
+  // fast in other apps but was slow here. Safe to flip the default now
+  // that modelManager.ts's fallback-to-CPU-on-failure applies to ANY
+  // gpu attempt (it used to only cover the auto-resolved case) — a
+  // device without real OpenCL support hits this once, permanently
+  // reverts itself to 'cpu', and never tries GPU again.
+  accelerator: 'gpu',
   // 'short' by default: at CPU token rates, capped answers are the
   // difference between a snappy app and a 3-minute wait
   responseLength: 'short',

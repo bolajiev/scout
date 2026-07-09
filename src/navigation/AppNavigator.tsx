@@ -16,6 +16,7 @@ import DownloadScreen from '../screens/DownloadScreen';
 import AboutScreen from '../screens/AboutScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import PredictionResultScreen from '../screens/PredictionResultScreen';
+import MatchDetailScreen from '../screens/MatchDetailScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -61,6 +62,7 @@ export default function AppNavigator() {
         <Stack.Screen name="About"    component={AboutScreen}   options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="History"  component={HistoryScreen} options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="PredictionResult" component={PredictionResultScreen} options={{ animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="MatchDetail" component={MatchDetailScreen} options={{ animation: 'slide_from_bottom' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

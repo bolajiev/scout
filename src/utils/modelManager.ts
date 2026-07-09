@@ -1,6 +1,6 @@
 import { loadModel, unloadModel } from '@qvac/sdk';
 import { DownloadedModel } from '../types';
-import { toPath, getSettings, saveSettings } from './storage';
+import { toPath, getSettings, saveSettings, getOpenclCacheDir } from './storage';
 
 // Keeps the last LLM loaded in memory so screens don't reload every open
 class LLMManager {
@@ -50,12 +50,21 @@ class LLMManager {
     }
     // Engine from user settings: CPU (default, safe) or GPU (experimental,
     // OpenCL backend only — Vulkan is not shipped). 'auto' defers to setting.
-    let wantGpu = false;
     if (!nativeConfig.device || nativeConfig.device === 'auto') {
       const accel = await getSettings().then(s => s.accelerator).catch(() => 'cpu' as const);
-      wantGpu = accel === 'gpu';
-      nativeConfig.device = wantGpu ? 'gpu' : 'cpu';
+      nativeConfig.device = accel === 'gpu' ? 'gpu' : 'cpu';
     }
+    // BUG FIX: the CPU-fallback-on-failure below only used to trigger when
+    // GPU came from the auto-resolved global setting — an explicitly
+    // requested 'gpu' (see loadModel() in MatchAIScreen's vision path)
+    // fell outside that check entirely and would just throw with no
+    // fallback attempt at all. Any GPU attempt, however it was decided on,
+    // gets the same safety net.
+    const wantGpu = nativeConfig.device === 'gpu';
+    // Without this, OpenCL recompiles its kernels from scratch on every GPU
+    // load instead of reusing yesterday's compiled binaries — a real,
+    // one-time-per-load cost the SDK's own docs call out by name.
+    if (wantGpu) nativeConfig.openclCacheDir = getOpenclCacheDir();
     const attempt = (device: string) => loadModel({
       modelSrc: toPath(model.modelSrc),
       modelType: 'llm',

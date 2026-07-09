@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { getSessions, getMessages, deleteSession, type Session, type Message, type ScreenType } from '../utils/historyDb';
+import { parsePrediction } from '../utils/predictionParser';
 import ScreenHeader from '../components/ScreenHeader';
 
 // Scout Lens was removed as a feature entirely — any old scan sessions
@@ -26,16 +27,6 @@ const fmtDate = (ts: number) => {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
-// Parse the Predictor's structured output back into scoreboard fields
-const parsePrediction = (text: string) => {
-  const lines = text.split('\n').map(l => l.trim());
-  const winner = lines.find(l => l.startsWith('WINNER:'))?.replace('WINNER:', '').trim() ?? '';
-  const score = lines.find(l => l.startsWith('SCORE:'))?.replace('SCORE:', '').trim() ?? '';
-  const confidence = lines.find(l => l.startsWith('CONFIDENCE:'))?.replace('CONFIDENCE:', '').trim() ?? '';
-  const sepIdx = lines.indexOf('---');
-  const analysis = sepIdx >= 0 ? lines.slice(sepIdx + 1).join('\n').trim() : '';
-  return { winner, score, confidence, analysis };
-};
 
 const imageUriFromMsg = (content: string): string | null =>
   content.startsWith('[image] ') ? content.slice(8) : null;
@@ -148,8 +139,17 @@ export default function HistoryScreen() {
   const renderPrediction = (session: Session, msgs: Message[]) => {
     const answer = msgs.find(m => m.role === 'assistant')?.content ?? '';
     const userMsg = msgs.find(m => m.role === 'user')?.content ?? '';
+    // BUG FIX: this used to only pull winner/score/confidence/analysis —
+    // the full structured output (HOME WIN/DRAW/AWAY WIN, KEY HOME/AWAY)
+    // was sitting right there in the saved text the whole time, just
+    // never parsed, so a saved prediction's History preview showed
+    // noticeably less than the SAME call's fresh result page did. Now
+    // uses the identical shared parser as the live screen.
     const p = parsePrediction(answer);
     const [teamA, teamB] = session.title.split(' vs ');
+    const h = parseFloat(p.homeWin), d = parseFloat(p.draw), a = parseFloat(p.awayWin);
+    const hasOdds = !isNaN(h) && !isNaN(d) && !isNaN(a) && h + d + a > 0;
+    const oddsTotal = h + d + a;
     return (
       <View style={[styles.msgList, { borderTopColor: theme.border }]}>
         <View style={[styles.predBoard, { backgroundColor: theme.cardAlt }]}>
@@ -173,12 +173,26 @@ export default function HistoryScreen() {
               {p.confidence} confidence
             </Text>
           ) : null}
+          {hasOdds && (
+            <View style={styles.oddsRow}>
+              <Text style={[styles.oddsChip, { color: theme.text, backgroundColor: theme.card }]}>{Math.round((h / oddsTotal) * 100)}%</Text>
+              <Text style={[styles.oddsChip, { color: theme.textSecondary, backgroundColor: theme.card }]}>{Math.round((d / oddsTotal) * 100)}% draw</Text>
+              <Text style={[styles.oddsChip, { color: theme.text, backgroundColor: theme.card }]}>{Math.round((a / oddsTotal) * 100)}%</Text>
+            </View>
+          )}
         </View>
         {p.analysis ? (
           <Text style={[styles.predAnalysis, { color: theme.text }]}>{p.analysis}</Text>
         ) : answer ? (
           <Text style={[styles.predAnalysis, { color: theme.text }]}>{answer}</Text>
         ) : null}
+        {(p.keyHome || p.keyAway) && (
+          <View style={styles.predKeySection}>
+            <Text style={[styles.predKeyLabel, { color: theme.textTertiary }]}>PLAYERS TO WATCH</Text>
+            {p.keyHome ? <Text style={[styles.predKeyLine, { color: theme.text }]}>{p.keyHome}</Text> : null}
+            {p.keyAway ? <Text style={[styles.predKeyLine, { color: theme.text }]}>{p.keyAway}</Text> : null}
+          </View>
+        )}
         {userMsg.includes('Context:') && (
           <Text style={[styles.predContext, { color: theme.textSecondary }]} numberOfLines={3}>
             {userMsg.slice(userMsg.indexOf('Context:'))}
@@ -338,7 +352,12 @@ const styles = StyleSheet.create({
   winTag: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
   winTagText: { fontSize: 9, fontWeight: '900', color: '#fff', letterSpacing: 0.5 },
   predConf: { fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  oddsRow: { flexDirection: 'row', gap: 6, justifyContent: 'center', marginTop: 8 },
+  oddsChip: { fontSize: 11, fontWeight: '700', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden' },
   predAnalysis: { fontSize: 13, lineHeight: 20 },
+  predKeySection: { gap: 3, marginTop: 4 },
+  predKeyLabel: { fontSize: 9.5, fontWeight: '700', letterSpacing: 1 },
+  predKeyLine: { fontSize: 12.5, lineHeight: 18 },
   predContext: { fontSize: 11, lineHeight: 16, fontStyle: 'italic' },
 
   // Scan replay — thumbnail + identification

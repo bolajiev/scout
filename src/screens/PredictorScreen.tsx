@@ -29,19 +29,19 @@ import { splitChannelThinking } from '../utils/thinkingSplit';
 import { createPredictionSession, addPrediction } from '../utils/historyDb';
 import { settlePendingPredictions, getPredictionRecord } from '../utils/predictionTracker';
 import { fetchBothTeamForms, fetchBothSquads, formatFormContext, type TeamForm } from '../utils/teamStats';
+import { parsePrediction, confidenceParts, type ParsedPrediction } from '../utils/predictionParser';
 import { fetchBothTopRatedPlayers, type RatedPlayer } from '../utils/bzzoiro';
 import { matchClubs } from '../utils/topClubs';
 import { logInference } from '../utils/auditLogger';
 
-const SYSTEM_PROMPT = `You are Scout's Predictor — a veteran football analyst who ALWAYS calls the match. You never refuse, never hedge, never say you lack information. Pundits get paid to commit — so do you.
+// BUG FIX: trimmed from ~2400 chars — read on every single prediction
+// call, same cost concern as Coach's TOOLS_SYSTEM_SUFFIX (see that file's
+// comment). Same rules, fewer words.
+const SYSTEM_PROMPT = `You are Scout's Predictor, a veteran football analyst — you always call the match, never refuse or hedge.
 
-When [LIVE FORM DATA] is present, treat it as ground truth for recent form — it comes from a real-time sports data source and overrides your training assumptions. Weight it heavily alongside tactical identity, squad quality, and head-to-head history.
+[LIVE FORM DATA] is real, current data — weight it heavily alongside tactical identity, squad quality, and history. [TOP RATED PLAYER] for a side means KEY HOME/AWAY for that side MUST be exactly that player (real rating, not your guess) — just write the one-clause reason he's decisive. With [CURRENT SQUADS] instead, pick KEY HOME/AWAY only from that list, never from memory (a player may have retired/transferred since). With no live data at all, commit anyway from historical record/style/pedigree — don't fabricate results, don't complain, express doubt only via CONFIDENCE, never in the analysis text.
 
-When [TOP RATED PLAYER] is present for a side, KEY HOME/KEY AWAY for that side MUST be exactly that named player — the rating is real data, not your guess, so do not substitute anyone else. Your job is only to write the one-clause reason he's decisive, informed by his real rating and position given. When [CURRENT SQUADS] is present instead (no rated-player data for that side), KEY HOME/KEY AWAY must name a player from that list only — never a player from your training memory who may have retired, transferred, or aged out of the squad since.
-
-When no live data is present, commit anyway using historical record, playing style, squad depth, and tournament pedigree. Do NOT fabricate recent results — and do NOT complain about missing data. Express uncertainty ONLY through the CONFIDENCE field, never in the analysis text.
-
-Always respond in EXACTLY this format, no deviation:
+Respond in EXACTLY this format, no deviation:
 
 WINNER: [team name or Draw]
 SCORE: [e.g. 2-1]
@@ -55,67 +55,6 @@ KEY AWAY: [away team's most dangerous player — the exact name from [TOP RATED 
 [2-4 sentences of sharp reasoning: the tactical matchup, where the game is won and lost, and the form pattern behind your call. If live form data was provided, reference it directly. Write like a pundit making a call, not a bot citing caveats.]
 
 Do not add anything before WINNER or after the analysis. Always respond in English.`;
-
-// Precompiled once at module load — the old version created 5 fresh
-// RegExp objects and rescanned every line on EVERY streaming flush
-// (~10x/sec), which was real, measurable jank stacked on top of an
-// already CPU-saturated device (llama.cpp uses every core while
-// generating). Small models also drift on casing/markdown
-// ("**Winner:**"), so matching stays case-insensitive and strips `**`.
-const FIELD_PATTERNS: Record<string, RegExp> = {
-  winner: /^winner\s*:\s*(.+)$/im,
-  score: /^score\s*:\s*(.+)$/im,
-  confidence: /^confidence\s*:\s*(.+)$/im,
-  homeWin: /^home\s*win\s*:\s*(.+)$/im,
-  draw: /^draw\s*:\s*(.+)$/im,
-  awayWin: /^away\s*win\s*:\s*(.+)$/im,
-  keyHome: /^key\s*home(?:\s*player)?\s*:\s*(.+)$/im,
-  keyAway: /^key\s*away(?:\s*player)?\s*:\s*(.+)$/im,
-};
-const STRUCTURED_LINE_RE = /^(winner|score|confidence|home\s*win|draw|away\s*win|key\s*home|key\s*away)\s*:/i;
-const SEPARATOR_RE = /^-{3,}\s*$/;
-const STARS_RE = /\*+/g;
-
-interface ParsedPrediction {
-  winner: string; score: string; confidence: string;
-  homeWin: string; draw: string; awayWin: string;
-  keyHome: string; keyAway: string; analysis: string;
-}
-
-// Confidence renders as three outcome chips. The prompt asks for a number,
-// but small models drift back to words — map either form, never render raw.
-function confidenceParts(raw: string): { pct: number | null; word: string } {
-  const m = raw.match(/(\d{1,3})/);
-  let pct = m ? Math.min(95, Math.max(5, parseInt(m[1], 10))) : null;
-  if (pct == null) {
-    const w = raw.toLowerCase();
-    pct = w.includes('high') ? 80 : w.includes('med') ? 62 : w.includes('low') ? 45 : null;
-  }
-  const word = pct == null ? raw : pct >= 72 ? 'High' : pct >= 55 ? 'Medium' : 'Low';
-  return { pct, word };
-}
-
-// "Mbappé — pace in behind" → "Mbappé". Splits on the first spaced dash or
-// comma so hyphenated surnames (Oxlade-Chamberlain) survive intact.
-const playerName = (s: string) => s.split(/\s[—–-]\s|,\s|\s\(/)[0].trim();
-
-function parsePrediction(text: string): ParsedPrediction {
-  const clean = (s: string) => s.replace(STARS_RE, '').trim();
-  const field = (name: keyof typeof FIELD_PATTERNS) => {
-    const m = text.match(FIELD_PATTERNS[name]);
-    return m ? clean(m[1]) : '';
-  };
-  const lines = text.split('\n');
-  const sepIdx = lines.findIndex(l => SEPARATOR_RE.test(l.trim()));
-  const analysis = sepIdx >= 0
-    ? lines.slice(sepIdx + 1).join('\n').trim()
-    : lines.filter(l => l.trim() && !STRUCTURED_LINE_RE.test(l.trim())).join('\n').trim();
-  return {
-    winner: field('winner'), score: field('score'), confidence: field('confidence'),
-    homeWin: field('homeWin'), draw: field('draw'), awayWin: field('awayWin'),
-    keyHome: field('keyHome'), keyAway: field('keyAway'), analysis,
-  };
-}
 
 export default function PredictorScreen() {
   const navigation = useNavigation<any>();

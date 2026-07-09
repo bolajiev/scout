@@ -413,6 +413,97 @@ export async function fetchPlayerStats(key: string, playerName: string, limit = 
   }
 }
 
+export interface H2HMatch {
+  date: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeScore: number;
+  awayScore: number;
+  league: string;
+}
+
+// No dedicated head-to-head endpoint exists (verified live — a `head2head`
+// path and an `opponent_id` filter both don't do anything real), so this
+// pulls one team's own match history with a wide enough limit to have a
+// real shot at catching past meetings, then filters client-side for the
+// specific opponent. International fixtures between any two given teams
+// can be years apart, so this can legitimately come back empty — that's
+// reported honestly as "no recent meetings found", not papered over.
+export async function fetchHeadToHead(key: string, teamAName: string, teamBName: string): Promise<H2HMatch[]> {
+  try {
+    const teamAId = await resolveBzTeamId(key, teamAName);
+    if (!teamAId) return [];
+    const res = await fetchWithTimeout(`${BASE}/api/v2/events/?team_id=${teamAId}&status=finished&limit=100`, 6000, { headers: authHeaders(key) });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const results: any[] = data.results ?? [];
+    return results
+      .filter(e => fuzzyNameMatch(e.home_team ?? '', teamBName) || fuzzyNameMatch(e.away_team ?? '', teamBName))
+      .slice(0, 5)
+      .map(e => ({
+        date: e.event_date?.split('T')[0] ?? '',
+        homeTeam: e.home_team ?? '',
+        awayTeam: e.away_team ?? '',
+        homeScore: e.home_score ?? 0,
+        awayScore: e.away_score ?? 0,
+        league: e.league_name ?? '',
+      }));
+  } catch {
+    return [];
+  }
+}
+
+export interface LineupPlayer {
+  name: string;
+  position: string;
+  jerseyNumber: number | null;
+}
+
+export interface TeamLineup {
+  teamName: string;
+  formation: string;
+  players: LineupPlayer[];
+}
+
+export interface MatchLineups {
+  status: 'confirmed' | 'predicted' | 'unavailable';
+  confidence: number | null; // only meaningful when status === 'predicted'
+  home: TeamLineup | null;
+  away: TeamLineup | null;
+}
+
+// Bzzoiro serves AI-PREDICTED probable lineups days ahead of kickoff
+// (verified live: a match 2 days out came back lineup_status: "predicted",
+// confidence: 0.836) and CONFIRMED ones once the real team sheet is in —
+// the UI must be honest about which one it's showing, never presenting a
+// predicted XI as if it were confirmed.
+export async function fetchLineups(key: string, bzEventId: number): Promise<MatchLineups> {
+  const empty: MatchLineups = { status: 'unavailable', confidence: null, home: null, away: null };
+  try {
+    const res = await fetchWithTimeout(`${BASE}/api/v2/events/${bzEventId}/lineups/`, 6000, { headers: authHeaders(key) });
+    if (!res.ok) return empty;
+    const data = await res.json();
+    if (!data.lineups || data.lineup_status === 'unavailable') return empty;
+    const mapSide = (side: any): TeamLineup | null => side ? {
+      teamName: side.team_name ?? '',
+      formation: side.formation ?? '',
+      players: (side.players ?? []).map((p: any) => ({
+        name: p.short_name ?? p.name ?? '',
+        position: p.position ?? '',
+        jerseyNumber: p.jersey_number ?? null,
+      })),
+    } : null;
+    return {
+      status: data.lineup_status === 'confirmed' ? 'confirmed' : 'predicted',
+      confidence: typeof data.lineups.home?.confidence === 'number' ? data.lineups.home.confidence : null,
+      home: mapSide(data.lineups.home),
+      away: mapSide(data.lineups.away),
+    };
+  } catch {
+    return empty;
+  }
+}
+
 export const formatPlayerStatsContext = (stats: PlayerStatsSummary): string => {
   const { appearances } = stats;
   const totalGoals = appearances.reduce((s, a) => s + a.goals, 0);

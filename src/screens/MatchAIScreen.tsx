@@ -10,7 +10,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect, StackActions } from '@react-navigation/native';
-import { completion, cancel, InferenceCancelledError, type Tool } from '@qvac/sdk';
+import { completion, cancel, InferenceCancelledError, type Tool, type ToolDialect } from '@qvac/sdk';
 import * as Haptics from 'expo-haptics';
 import Markdown from 'react-native-markdown-display';
 import { getTheme } from '../theme';
@@ -64,15 +64,15 @@ const dateContext = (): string => {
   return ` Today's real date is ${iso(now)} (${weekday}). Yesterday was ${iso(yesterday)}, tomorrow is ${iso(tomorrow)}. Use this to judge what "recent", "last", "this week", "today", or "tomorrow" actually mean — never assume a date from your training data is current, and never treat an old date (e.g. a past World Cup) as if it just happened unless a tool result explicitly returns it as the answer to a "last match" question.`;
 };
 
-const TOOLS_SYSTEM_SUFFIX = ` Your training data has a cutoff and does NOT know live scores, current squads, or anything happening now — NEVER answer those from memory, and NEVER say "I don't have real-time access." Tools — use at most one per question: get_today_fixtures for today's games/scores; get_team_form for a team's recent match RESULTS; get_player_stats for an individual player's real goals/assists/minutes/rating over their last few matches. If a question is about anything happening now or recently, ALWAYS call a tool before answering — guessing from stale training data is worse than checking.
+// BUG FIX: this had grown to ~2600 characters across several rounds of
+// one-off patches, on top of BASE_SYSTEM_PROMPT + dateContext() — every
+// character here is read by the model on EVERY single completion() call
+// (pass 1 AND pass 2), so a bloated system prompt is a real, direct,
+// measurable cost on top of an already CPU-bound device, not just noise.
+// Consolidated to the same set of rules with far fewer words.
+const TOOLS_SYSTEM_SUFFIX = ` Your training data is stale and knows nothing live — never answer from memory, never say "I don't have real-time access." Real, working tools, at most one per question: get_today_fixtures (today's games/scores), get_team_form (a team's recent results), get_player_stats (a player's real goals/assists/minutes/rating, recent matches — not filtered by competition, so call it anyway for a tournament-specific question and just note the numbers are recent overall form, not filtered to that tournament, rather than refusing outright). Calling one actually fetches live data now — not a simulation, never something you "can't execute." The FIFA World Cup 2026 is happening this month, not a future event.
 
-These tools are REAL and already working — calling one actually fetches live data right now, through the function-calling mechanism you have access to. This is not a simulation and not hypothetical; you are not guessing what a tool would return, you are actually retrieving it. Never reason your way into believing you "cannot actually execute" a tool — you can, every time.
-
-The FIFA World Cup 2026 is happening RIGHT NOW, this month — it is not a future event you lack data on. If asked about it, call get_today_fixtures rather than assuming it "hasn't happened yet."
-
-No tool covers general news, transfers, or injuries. If asked something none of your three tools can answer, say plainly that you don't have a reliable live source for that specific thing rather than guessing. NEVER invent a fake tool result to look like you checked — do not write words like "tool_response", a JSON array, or any bracketed data block as part of your answer; that text is reserved for the real function-calling mechanism only, and writing it yourself is always fabrication, never a real lookup.
-
-When a tool result appears in the conversation (a message starting with a line like "[RECENT RESULTS — ...]" or "[LIVE FIXTURES — ...]" or "[PLAYER STATS — ...]"), that is DATA for you to read and reason over — never quote, copy, or repeat those bracketed header/footer lines, or the raw data lines beneath them, verbatim in your answer. Write a normal, natural sentence using what the data tells you instead.
+Nothing covers general news/transfers/injuries or anything else — say so plainly rather than guessing. Never fabricate a tool result: no "tool_response", no JSON, no bracketed data block as your own text — that's for the real mechanism only. A real tool result in the conversation (a line like "[RECENT RESULTS — ...]") is data to reason over, never to quote or repeat verbatim.
 
 Only skip tools for pure tactics/history/opinion questions with no time-sensitive facts. When you decide to use a tool, call it through the actual function-calling mechanism only — never write the tool's name, or a sentence describing that you're about to use one, as part of your visible answer text. And never describe your own tools to the user by their internal function names (e.g. "get_today_fixtures") even when directly asked what you can do — describe them in plain English instead (e.g. "I can check today's fixtures or a team's recent results").`;
 
@@ -114,6 +114,22 @@ const SCOUT_TOOLS: Tool[] = [
   },
 ];
 
+// The SDK auto-detects tool-call output dialect "from the model name", but
+// that auto-detection missed for Gemma — verified live, its RAW special
+// tokens leaked straight into the visible answer as literal text:
+// "<|tool_call>call:get_player_stats{player_name:<|"|>Messi<|"|>}<tool_call|>"
+// — exactly the SDK's own documented "gemma4" dialect shape
+// (completion-stream.d.ts), never intercepted/parsed at all. Passing
+// toolDialect explicitly, keyed off the actually-loaded model's name
+// rather than trusting auto-detect, is the real fix — not another prompt
+// tweak or leak-regex, since this isn't narrated text, it's the model's
+// genuine native tool-call syntax slipping through unparsed.
+function toolDialectForModelName(name: string): ToolDialect | undefined {
+  if (/gemma/i.test(name)) return 'gemma4';
+  if (/qwen/i.test(name)) return 'hermes';
+  return undefined; // let the SDK auto-detect for anything else (e.g. MedPsy)
+}
+
 // Small/quantized on-device models sometimes narrate the tool-calling
 // decision as plain text instead of actually invoking the SDK's structured
 // mechanism — verified live: a real response was "I need to check today's
@@ -131,6 +147,25 @@ const SCOUT_TOOLS: Tool[] = [
 // stripping the JSON isn't enough here — the DATA itself is fake, so the
 // whole answer built on it has to be discarded, not just cleaned up.
 const FABRICATED_TOOL_RESPONSE_RE = /\btool[_ ]?response\b\s*:?\s*[\[{]/i;
+
+// Defense-in-depth backstop for the raw-token leak fixed by passing
+// toolDialect explicitly above — if a dialect mismatch ever slips through
+// again for some other model/version, this recovers the REAL call from
+// Gemma's own documented raw shape rather than just discarding it:
+// "<|tool_call>call:NAME{key:<|"|>val<|"|>,...}<tool_call|>"
+const GEMMA_RAW_TOOL_CALL_RE = /call:(\w+)\{([^}]*)\}/;
+function parseGemmaRawToolCall(text: string): { name: string; arguments: Record<string, string> } | null {
+  const m = text.match(GEMMA_RAW_TOOL_CALL_RE);
+  if (!m) return null;
+  const args: Record<string, string> = {};
+  for (const pair of m[2].split(',')) {
+    const [key, ...rest] = pair.split(':');
+    if (!key || rest.length === 0) continue;
+    const value = rest.join(':').replace(/<\|"?\|?>/g, '').trim();
+    args[key.trim()] = value;
+  }
+  return { name: m[1], arguments: args };
+}
 
 // Verified live (Think mode): the model's own reasoning explicitly stated
 // "Since I cannot actually execute the tool here, I must state that I am
@@ -404,6 +439,7 @@ export default function MatchAIScreen() {
   const modelNameRef     = useRef<string>('');
   const toolsEnabledRef  = useRef(false);
   const modelTypeRef     = useRef<'text' | 'vision'>('text');
+  const toolDialectRef   = useRef<ToolDialect | undefined>(undefined);
   const lastScrollRef    = useRef(0);
 
   // Streaming fires ~25 flushes/sec — scrolling on each one janks the UI
@@ -546,6 +582,7 @@ export default function MatchAIScreen() {
       modelNameRef.current = model.name;
       toolsEnabledRef.current = supportsTools;
       modelTypeRef.current = model.modelType === 'vision' ? 'vision' : 'text';
+      toolDialectRef.current = toolDialectForModelName(model.name);
       if (mountedRef.current) {
         setModelId(mid);
         setModelLoading(false);
@@ -608,14 +645,23 @@ export default function MatchAIScreen() {
     setLoadPct(0);
     try {
       const supportsTools = visionModel.supportsTools ?? false;
+      // BUG FIX: 'auto' deferred to the global CPU-default accelerator
+      // setting — every vision load ran on CPU only unless the user had
+      // separately opted into GPU in Settings, which nobody would think
+      // to do just to read a photo. Image encoding is exactly the
+      // workload GPU acceleration helps most; explicitly requesting it
+      // here (with modelManager's now-unconditional CPU fallback on
+      // failure, see modelManager.ts) is the real lever for "why is this
+      // so much slower than other apps running the same model."
       const mid = await llmManager.ensure(
         visionModel,
-        { ctx_size: 2048, device: 'auto', tools: supportsTools, projectionModelSrc: visionModel.projectionModelSrc },
+        { ctx_size: 2048, device: 'gpu', tools: supportsTools, projectionModelSrc: visionModel.projectionModelSrc },
         pct => { if (mountedRef.current) setLoadPct(Math.round(pct)); },
       );
       modelNameRef.current = visionModel.name;
       toolsEnabledRef.current = supportsTools;
       modelTypeRef.current = 'vision';
+      toolDialectRef.current = toolDialectForModelName(visionModel.name);
       if (mountedRef.current) { setModelId(mid); setModelLoading(false); }
       return true;
     } catch (e: any) {
@@ -829,6 +875,11 @@ export default function MatchAIScreen() {
         // message always skips tools rather than risking the same
         // leaked-tool-call failure mode on top of an already harder task.
         tools: (!image && toolsEnabledRef.current) ? SCOUT_TOOLS : undefined,
+        // BUG FIX: auto-detected dialect missed Gemma — its raw tool-call
+        // special tokens leaked into the visible answer as literal text
+        // instead of being parsed into a real ToolCall. Explicit per the
+        // loaded model, see toolDialectForModelName above.
+        toolDialect: toolDialectRef.current,
         captureThinking: thinkingOn,
         generationParams: genParams,
       });
@@ -894,6 +945,18 @@ export default function MatchAIScreen() {
       // model's own narration/thinking, since guessing wrong is worse
       // than the honest fallback.
       let leakCleanedAnswer: string | null = null;
+      if (toolCalls.length === 0 && pass1Answer) {
+        // Highest-priority recovery: this is the model's REAL, structured
+        // tool-call attempt (Gemma's raw dialect tokens), not a
+        // hallucination or narration — trust its name/arguments directly
+        // rather than falling through to the fuzzier narration-based
+        // recovery below. Only acted on if the name matches a real tool,
+        // so unrelated bracket-ish text can't misfire this.
+        const rawCall = parseGemmaRawToolCall(pass1Answer);
+        if (rawCall && SCOUT_TOOLS.some(t => t.name === rawCall.name)) {
+          toolCalls = [{ name: rawCall.name, arguments: rawCall.arguments } as any];
+        }
+      }
       if (toolCalls.length === 0 && pass1Answer) {
         // Includes the last couple questions, not just the current one —
         // verified live: "I need to check his recent match statistics for

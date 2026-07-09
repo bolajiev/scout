@@ -116,6 +116,32 @@ export function SkeletonVerdictCard() {
   );
 }
 
+// Matches MatchDetailScreen's own section shape (label + card, repeated) —
+// the hero itself isn't included since it renders instantly from route
+// params (badges/names/time need no fetch), only the sections below it
+// (form/H2H/lineups) actually wait on a network call.
+export function SkeletonMatchDetail() {
+  const theme = getTheme(useTheme());
+  const pulse = usePulse();
+  const Section = ({ labelWidth, rows }: { labelWidth: number; rows: number }) => (
+    <View style={{ marginBottom: 20 }}>
+      <SkeletonBlock pulse={pulse} style={{ width: labelWidth, height: 10, borderRadius: 5, marginBottom: 8 }} />
+      <View style={[skStyles.detailSection, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        {Array.from({ length: rows }).map((_, i) => (
+          <SkeletonBlock key={i} pulse={pulse} style={{ height: 14, borderRadius: 5, marginBottom: i < rows - 1 ? 12 : 0, width: `${75 - i * 14}%` as any }} />
+        ))}
+      </View>
+    </View>
+  );
+  return (
+    <View>
+      <Section labelWidth={100} rows={2} />
+      <Section labelWidth={120} rows={3} />
+      <Section labelWidth={70} rows={4} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   block: { overflow: 'hidden' },
 });
@@ -133,4 +159,5 @@ const skStyles = StyleSheet.create({
   fixTeamRight: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'flex-end' },
   verdict: { borderRadius: 24, borderWidth: 1, padding: 20, marginHorizontal: 16 },
   oddsRow: { flexDirection: 'row', gap: 8, marginTop: 20 },
+  detailSection: { borderRadius: 16, borderWidth: 1, padding: 14 },
 });

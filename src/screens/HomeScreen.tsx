@@ -237,8 +237,13 @@ export default function HomeScreen() {
       }));
   }, [fixtures, selectedComp, hero?.idEvent]);
 
-  const openInPredictor = (f: Fixture) =>
-    navigation.navigate('Predictor', { fixtureId: f.idEvent });
+  // Tapping a fixture used to jump straight into Predictor ("quick
+  // predict"), skipping past any real context — now lands on a match
+  // detail page (head-to-head, lineups, recent form) first, with its own
+  // "Predict This Match" button continuing into Predictor exactly as
+  // before.
+  const openMatchDetail = (f: Fixture) =>
+    navigation.navigate('MatchDetail', { fixture: f });
 
   const updatedAgo = lastSyncedAt
     ? Math.max(0, Math.round((Date.now() - lastSyncedAt) / 60_000))
@@ -301,7 +306,7 @@ export default function HomeScreen() {
           {hero && (
             <TouchableOpacity
               style={styles.hero}
-              onPress={() => openInPredictor(hero)}
+              onPress={() => openMatchDetail(hero)}
               activeOpacity={0.88}
             >
               <View style={styles.heroTop}>
@@ -403,7 +408,7 @@ export default function HomeScreen() {
                 <TouchableOpacity
                   key={f.idEvent}
                   style={[styles.fixRow, { backgroundColor: theme.card, borderColor: theme.border }]}
-                  onPress={() => openInPredictor(f)}
+                  onPress={() => openMatchDetail(f)}
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.fixComp, { color: theme.textTertiary }]} numberOfLines={1}>{f.strLeague}</Text>

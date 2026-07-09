@@ -146,7 +146,15 @@ export function pickVisionCapable<T extends ModelInfo>(
     const loaded = models.find(m => m.id === loadedId && m.modelType === 'vision');
     if (loaded) return loaded;
   }
-  return models.find(m => m.modelType === 'vision');
+  // BUG FIX: this used to just take whichever vision model came first in
+  // AVAILABLE_MODELS — Gemma 4 2B (3.8GB) is listed before SmolVLM2 500M,
+  // so if BOTH were downloaded, the auto-switch on attaching a photo
+  // always picked the slower, much bigger one with zero regard for
+  // speed. Smallest-first, matching the same philosophy already used for
+  // the Models screen's own sort order.
+  const vision = models.filter(m => m.modelType === 'vision');
+  vision.sort((a, b) => a.sizeBytes - b.sizeBytes);
+  return vision[0];
 }
 
 const HF_REGEX = /registry:\/\/hf\/([^/]+\/[^/]+)\/(resolve|blob)\/([^/]+)\/(.+)/;
