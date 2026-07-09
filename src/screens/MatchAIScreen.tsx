@@ -86,17 +86,23 @@ const NO_TOOLS_SYSTEM_SUFFIX = ` This session has no live data tools available. 
 const buildSystemPrompt = (toolsEnabled: boolean) =>
   BASE_SYSTEM_PROMPT + dateContext() + (toolsEnabled ? TOOLS_SYSTEM_SUFFIX : NO_TOOLS_SYSTEM_SUFFIX);
 
+// BUG FIX: trimmed (626 → ~330 chars of description text) — these get
+// serialized into the prompt on every completion() call same as the
+// system prompt, adding real weight on top of it. Also fixed stale
+// "TheSportsDB" mentions on the first two — both were switched to a
+// cache-first/Bzzoiro-only implementation earlier this session and these
+// descriptions never got updated, telling the model the wrong source.
 const SCOUT_TOOLS: Tool[] = [
   {
     type: 'function',
     name: 'get_today_fixtures',
-    description: "Get today's football matches and scores from TheSportsDB. Use when the user asks about today's games, fixtures, live scores, or who is playing.",
+    description: "Today's football matches and scores. Use for today's games, fixtures, live scores, or who's playing.",
     parameters: { type: 'object', properties: {} },
   },
   {
     type: 'function',
     name: 'get_team_form',
-    description: "Get a football TEAM's recent match results (W/D/L, scores, dates) from TheSportsDB. TEAM-level only — use get_player_stats instead for an individual player's goals/assists/minutes. Use this for a specific team's recent form, results, or performance.",
+    description: "A football TEAM's recent results (W/D/L, scores, dates). Team-level only — use get_player_stats for an individual player instead.",
     parameters: {
       type: 'object',
       properties: {
@@ -108,7 +114,7 @@ const SCOUT_TOOLS: Tool[] = [
   {
     type: 'function',
     name: 'get_player_stats',
-    description: "Get a football PLAYER's real per-match stats (goals, assists, minutes played, match rating) over their last few appearances, from Bzzoiro Sports. Use for any question about an individual player's goals, assists, or recent performance.",
+    description: "A football PLAYER's real per-match stats (goals, assists, minutes, rating) over their last few appearances.",
     parameters: {
       type: 'object',
       properties: {
