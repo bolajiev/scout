@@ -433,6 +433,9 @@ export default function MatchAIScreen() {
   // so the stream loops also bail out locally the moment this is set —
   // the Stop button must FEEL instant.
   const abortRef         = useRef(false);
+  // Guards the notification-based cancel path against acting on a stale
+  // registration — see the requestId/token check in send() below.
+  const activeSendTokenRef = useRef(0);
   const mountedRef       = useRef(true);
   const prefillFiredRef  = useRef(false);
   const prefillRef       = useRef<string | null>(null);
@@ -774,6 +777,18 @@ export default function MatchAIScreen() {
 
   const send = useCallback(async (question?: string) => {
     abortRef.current = false;
+    // BUG FIX: registerInferenceCancel's closure reads currentRunRef fresh
+    // each time it's invoked, which is correct WITHIN one send() call (it
+    // needs to follow along from pass-1 to pass-2) — but Android can
+    // redeliver a "Stop" notification action late (e.g. after the app was
+    // backgrounded and resumed), and that stale tap has no way to know its
+    // own message already finished. Verified live: a message rendered
+    // "..." — the app's own fallback text for a cancelled request with no
+    // answer yet — even though nothing in that conversation looked
+    // deliberately stopped. This token scopes a registration to the exact
+    // send() call that created it; a later call bumping the token
+    // invalidates any stale registration regardless of timing.
+    const mySendToken = ++activeSendTokenRef.current;
     // Captured and cleared immediately — the composer's thumbnail preview
     // shouldn't linger once the message carrying it has been sent.
     const image = pendingImage;
@@ -871,9 +886,17 @@ export default function MatchAIScreen() {
       const t0 = Date.now();
 
       // ── Pass 1: completion with tools available ─────────────────────────
+      // BUG FIX: this used to always reflect the GLOBAL tools toggle, even
+      // for an image message — where `tools:` itself (below) is already
+      // forced off. The model still saw "you have working tools, call one"
+      // in its own system prompt with no structured mechanism actually
+      // available for this turn, and would narrate/attempt a tool call
+      // anyway — exactly the vision+tool-calling failure mode this was
+      // supposed to avoid. Must match the real `tools:` value below.
+      const toolsActiveThisTurn = !image && toolsEnabledRef.current;
       const run1 = completion({
         modelId,
-        history: [{ role: 'system', content: buildSystemPrompt(toolsEnabledRef.current) }, ...history],
+        history: [{ role: 'system', content: buildSystemPrompt(toolsActiveThisTurn) }, ...history],
         stream: true,
         // Scout never used this before — every turn re-sent and re-processed
         // the ENTIRE system prompt + full history from scratch, every time.
@@ -887,7 +910,7 @@ export default function MatchAIScreen() {
         // models (see the supportsTools comment in loadModel) — an image
         // message always skips tools rather than risking the same
         // leaked-tool-call failure mode on top of an already harder task.
-        tools: (!image && toolsEnabledRef.current) ? SCOUT_TOOLS : undefined,
+        tools: toolsActiveThisTurn ? SCOUT_TOOLS : undefined,
         // BUG FIX: auto-detected dialect missed Gemma — its raw tool-call
         // special tokens leaked into the visible answer as literal text
         // instead of being parsed into a real ToolCall. Explicit per the
@@ -898,6 +921,7 @@ export default function MatchAIScreen() {
       });
       currentRunRef.current = run1;
       registerInferenceCancel(() => {
+        if (activeSendTokenRef.current !== mySendToken) return;
         abortRef.current = true;
         if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
       });
@@ -923,7 +947,14 @@ export default function MatchAIScreen() {
           // Split it client-side so it never renders as the visible answer.
           pass1Raw += event.text;
           const split = splitChannelThinking(pass1Raw);
-          if (split.thought) {
+          // BUG FIX: Fast mode sets reasoning_budget: 0, but a model can
+          // ignore that and emit "<|channel>thought...channel|>" text
+          // anyway — this used to surface as a "Thought for X.Xs" block
+          // regardless of mode, defeating the entire point of Fast mode
+          // ("no thinking, ever"). Only track/show it in Think mode; the
+          // split still runs either way so leaked thinking text never
+          // pollutes the visible answer.
+          if (thinkingOn && split.thought) {
             thinkingStarted = true;
             thoughtAcc = split.thought;
           }
@@ -932,7 +963,7 @@ export default function MatchAIScreen() {
           const now = Date.now();
           if (mountedRef.current && now - lastFlush > 100) {
             lastFlush = now;
-            setSlot(s => s ? { ...s, answer: pass1Answer, thought: thoughtAcc, isThinking: !!split.thought && !split.answer } : s);
+            setSlot(s => s ? { ...s, answer: pass1Answer, thought: thoughtAcc, isThinking: thinkingOn && !!split.thought && !split.answer } : s);
             throttledScroll();
           }
         }
@@ -958,7 +989,14 @@ export default function MatchAIScreen() {
       // model's own narration/thinking, since guessing wrong is worse
       // than the honest fallback.
       let leakCleanedAnswer: string | null = null;
-      if (toolCalls.length === 0 && pass1Answer) {
+      // BUG FIX: neither recovery block used to check `image` — an image
+      // turn always has `toolsActiveThisTurn` false (no structured tool
+      // mechanism was ever offered this turn), but if the model still
+      // narrated a stuck-sounding "let me check..." line, this would
+      // recover it into a REAL tool call + pass-2 anyway, exactly the
+      // vision+tool-calling combination `tools: undefined` above was
+      // supposed to rule out.
+      if (toolsActiveThisTurn && toolCalls.length === 0 && pass1Answer) {
         // Highest-priority recovery: this is the model's REAL, structured
         // tool-call attempt (Gemma's raw dialect tokens), not a
         // hallucination or narration — trust its name/arguments directly
@@ -970,7 +1008,7 @@ export default function MatchAIScreen() {
           toolCalls = [{ name: rawCall.name, arguments: rawCall.arguments } as any];
         }
       }
-      if (toolCalls.length === 0 && pass1Answer) {
+      if (toolsActiveThisTurn && toolCalls.length === 0 && pass1Answer) {
         // Includes the last couple questions, not just the current one —
         // verified live: "I need to check his recent match statistics for
         // that." doesn't name anyone at all; "his" refers to a name the
@@ -1053,7 +1091,7 @@ export default function MatchAIScreen() {
         // ── Pass 2: final answer incorporating tool results ─────────────────
         const run2 = completion({
           modelId,
-          history: [{ role: 'system', content: buildSystemPrompt(toolsEnabledRef.current) }, ...toolHistory],
+          history: [{ role: 'system', content: buildSystemPrompt(toolsActiveThisTurn) }, ...toolHistory],
           stream: true,
           // Separate key from pass-1 — toolHistory has a different shape
           // (includes the tool result message), so it needs its own cache
@@ -1348,12 +1386,17 @@ export default function MatchAIScreen() {
 
       {/* New Chat / History — a single dropdown instead of two competing
           header links, so the header row stays clean and centered. */}
-      {/* statusBarTranslucent/navigationBarTranslucent: without these, RN's
-          Modal opens its own native Android window that doesn't inherit
-          the app's dark edge-to-edge theme — a likely source of the
-          "white flash" reported repeatedly, and pre-dates this session's
-          new modals. */}
-      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)} statusBarTranslucent navigationBarTranslucent>
+      {/* BUG FIX: navigationBarTranslucent was the ACTUAL source of the
+          repeatedly-reported white strip, not the fix for it — verified in
+          react-native's own ReactModalHostView.kt: when this prop is true,
+          it calls `dialogWindow.enableEdgeToEdge()` on the Modal's OWN
+          separate native window, which unconditionally forces
+          isNavigationBarContrastEnforced back to true for that window —
+          completely bypassing the Activity-level theme fix in styles.xml
+          (android:enforceNavigationBarContrast), which only re-applies in
+          MainActivity's onCreate, never for a Modal's dialog window.
+          statusBarTranslucent alone (kept) doesn't trigger that code path. */}
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)} statusBarTranslucent>
         <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
           <View style={[styles.menuPanel, { top: insets.top + 52, backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
             <TouchableOpacity

@@ -11,10 +11,22 @@ import { SkeletonMatchDetail } from '../components/Skeleton';
 import TeamBadge from '../components/TeamBadge';
 import { badgeUrl, teamAbbr, fmtMatchTime, isLive, isFinished, todayISO, type Fixture } from '../utils/fixtures';
 import { fetchBothTeamForms, type TeamForm } from '../utils/teamStats';
-import { fetchHeadToHead, fetchLineups, type H2HMatch, type MatchLineups } from '../utils/bzzoiro';
+import { fetchHeadToHead, fetchLineups, fetchEventExtra, fuzzyNameMatch, type H2HMatch, type MatchLineups, type EventExtra } from '../utils/bzzoiro';
 import { getActiveBzKey, getActiveFdKey } from '../utils/storage';
 
 const PITCH = require('../../assets/pitch.jpg');
+
+// Bzzoiro's weather description is free-text ("cloudy", "clear", "light
+// rain", ...) — mapped to a small icon rather than shown as a bare word.
+const weatherEmoji = (description: string): string => {
+  const d = description.toLowerCase();
+  if (d.includes('storm') || d.includes('thunder')) return '⛈️';
+  if (d.includes('snow')) return '❄️';
+  if (d.includes('rain') || d.includes('drizzle')) return '🌧️';
+  if (d.includes('cloud') || d.includes('overcast')) return '☁️';
+  if (d.includes('clear') || d.includes('sun')) return '☀️';
+  return '🌤️';
+};
 
 // The match-tap landing page — was a direct jump to Predictor ("quick
 // predict"), which skipped straight past any of the context a fan
@@ -33,6 +45,7 @@ export default function MatchDetailScreen() {
   const [formB, setFormB] = useState<TeamForm | null>(null);
   const [h2h, setH2h] = useState<H2HMatch[] | null>(null);
   const [lineups, setLineups] = useState<MatchLineups | null>(null);
+  const [eventExtra, setEventExtra] = useState<EventExtra | null>(null);
   const [loading, setLoading] = useState(true);
   const mountedRef = useRef(true);
 
@@ -66,14 +79,18 @@ export default function MatchDetailScreen() {
       // Lineups now populate independently; its own section only renders
       // once `lineups` is set, so it needs no shared loading flag at all.
       setLoading(false);
-      // Lineups need the SPECIFIC Bzzoiro event id — only available when
-      // this exact fixture came from Bzzoiro in the first place (idEvent
-      // is prefixed "bz-"), not for a TheSportsDB-sourced one.
+      // Lineups/round/venue/weather need the SPECIFIC Bzzoiro event id —
+      // only available when this exact fixture came from Bzzoiro in the
+      // first place (idEvent is prefixed "bz-"), not for a
+      // TheSportsDB-sourced one.
       if (bzKey && fixture.idEvent?.startsWith('bz-')) {
         const eventId = parseInt(fixture.idEvent.slice(3), 10);
         if (!isNaN(eventId)) {
-          const lu = await fetchLineups(bzKey, eventId).catch(() => null);
-          if (mountedRef.current) setLineups(lu);
+          const [lu, extra] = await Promise.all([
+            fetchLineups(bzKey, eventId).catch(() => null),
+            fetchEventExtra(bzKey, eventId).catch(() => null),
+          ]);
+          if (mountedRef.current) { setLineups(lu); setEventExtra(extra); }
         }
       }
     })();
@@ -89,6 +106,27 @@ export default function MatchDetailScreen() {
   }
 
   const predictThisMatch = () => navigation.navigate('Predictor', { fixtureId: fixture.idEvent });
+
+  // Won/draws/won tally from TODAY's home team's perspective — each h2h
+  // match is an old fixture where either side could have been "home", so
+  // matches get re-oriented against fixture.strHomeTeam before counting,
+  // rather than just tallying literal home/away scorelines.
+  const h2hSummary = (() => {
+    if (!h2h || h2h.length === 0) return null;
+    let homeWins = 0, draws = 0, awayWins = 0;
+    for (const m of h2h) {
+      const oldHomeIsFixtureHome = fuzzyNameMatch(m.homeTeam, fixture.strHomeTeam);
+      const oldHomeIsFixtureAway = fuzzyNameMatch(m.homeTeam, fixture.strAwayTeam);
+      if (!oldHomeIsFixtureHome && !oldHomeIsFixtureAway) continue;
+      const fixtureHomeScore = oldHomeIsFixtureHome ? m.homeScore : m.awayScore;
+      const fixtureAwayScore = oldHomeIsFixtureHome ? m.awayScore : m.homeScore;
+      if (fixtureHomeScore > fixtureAwayScore) homeWins++;
+      else if (fixtureHomeScore < fixtureAwayScore) awayWins++;
+      else draws++;
+    }
+    const total = homeWins + draws + awayWins;
+    return total > 0 ? { homeWins, draws, awayWins, total } : null;
+  })();
 
   const FormRow = ({ form, teamName }: { form: TeamForm | null; teamName: string }) => (
     <View style={styles.formRow}>
@@ -157,6 +195,15 @@ export default function MatchDetailScreen() {
               <Text style={[styles.heroTeamName, { color: theme.text }]} numberOfLines={1}>{fixture.strAwayTeam}</Text>
             </View>
           </View>
+          {(eventExtra?.roundName || eventExtra?.venueName || eventExtra?.weather) && (
+            <Text style={[styles.heroMeta, { color: theme.textTertiary }]} numberOfLines={1}>
+              {[
+                eventExtra?.roundName,
+                eventExtra?.venueName ? (eventExtra.venueCity ? `${eventExtra.venueName}, ${eventExtra.venueCity}` : eventExtra.venueName) : null,
+                eventExtra?.weather ? `${weatherEmoji(eventExtra.weather.description)} ${eventExtra.weather.temperatureC != null ? `${Math.round(eventExtra.weather.temperatureC)}°C` : eventExtra.weather.description}` : null,
+              ].filter(Boolean).join(' · ')}
+            </Text>
+          )}
         </Animated.View>
 
         {loading ? <SkeletonMatchDetail /> : (
@@ -172,6 +219,30 @@ export default function MatchDetailScreen() {
             {/* Head to head */}
             <Text style={[styles.sectionLabel, { color: theme.textTertiary }]}>HEAD-TO-HEAD</Text>
             <View style={[styles.sectionCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              {h2hSummary && (
+                <View style={styles.h2hSummary}>
+                  <View style={styles.h2hSummaryRow}>
+                    <View style={styles.h2hSummaryCol}>
+                      <Text style={[styles.h2hSummaryCount, { color: accent }]}>{h2hSummary.homeWins}</Text>
+                      <Text style={[styles.h2hSummaryLabel, { color: theme.textTertiary }]} numberOfLines={1}>{fixture.strHomeTeam} won</Text>
+                    </View>
+                    <View style={styles.h2hSummaryCol}>
+                      <Text style={[styles.h2hSummaryCount, { color: theme.textSecondary }]}>{h2hSummary.draws}</Text>
+                      <Text style={[styles.h2hSummaryLabel, { color: theme.textTertiary }]}>Draws</Text>
+                    </View>
+                    <View style={styles.h2hSummaryCol}>
+                      <Text style={[styles.h2hSummaryCount, { color: theme.error }]}>{h2hSummary.awayWins}</Text>
+                      <Text style={[styles.h2hSummaryLabel, { color: theme.textTertiary }]} numberOfLines={1}>{fixture.strAwayTeam} won</Text>
+                    </View>
+                  </View>
+                  <View style={[styles.h2hSummaryBar, { backgroundColor: theme.border }]}>
+                    <View style={{ flex: h2hSummary.homeWins, backgroundColor: accent }} />
+                    <View style={{ flex: h2hSummary.draws, backgroundColor: theme.textTertiary }} />
+                    <View style={{ flex: h2hSummary.awayWins, backgroundColor: theme.error }} />
+                  </View>
+                  <View style={[styles.divider, { backgroundColor: theme.border }]} />
+                </View>
+              )}
               {!h2h ? (
                 <Text style={[styles.emptyText, { color: theme.textTertiary }]}>Not available for this match.</Text>
               ) : h2h.length === 0 ? (
@@ -236,6 +307,7 @@ const styles = StyleSheet.create({
   heroVs: { fontSize: 16, fontFamily: fonts.displayBlack },
   heroScore: { fontSize: 30, fontFamily: fonts.displayBlack, fontVariant: ['tabular-nums'] },
   heroTime: { fontSize: 11, fontFamily: fonts.bodyMedium },
+  heroMeta: { fontSize: 10.5, fontFamily: fonts.bodyMedium, textAlign: 'center', marginTop: 14 },
 
   sectionLabel: { fontSize: 10, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 1.2, marginBottom: 8, marginTop: 4 },
   sectionCard: { borderRadius: 16, borderWidth: 1, padding: 14, marginBottom: 20 },
@@ -252,6 +324,13 @@ const styles = StyleSheet.create({
   h2hRow: { paddingVertical: 10, gap: 3 },
   h2hDate: { fontSize: 10, fontFamily: fonts.mono },
   h2hScore: { fontSize: 13, fontFamily: fonts.bodySemiBold },
+
+  h2hSummary: { marginBottom: 4 },
+  h2hSummaryRow: { flexDirection: 'row', marginBottom: 10 },
+  h2hSummaryCol: { flex: 1, alignItems: 'center', gap: 3 },
+  h2hSummaryCount: { fontSize: 22, fontFamily: fonts.displayBlack },
+  h2hSummaryLabel: { fontSize: 10, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 0.3, textAlign: 'center' },
+  h2hSummaryBar: { flexDirection: 'row', height: 6, borderRadius: 3, overflow: 'hidden' },
 
   lineupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   lineupBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginBottom: 8 },

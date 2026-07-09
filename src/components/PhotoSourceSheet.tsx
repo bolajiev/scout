@@ -32,13 +32,15 @@ export default function PhotoSourceSheet({
     </TouchableOpacity>
   );
 
-  // BUG FIX: RN's Modal opens a separate native Android window by default,
-  // which does NOT inherit the app's edge-to-edge dark theme — it can show
-  // the OS's light-default system-bar chrome behind it, the "white flash"
-  // reported repeatedly. These two props route the modal through the same
-  // window/theming as the rest of the app.
+  // BUG FIX: navigationBarTranslucent was actually the CAUSE of the
+  // repeatedly-reported white flash, not the fix — verified in react-
+  // native's own ReactModalHostView.kt: it makes this Modal's own native
+  // window call enableEdgeToEdge(), which force-resets
+  // isNavigationBarContrastEnforced to true for THAT window, bypassing the
+  // app-wide theme fix (styles.xml) specifically while this sheet is open.
+  // statusBarTranslucent alone still keeps the status bar dark-themed.
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={[styles.sheet, { backgroundColor: theme.cardAlt, borderColor: theme.border, paddingBottom: Math.max(insets.bottom, 20) }]}>
           <View style={[styles.grabber, { backgroundColor: theme.border }]} />

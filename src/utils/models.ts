@@ -132,8 +132,13 @@ export function pickTextCapable<T extends ModelInfo>(
     const pref = models.find(m => m.id === preferredId && m.supports?.includes('text'));
     if (pref) return pref;
   }
-  return models.find(m => m.modelType === 'text')
-    ?? models.find(m => m.supports?.includes('text'));
+  // Same bug class as pickVisionCapable below: taking whichever text model
+  // came first in AVAILABLE_MODELS had no regard for speed at all — it
+  // happened to line up with size order today, but only by accident of
+  // how that list is authored. Smallest (fastest) first, explicitly.
+  const text = models.filter(m => m.modelType === 'text' || m.supports?.includes('text'));
+  text.sort((a, b) => a.sizeBytes - b.sizeBytes);
+  return text[0];
 }
 
 // Same idea, for the "attach an image in Coach" flow — picks a downloaded

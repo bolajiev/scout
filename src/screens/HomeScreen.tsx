@@ -191,16 +191,25 @@ export default function HomeScreen() {
 
   // Competition filter chips — World Cup always pinned first (its own
   // dedicated tab, not dependent on today's fixtures happening to include
-  // it), then the big-5 European leagues (when Bzzoiro is active, so
-  // they're always tappable even with nothing on today), then whatever
-  // else actually has a fixture, in kickoff order. Without pinning, this
-  // list is just "whatever showed up" — how a NSW regional league ends up
-  // sitting next to the World Cup.
+  // it — it's the whole theme of the app), then the big-5 European
+  // leagues that actually have a match live or today, then whatever else
+  // actually has a fixture, in kickoff order.
+  // BUG FIX: TOP_LEAGUES used to be listed unconditionally whenever
+  // Bzzoiro was active, even with nothing happening for that league today
+  // — a mid-summer international break left Premier League/La Liga chips
+  // sitting there tappable into a permanently-empty list. Now only
+  // included when they actually have a live or today fixture, same
+  // standard the "whatever else" pass below already held itself to.
   const comps = useMemo(() => {
     const seen = new Set<string>([WC_NAME]);
     const list: string[] = [WC_NAME];
+    const today = todayISO();
+    const hasMatchNow = (leagueName: string) =>
+      fixtures.some(f => f.strLeague === leagueName && (isLive(f) || f.dateEvent === today));
     if (bzActive) {
-      for (const l of TOP_LEAGUES) { if (!seen.has(l.name)) { seen.add(l.name); list.push(l.name); } }
+      for (const l of TOP_LEAGUES) {
+        if (!seen.has(l.name) && hasMatchNow(l.name)) { seen.add(l.name); list.push(l.name); }
+      }
     }
     for (const f of [...fixtures].sort((a, b) => fixtureOrder(a) - fixtureOrder(b))) {
       if (f.strLeague && !seen.has(f.strLeague)) { seen.add(f.strLeague); list.push(f.strLeague); }

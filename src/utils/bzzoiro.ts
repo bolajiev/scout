@@ -25,21 +25,32 @@ const fetchWithTimeout = async (url: string, ms = 8000, init?: RequestInit): Pro
 };
 
 const norm = (s: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+// Kept space-separated (unlike norm() above) specifically so the
+// containment check below can require a real word boundary, not just a
+// raw character substring.
+const normWords = (s: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 // Same team name, different squad entirely — verified live: searching
 // "Spain" for recent form pulled in "Spain U19 3-0 Croatia U19" because
 // "spain" is a clean substring of "spainu19", contaminating a senior
 // team's form with youth-international results.
 const AGE_GRADE_RE = /\b(u1[0-9]|u2[0-9]|u23|ii|res(?:erves?)?|youth|women)\b/i;
-// Length-guarded containment match — bare `.includes()` with no minimum
-// let a short substring match unrelated names (verified live elsewhere in
-// this app: "brazil" contains "az"). Same fix applied here as
-// teamStats.ts's matchesTeamName.
-const fuzzyNameMatch = (a: string, b: string): boolean => {
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// BUG FIX: bare character-substring containment (after stripping ALL
+// spaces) let a completely unrelated club match a country name — verified
+// live: searching "England" pulled in "New England Revolution" (an MLS
+// club, nothing to do with the national team) because "england" is a
+// clean substring of "newenglandrevolution" once spaces are gone. Requires
+// the shorter name to appear as a whole word (or run of whole words),
+// anchored to a real word boundary in the longer one.
+const wordBoundaryContains = (long: string, short: string): boolean =>
+  short.length >= 4 && new RegExp(`(^|\\s)${escapeRe(short)}(\\s|$)`).test(long);
+export const fuzzyNameMatch = (a: string, b: string): boolean => {
   const na = norm(a), nb = norm(b);
   if (!na || !nb) return false;
   if (na === nb) return true;
   if (AGE_GRADE_RE.test(a) !== AGE_GRADE_RE.test(b)) return false;
-  return (na.length >= 4 && nb.includes(na)) || (nb.length >= 4 && na.includes(nb));
+  const wa = normWords(a), wb = normWords(b);
+  return wordBoundaryContains(wa, wb) || wordBoundaryContains(wb, wa);
 };
 
 // /api/v2/events/ is paginated ({count, next, previous, results}) despite
@@ -511,6 +522,48 @@ export async function fetchLineups(key: string, bzEventId: number): Promise<Matc
       home: mapSide(data.lineups.home),
       away: mapSide(data.lineups.away),
     };
+  } catch {
+    return empty;
+  }
+}
+
+export interface EventExtra {
+  roundName: string | null;
+  weather: { description: string; temperatureC: number | null; windSpeedKmh: number | null } | null;
+  venueName: string | null;
+  venueCity: string | null;
+}
+
+// Round/weather/venue — verified live on a real finished match (venue_id
+// 1182 → "MetLife Stadium, East Rutherford"; weather came back as a full
+// object with description/temp/wind, no extra parsing needed). Venue name
+// isn't embedded in the event itself, only a venue_id, so it's a second
+// lookup — best-effort, since a fixture with no matching venue just means
+// this section quietly doesn't render rather than erroring.
+export async function fetchEventExtra(key: string, bzEventId: number): Promise<EventExtra> {
+  const empty: EventExtra = { roundName: null, weather: null, venueName: null, venueCity: null };
+  try {
+    const res = await fetchWithTimeout(`${BASE}/api/v2/events/${bzEventId}/`, 6000, { headers: authHeaders(key) });
+    if (!res.ok) return empty;
+    const data = await res.json();
+    const weather = data.weather ? {
+      description: data.weather.description ?? '',
+      temperatureC: typeof data.weather.temperature_c === 'number' ? data.weather.temperature_c : null,
+      windSpeedKmh: typeof data.weather.wind_speed === 'number' ? data.weather.wind_speed : null,
+    } : null;
+    let venueName: string | null = null;
+    let venueCity: string | null = null;
+    if (data.venue_id) {
+      try {
+        const vRes = await fetchWithTimeout(`${BASE}/api/v2/venues/${data.venue_id}/`, 4000, { headers: authHeaders(key) });
+        if (vRes.ok) {
+          const v = await vRes.json();
+          venueName = v.name ?? null;
+          venueCity = v.city ?? null;
+        }
+      } catch { /* venue lookup is best-effort — round/weather still render without it */ }
+    }
+    return { roundName: data.round_name ?? null, weather, venueName, venueCity };
   } catch {
     return empty;
   }

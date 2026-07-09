@@ -132,74 +132,33 @@ export default function HistoryScreen() {
 
   // ── Per-type expanded content ─────────────────────────────────────────────
   // Chat sessions no longer expand in place at all — tapping one jumps
-  // straight into live AI Coach (see renderSession), so there's no
-  // preview renderer needed here anymore. Predictor/Lens still preview
-  // in place since there's no "continue" flow for a one-shot result.
+  // straight into live AI Coach (see renderSession). Predictor sessions
+  // used to expand in place here too (an accordion re-deriving the same
+  // card PredictionResultScreen already renders) — now they navigate
+  // straight to that actual result page instead, same as Chat does, via
+  // openPrediction below. Lens/scan sessions still preview in place since
+  // there's no dedicated result screen to jump into.
 
-  const renderPrediction = (session: Session, msgs: Message[]) => {
-    const answer = msgs.find(m => m.role === 'assistant')?.content ?? '';
-    const userMsg = msgs.find(m => m.role === 'user')?.content ?? '';
-    // BUG FIX: this used to only pull winner/score/confidence/analysis —
-    // the full structured output (HOME WIN/DRAW/AWAY WIN, KEY HOME/AWAY)
-    // was sitting right there in the saved text the whole time, just
-    // never parsed, so a saved prediction's History preview showed
-    // noticeably less than the SAME call's fresh result page did. Now
-    // uses the identical shared parser as the live screen.
-    const p = parsePrediction(answer);
+  // BUG FIX: tapping a saved prediction used to expand an in-place
+  // accordion re-deriving a smaller copy of the result card, instead of
+  // just opening the real PredictionResult page the fresh call itself
+  // used. Parses the saved text with the same shared parser and hands it
+  // to that screen directly — one card implementation, not two.
+  const openPrediction = (session: Session) => {
+    let msgs = messages[session.id];
+    if (!msgs) {
+      try { msgs = getMessages(session.id); } catch { msgs = []; }
+    }
+    const assistantMsg = msgs.find(m => m.role === 'assistant');
+    const p = parsePrediction(assistantMsg?.content ?? '');
     const [teamA, teamB] = session.title.split(' vs ');
-    const h = parseFloat(p.homeWin), d = parseFloat(p.draw), a = parseFloat(p.awayWin);
-    const hasOdds = !isNaN(h) && !isNaN(d) && !isNaN(a) && h + d + a > 0;
-    const oddsTotal = h + d + a;
-    return (
-      <View style={[styles.msgList, { borderTopColor: theme.border }]}>
-        <View style={[styles.predBoard, { backgroundColor: theme.cardAlt }]}>
-          <View style={styles.predTeams}>
-            <View style={styles.predTeamCol}>
-              <Text style={[styles.predTeamName, { color: theme.text }]} numberOfLines={2}>{teamA ?? '?'}</Text>
-              {p.winner && teamA && p.winner.toLowerCase().includes(teamA.trim().toLowerCase()) && (
-                <View style={[styles.winTag, { backgroundColor: accent }]}><Text style={styles.winTagText}>WIN</Text></View>
-              )}
-            </View>
-            <Text style={[styles.predScore, { color: theme.text }]}>{p.score || 'vs'}</Text>
-            <View style={[styles.predTeamCol, styles.predTeamColRight]}>
-              <Text style={[styles.predTeamName, { color: theme.text }]} numberOfLines={2}>{teamB ?? '?'}</Text>
-              {p.winner && teamB && p.winner.toLowerCase().includes(teamB.trim().toLowerCase()) && (
-                <View style={[styles.winTag, { backgroundColor: accent }]}><Text style={styles.winTagText}>WIN</Text></View>
-              )}
-            </View>
-          </View>
-          {p.confidence ? (
-            <Text style={[styles.predConf, { color: p.confidence === 'High' ? accent : theme.textSecondary }]}>
-              {p.confidence} confidence
-            </Text>
-          ) : null}
-          {hasOdds && (
-            <View style={styles.oddsRow}>
-              <Text style={[styles.oddsChip, { color: theme.text, backgroundColor: theme.card }]}>{Math.round((h / oddsTotal) * 100)}%</Text>
-              <Text style={[styles.oddsChip, { color: theme.textSecondary, backgroundColor: theme.card }]}>{Math.round((d / oddsTotal) * 100)}% draw</Text>
-              <Text style={[styles.oddsChip, { color: theme.text, backgroundColor: theme.card }]}>{Math.round((a / oddsTotal) * 100)}%</Text>
-            </View>
-          )}
-        </View>
-        {p.analysis ? (
-          <Text style={[styles.predAnalysis, { color: theme.text }]}>{p.analysis}</Text>
-        ) : answer ? (
-          <Text style={[styles.predAnalysis, { color: theme.text }]}>{answer}</Text>
-        ) : null}
-        {(p.keyHome || p.keyAway) && (
-          <View style={styles.predKeySection}>
-            <Text style={[styles.predKeyLabel, { color: theme.textTertiary }]}>PLAYERS TO WATCH</Text>
-            {p.keyHome ? <Text style={[styles.predKeyLine, { color: theme.text }]}>{p.keyHome}</Text> : null}
-            {p.keyAway ? <Text style={[styles.predKeyLine, { color: theme.text }]}>{p.keyAway}</Text> : null}
-          </View>
-        )}
-        {userMsg.includes('Context:') && (
-          <Text style={[styles.predContext, { color: theme.textSecondary }]} numberOfLines={3}>
-            {userMsg.slice(userMsg.indexOf('Context:'))}
-          </Text>
-        )}
-      </View>
-    );
+    navigation.navigate('PredictionResult', {
+      teamA: (teamA ?? '').trim(), teamB: (teamB ?? '').trim(),
+      winner: p.winner, score: p.score, confidence: p.confidence,
+      homeWin: p.homeWin, draw: p.draw, awayWin: p.awayWin,
+      keyHome: p.keyHome, keyAway: p.keyAway, analysis: p.analysis,
+      elapsed: assistantMsg?.meta?.elapsed,
+    });
   };
 
   const renderScan = (msgs: Message[]) => {
@@ -224,17 +183,25 @@ export default function HistoryScreen() {
 
   const renderSession = (session: Session) => {
     // Chat sessions skip the preview entirely — tap goes straight into
-    // live AI Coach with the conversation restored, no expand-then-tap-
-    // continue step. Predictor/Lens still preview in place since a
-    // one-shot result has no "continue" flow to jump into.
+    // live AI Coach with the conversation restored. Predictor sessions now
+    // do the same, jumping straight to the real PredictionResult page (see
+    // openPrediction) instead of expanding a duplicate card in place. Only
+    // Lens/scan sessions still preview in place, since there's no
+    // dedicated result screen for those to jump into.
     const isChat = session.screen === 'matchai';
-    const isOpen = !isChat && expanded === session.id;
+    const isPrediction = session.screen === 'predictor';
+    const isOpen = !isChat && !isPrediction && expanded === session.id;
     const msgs = messages[session.id] ?? [];
+    const onRowPress = () => {
+      if (isChat) navigation.navigate('MainTabs', { screen: 'MatchAI', params: { resumeSessionId: session.id } });
+      else if (isPrediction) openPrediction(session);
+      else expand(session.id);
+    };
     return (
       <View key={session.id} style={[styles.sessionCard, { backgroundColor: theme.card }, isOpen ? { borderWidth: 1, borderColor: accent + '50' } : null]}>
         <TouchableOpacity
           style={styles.sessionRow}
-          onPress={() => isChat ? navigation.navigate('MainTabs', { screen: 'MatchAI', params: { resumeSessionId: session.id } }) : expand(session.id)}
+          onPress={onRowPress}
           activeOpacity={0.75}
         >
           <View style={styles.sessionLeft}>
@@ -248,16 +215,11 @@ export default function HistoryScreen() {
             >
               <Text style={[styles.deleteBtn, { color: theme.error }]}>Delete</Text>
             </TouchableOpacity>
-            <Text style={[styles.chevron, { color: theme.textSecondary }]}>{isChat ? '›' : isOpen ? '‹' : '›'}</Text>
+            <Text style={[styles.chevron, { color: theme.textSecondary }]}>{(isChat || isPrediction) ? '›' : isOpen ? '‹' : '›'}</Text>
           </View>
         </TouchableOpacity>
 
-        {isOpen && (
-          // session.screen (the row's own stored type), never the ambient
-          // `tab` — ties the renderer choice to the data itself so a wrong
-          // card can't render even if tab/sessions were ever out of sync
-          session.screen === 'predictor' ? renderPrediction(session, msgs) : renderScan(msgs)
-        )}
+        {isOpen && renderScan(msgs)}
       </View>
     );
   };

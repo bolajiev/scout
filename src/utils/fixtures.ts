@@ -180,27 +180,38 @@ const saveFixturesToDb = (fixtures: Fixture[], date: string) => {
   }
 };
 
+type FixtureRow = {
+  id_event: string; home_team: string; away_team: string;
+  league: string; match_time: string; date_event: string | null;
+  home_score: string | null; away_score: string | null;
+  home_badge: string | null; away_badge: string | null;
+};
+const rowToFixture = (r: FixtureRow): Fixture => ({
+  idEvent: r.id_event,
+  strHomeTeam: r.home_team,
+  strAwayTeam: r.away_team,
+  strLeague: normalizeLeague(r.league),
+  strTime: r.match_time,
+  dateEvent: r.date_event,
+  intHomeScore: r.home_score,
+  intAwayScore: r.away_score,
+  strHomeTeamBadge: r.home_badge,
+  strAwayTeamBadge: r.away_badge,
+});
+
 const loadFixturesFromDb = (date: string): Fixture[] => {
   const db = getDb();
-  const rows = db.getAllSync<{
-    id_event: string; home_team: string; away_team: string;
-    league: string; match_time: string; date_event: string | null;
-    home_score: string | null; away_score: string | null;
-    home_badge: string | null; away_badge: string | null;
-  }>('SELECT * FROM fixtures WHERE cache_date = ?', [date]);
-
-  return rows.map(r => ({
-    idEvent: r.id_event,
-    strHomeTeam: r.home_team,
-    strAwayTeam: r.away_team,
-    strLeague: normalizeLeague(r.league),
-    strTime: r.match_time,
-    dateEvent: r.date_event,
-    intHomeScore: r.home_score,
-    intAwayScore: r.away_score,
-    strHomeTeamBadge: r.home_badge,
-    strAwayTeamBadge: r.away_badge,
-  }));
+  const rows = db.getAllSync<FixtureRow>('SELECT * FROM fixtures WHERE cache_date = ?', [date]);
+  if (rows.length > 0) return rows.map(rowToFixture);
+  // BUG FIX: saveFixturesToDb wipes any OTHER date's rows on every
+  // successful fetch, so the table only ever holds one date's worth of
+  // fixtures at a time anyway — requiring an EXACT match on `date` meant
+  // opening the app offline on a day nothing had successfully fetched yet
+  // returned nothing at all, even though yesterday's real fixtures (still
+  // informative, just possibly stale) were sitting right there until the
+  // next successful fetch. Fall back to whatever's cached, any date.
+  const fallback = db.getAllSync<FixtureRow>('SELECT * FROM fixtures ORDER BY cache_date DESC LIMIT 50');
+  return fallback.map(rowToFixture);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
