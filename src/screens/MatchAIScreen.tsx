@@ -345,7 +345,13 @@ const CATEGORY_POOLS = [
 ];
 
 // Animated three-dot typing indicator (the static one looked frozen)
-function TypingDots({ color }: { color: string }) {
+// BUG FIX: TypingDots now shows an elapsed-time label (e.g. "12s") next to
+// the animated dots. During the ~35s TTFT prompt-processing delay on CPU,
+// the user previously saw only three pulsing dots with zero indication of
+// progress — the same UX as a frozen screen. The running counter gives
+// concrete feedback that work is happening, matching the Thinking block's
+// own `liveElapsedS` behavior.
+function TypingDots({ color, elapsedS }: { color: string; elapsedS?: number }) {
   const dots = useRef([new Animated.Value(0.25), new Animated.Value(0.25), new Animated.Value(0.25)]).current;
   useEffect(() => {
     const loops = dots.map((d, i) =>
@@ -364,6 +370,9 @@ function TypingDots({ color }: { color: string }) {
       {dots.map((d, i) => (
         <Animated.View key={i} style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: color, opacity: d }} />
       ))}
+      {elapsedS != null && elapsedS > 0 && (
+        <Text style={{ color, fontSize: 12, marginLeft: 4, opacity: 0.7 }}>{elapsedS}s</Text>
+      )}
     </View>
   );
 }
@@ -899,10 +908,10 @@ export default function MatchAIScreen() {
         // showed up in History (has a message) but opened into a chat
         // with nothing to restore. startChatSession does both in one
         // transaction, same fix as Predictor's createPredictionSession.
-        mySessionId = startChatSession('matchai', q, q, image ? { image } : undefined);
+        mySessionId = await startChatSession('matchai', q, q, image ? { image } : undefined);
         sessionIdRef.current = mySessionId;
       } else {
-        addMessage(mySessionId, 'user', q, image ? { image } : undefined);
+        await addMessage(mySessionId, 'user', q, image ? { image } : undefined);
       }
     } catch {}
 
@@ -916,7 +925,14 @@ export default function MatchAIScreen() {
     if (image) userMsg.attachments = [{ path: toPath(image) }];
     history.push(userMsg);
 
-    setSlot({ id: entryId, question: q, image: image ?? undefined, answer: '', thought: '', isThinking: thinkingOn, toolStatus: null, liveSources: [], liveData: '' });
+    // BUG FIX: isThinking used to be set to `thinkingOn` immediately at
+    // slot creation — before ANY tokens arrive. During the ~35s TTFT prompt-
+    // processing delay on CPU, the user saw "Thinking... 0s", "Thinking...
+    // 1s", etc. with zero actual content, which read as frozen rather than
+    // working. Starting at false means both modes show the animated
+    // TypingDots during TTFT (which feel faster). The thought block only
+    // appears once real thinkingDelta tokens actually stream in.
+    setSlot({ id: entryId, question: q, image: image ?? undefined, answer: '', thought: '', isThinking: false, toolStatus: null, liveSources: [], liveData: '' });
     setIsGenerating(true);
     setGenStartedAt(Date.now());
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60);
@@ -955,7 +971,11 @@ export default function MatchAIScreen() {
       // budget as a football analysis, so capping it tighter buys real
       // speed without cutting a normal answer off mid-thought.
       const genParams = {
-        predict: image ? 220 : thinkingOn ? gp.maxTokens + 500 : gp.maxTokens,
+        // BUG FIX: Fast mode used gp.maxTokens (1024) uncapped — at CPU
+        // token rates, that's a long wait for what should be a snappy
+        // opinion or one-liner. Capping at 512 keeps Fast mode genuinely
+        // fast while leaving enough room for a real, complete answer.
+        predict: image ? 220 : thinkingOn ? gp.maxTokens + 500 : Math.min(gp.maxTokens, 512),
         temp: gp.temp,
         top_k: gp.top_k,
         top_p: gp.top_p,
@@ -1121,8 +1141,14 @@ export default function MatchAIScreen() {
       // containing leaked tool-call tokens), which then got saved to the
       // database via addMessage below regardless of mount state — a leak
       // that had nothing to do with a mismatched dialect, just this gate.
-      // Tool execution/pass-2 must run whenever real tool calls exist;
-      // mountedRef only gates the actual UI updates within it.
+      // BUG FIX (v2): tool execution/pass-2 must still run when real tool
+      // calls exist (so the answer is complete and saveable), but we must
+      // bail EARLY if the user navigated away — no point running a full
+      // tool-fetch + pass-2 completion just to discard the result. The
+      // abortRef check here catches the cleanup() cancel() call from
+      // unmount, which sets abortRef before the pipeline reaches this
+      // point in most cases.
+      if (abortRef.current) throw new InferenceCancelledError(run1.requestId, { text: pass1Answer });
       if (toolCalls.length > 0) {
         // ── Tool execution ──────────────────────────────────────────────────
         if (mountedRef.current) { setSlot(s => s ? { ...s, toolStatus: 'Fetching data...', answer: '' } : s); }
@@ -1142,7 +1168,7 @@ export default function MatchAIScreen() {
               // earlier. Verified live: one of these calls alone took 238.6s.
               // Reads the cache first (instant); only reaches for a live call
               // — Bzzoiro only, no TheSportsDB — when nothing's cached yet.
-              let fixtures = getCachedFixturesNow();
+              let fixtures = await getCachedFixturesNow();
               if (fixtures.length === 0) {
                 const bzKey = await getActiveBzKey().catch(() => '');
                 fixtures = bzKey ? await fetchBzMatches(bzKey, todayISO(), todayISO()).catch(() => []) : [];
@@ -1171,7 +1197,7 @@ export default function MatchAIScreen() {
                 // Bzzoiro itself already came up empty. Checks the cache
                 // (instant) and otherwise says so honestly rather than
                 // reaching for a different source silently.
-                const teamFix = getCachedFixturesNow().filter(f =>
+                const teamFix = (await getCachedFixturesNow()).filter(f =>
                   f.strHomeTeam?.toLowerCase().includes(teamName.toLowerCase()) ||
                   f.strAwayTeam?.toLowerCase().includes(teamName.toLowerCase())
                 );
@@ -1207,6 +1233,7 @@ export default function MatchAIScreen() {
         // pass-2-specific instruction, the model sometimes stalled/produced
         // nothing usable right when real data was sitting in its own
         // history — a direct nudge to just use it now is cheap insurance.
+        if (abortRef.current) throw new InferenceCancelledError(run1.requestId, { text: pass1Answer });
         const pass2SystemPrompt = `${buildSystemPrompt(toolsActiveThisTurn)} You already have real, live data above from a tool call — read it and answer the user's question directly and completely using it now. Do not call another tool, do not narrate that you're checking anything, do not write a placeholder.`;
         const run2 = completion({
           modelId,
@@ -1304,7 +1331,7 @@ export default function MatchAIScreen() {
       if (thinkingStarted && !thinkMs) thinkMs = totalMs;
       // mySessionId, not sessionIdRef.current — see the capture above.
       if (mySessionId && answerAcc) {
-        addMessage(mySessionId, 'assistant', answerAcc, {
+        await addMessage(mySessionId, 'assistant', answerAcc, {
           elapsed, toks: finalStats?.generatedTokens,
           thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined,
         });
@@ -1649,7 +1676,7 @@ export default function MatchAIScreen() {
                   {slot.answer.length > 0 ? (
                     <Text style={[styles.aiText, { color: theme.text }]}>{slot.answer}</Text>
                   ) : (
-                    <TypingDots color={accent} />
+                    <TypingDots color={accent} elapsedS={liveElapsedS} />
                   )}
                 </View>
               </View>

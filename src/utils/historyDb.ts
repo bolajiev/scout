@@ -150,13 +150,16 @@ export const cleanupOrphanedSessions = (): void => {
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
-export const addMessage = (
+// BUG FIX: addMessage used db.runSync(), blocking the JS thread after every
+// inference completion — right when the user expected a snappy transition
+// back to idle. Switched to db.runAsync().
+export const addMessage = async (
   sessionId: string,
   role: 'user' | 'assistant',
   content: string,
   meta?: MessageMeta,
-): void => {
-  getDb().runSync(
+): Promise<void> => {
+  await getDb().runAsync(
     'INSERT INTO messages (id, session_id, role, content, created_at, meta) VALUES (?, ?, ?, ?, ?, ?)',
     [uid(), sessionId, role, content, Date.now(), meta ? JSON.stringify(meta) : null],
   );
@@ -172,15 +175,18 @@ export const addMessage = (
 // filter didn't catch this (it has a message, just the wrong one), so it
 // still showed up in History; tapping it opened a chat with nothing to
 // restore since the resume logic looks for a user message specifically.
-export const startChatSession = (screen: ScreenType, title: string, firstUserMessage: string, meta?: MessageMeta): string => {
+// BUG FIX: startChatSession used db.withTransactionSync() + db.runSync(),
+// blocking the JS thread during session creation. Switched to async
+// equivalents so the UI stays responsive while the session is saved.
+export const startChatSession = async (screen: ScreenType, title: string, firstUserMessage: string, meta?: MessageMeta): Promise<string> => {
   const db = getDb();
   const id = uid();
-  db.withTransactionSync(() => {
-    db.runSync(
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
       'INSERT INTO sessions (id, screen, title, created_at) VALUES (?, ?, ?, ?)',
       [id, screen, title.slice(0, 120), Date.now()],
     );
-    db.runSync(
+    await db.runAsync(
       'INSERT INTO messages (id, session_id, role, content, created_at, meta) VALUES (?, ?, ?, ?, ?, ?)',
       [uid(), id, 'user', firstUserMessage, Date.now(), meta ? JSON.stringify(meta) : null],
     );
@@ -198,19 +204,22 @@ export const startChatSession = (screen: ScreenType, title: string, firstUserMes
 // empty content once a user genuinely hit a save-time failure). Wrapping
 // all three in one transaction means it's all-or-nothing — no more
 // half-saved sessions to leave behind.
-export const createPredictionSession = (title: string, userContent: string, assistantContent: string): string => {
+// BUG FIX: createPredictionSession used db.withTransactionSync() +
+// db.runSync(), blocking the JS thread during session creation. Switched
+// to async equivalents.
+export const createPredictionSession = async (title: string, userContent: string, assistantContent: string): Promise<string> => {
   const db = getDb();
   const id = uid();
-  db.withTransactionSync(() => {
-    db.runSync(
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
       'INSERT INTO sessions (id, screen, title, created_at) VALUES (?, ?, ?, ?)',
       [id, 'predictor', title.slice(0, 120), Date.now()],
     );
-    db.runSync(
+    await db.runAsync(
       'INSERT INTO messages (id, session_id, role, content, created_at, meta) VALUES (?, ?, ?, ?, ?, ?)',
       [uid(), id, 'user', userContent, Date.now(), null],
     );
-    db.runSync(
+    await db.runAsync(
       'INSERT INTO messages (id, session_id, role, content, created_at, meta) VALUES (?, ?, ?, ?, ?, ?)',
       [uid(), id, 'assistant', assistantContent, Date.now(), null],
     );
@@ -261,11 +270,13 @@ export interface PredictionRow {
   outcome: 'hit' | 'miss' | null;
 }
 
-export const addPrediction = (
+// BUG FIX: addPrediction used db.runSync(), blocking the JS thread.
+// Switched to db.runAsync().
+export const addPrediction = async (
   teamA: string, teamB: string,
   predictedWinner: string, predictedScore: string, confidence: string,
-): void => {
-  getDb().runSync(
+): Promise<void> => {
+  await getDb().runAsync(
     `INSERT INTO predictions (id, team_a, team_b, predicted_winner, predicted_score, confidence, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [uid(), teamA, teamB, predictedWinner, predictedScore || null, confidence || null, Date.now()],

@@ -164,11 +164,16 @@ export const teamAbbr = (name: string): string => {
 
 // ── SQLite cache ──────────────────────────────────────────────────────────────
 
-const saveFixturesToDb = (fixtures: Fixture[], date: string) => {
+// BUG FIX: saveFixturesToDb used db.runSync() in a loop for every fixture
+// (potentially 50+), blocking the JS thread during every fixture save. On
+// mid-range phones this caused visible UI freezes right after fixture
+// fetches completed — the same moment the user expects fresh data to
+// appear. Switched to db.runAsync() so writes happen off the main thread.
+const saveFixturesToDb = async (fixtures: Fixture[], date: string) => {
   const db = getDb();
-  db.runSync('DELETE FROM fixtures WHERE cache_date != ?', [date]);
+  await db.runAsync('DELETE FROM fixtures WHERE cache_date != ?', [date]);
   for (const f of fixtures) {
-    db.runSync(
+    await db.runAsync(
       `INSERT OR REPLACE INTO fixtures
          (id_event, home_team, away_team, league, match_time, date_event,
           home_score, away_score, home_badge, away_badge, cache_date)
@@ -199,18 +204,16 @@ const rowToFixture = (r: FixtureRow): Fixture => ({
   strAwayTeamBadge: r.away_badge,
 });
 
-// Coach's get_today_fixtures tool reads this directly instead of doing its
-// own live fetch — verified live, that used to mean a SECOND full
-// fetchAndCacheFixtures() call (Bzzoiro + 4 separate TheSportsDB HTTP
-// calls) on every single fixtures question, on top of whatever the
-// Matches tab had already fetched moments earlier. This is instant (a
-// synchronous SQLite read of whatever's already cached), so it only
-// falls back to a live call at all when nothing's cached yet.
-export const getCachedFixturesNow = (): Fixture[] => loadFixturesFromDb(todayISO());
+// BUG FIX: getCachedFixturesNow and loadFixturesFromDb used db.getAllSync(),
+// blocking the JS thread during every cache read — called from the
+// inference tool-execution loop (MatchAI), so this added visible latency
+// right when the user was already waiting for a tool-based answer.
+// Switched to db.getAllAsync() so reads happen off the main thread.
+export const getCachedFixturesNow = (): Promise<Fixture[]> => loadFixturesFromDb(todayISO());
 
-const loadFixturesFromDb = (date: string): Fixture[] => {
+const loadFixturesFromDb = async (date: string): Promise<Fixture[]> => {
   const db = getDb();
-  const rows = db.getAllSync<FixtureRow>('SELECT * FROM fixtures WHERE cache_date = ?', [date]);
+  const rows = await db.getAllAsync<FixtureRow>('SELECT * FROM fixtures WHERE cache_date = ?', [date]);
   if (rows.length > 0) return rows.map(rowToFixture);
   // BUG FIX: saveFixturesToDb wipes any OTHER date's rows on every
   // successful fetch, so the table only ever holds one date's worth of
@@ -219,7 +222,7 @@ const loadFixturesFromDb = (date: string): Fixture[] => {
   // returned nothing at all, even though yesterday's real fixtures (still
   // informative, just possibly stale) were sitting right there until the
   // next successful fetch. Fall back to whatever's cached, any date.
-  const fallback = db.getAllSync<FixtureRow>('SELECT * FROM fixtures ORDER BY cache_date DESC LIMIT 50');
+  const fallback = await db.getAllAsync<FixtureRow>('SELECT * FROM fixtures ORDER BY cache_date DESC LIMIT 50');
   return fallback.map(rowToFixture);
 };
 
@@ -428,11 +431,11 @@ export const fetchAndCacheFixtures = async (): Promise<{
     }
 
     // Caching is best-effort — never lose fresh network data to a DB error
-    try { saveFixturesToDb(merged, today); } catch {}
+    try { await saveFixturesToDb(merged, today); } catch {}
     return { fixtures: merged, fromCache: false, online: true };
   } catch {
     let cached: Fixture[] = [];
-    try { cached = loadFixturesFromDb(today); } catch {}
+    try { cached = await loadFixturesFromDb(today); } catch {}
     return { fixtures: cached, fromCache: true, online: false };
   }
 };

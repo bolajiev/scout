@@ -560,7 +560,7 @@ export default function PredictorScreen() {
           const historyPrompt = context.trim()
             ? `${teamA} vs ${teamB}\n\nContext: ${context.trim()}`
             : `${teamA} vs ${teamB}`;
-          createPredictionSession(`${teamA} vs ${teamB}`, historyPrompt, streamed);
+          await createPredictionSession(`${teamA} vs ${teamB}`, historyPrompt, streamed);
         } catch {}
       }
 
@@ -586,7 +586,7 @@ export default function PredictorScreen() {
         // missing from the W/L record with no way to know), so at least
         // surface it instead of swallowing it silently.
         try {
-          addPrediction(teamA.trim(), teamB.trim(), p.winner, p.score, p.confidence);
+          await addPrediction(teamA.trim(), teamB.trim(), p.winner, p.score, p.confidence);
           setRecord(getPredictionRecord());
         } catch (e) {
           console.warn('[Predictor] addPrediction failed — this call will never be graded:', e);
