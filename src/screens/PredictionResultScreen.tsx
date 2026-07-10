@@ -84,7 +84,7 @@ export default function PredictionResultScreen() {
     teamA = '', teamB = '', winner = '', score = '', confidence = '',
     homeWin = '', draw: drawPct = '', awayWin = '',
     keyHome = '', keyAway = '', analysis = '', elapsed,
-    homeRating = null, awayRating = null, device,
+    homeRating = null, awayRating = null, device, modelName,
   } = route.params ?? {};
 
   const winnerIsDraw = /draw/i.test(winner);
@@ -245,7 +245,7 @@ export default function PredictionResultScreen() {
                 <View style={[styles.statRow, { borderTopColor: theme.border }]}>
                   <View style={[styles.statDot, { backgroundColor: accent }]} />
                   <Text style={[styles.stat, { color: theme.textTertiary }]}>
-                    Generated in {elapsed}s, entirely on-device{device ? ` (${String(device).toUpperCase()})` : ''}
+                    Generated in {elapsed}s, entirely on-device{device ? ` (${String(device).toUpperCase()})` : ''}{modelName ? ` · ${modelName}` : ''}
                   </Text>
                 </View>
               )}

@@ -95,15 +95,22 @@ export async function getActiveBzKey(): Promise<string> {
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
-  // BUG FIX: was 'cpu' — every model load, text or vision, defaulted to
-  // unaccelerated CPU inference unless a user happened to manually flip
-  // this in Settings, which is exactly why the same model (Gemma) reads
-  // fast in other apps but was slow here. Safe to flip the default now
-  // that modelManager.ts's fallback-to-CPU-on-failure applies to ANY
-  // gpu attempt (it used to only cover the auto-resolved case) — a
-  // device without real OpenCL support hits this once, permanently
-  // reverts itself to 'cpu', and never tries GPU again.
-  accelerator: 'gpu',
+  // BUG FIX: reverted back to 'cpu' — an earlier round flipped this to
+  // 'gpu' on the reasoning that the SDK's own defaults lean GPU and a
+  // failed GPU attempt cleanly falls back to CPU. That reasoning missed a
+  // real constraint specific to THIS app: Scout's own build ships OpenCL
+  // only (Vulkan is excluded elsewhere in this file's build.gradle for
+  // being crash-prone), and QVAC's own docs describe OpenCL as supported
+  // on "select Android devices" only, not Android GPUs generally — a
+  // narrower surface than Vulkan would be. The CPU-fallback safety net
+  // only helps when a GPU attempt actually THROWS; it does nothing if
+  // OpenCL initializes "successfully" on a device where it isn't really
+  // backed by working hardware acceleration, which reads identically to
+  // a working GPU from the app's own perspective while performing at
+  // CPU-equivalent (or worse) speed. Verified live: a real device hit
+  // multi-minute waits and overheating consistent with exactly this.
+  // GPU stays available as the existing "experimental" opt-in in Settings.
+  accelerator: 'cpu',
   // 'short' by default: at CPU token rates, capped answers are the
   // difference between a snappy app and a 3-minute wait
   responseLength: 'short',

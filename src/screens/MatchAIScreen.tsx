@@ -398,6 +398,7 @@ interface Entry {
   elapsed?: number;
   toks?: number;
   device?: 'cpu' | 'gpu';  // which backend actually ran this — real, on-device inference proof
+  modelName?: string;  // which model — critical for diagnosing "why is this so slow" reports
   liveSources?: string[];  // deduped source names, e.g. ['TheSportsDB', 'Bzzoiro Sports']
   liveData?: string;  // the raw tool result the model actually saw — user-visible on demand
 }
@@ -721,17 +722,22 @@ export default function MatchAIScreen() {
     setLoadPct(0);
     try {
       const supportsTools = visionModel.supportsTools ?? false;
-      // BUG FIX: 'auto' deferred to the global CPU-default accelerator
-      // setting — every vision load ran on CPU only unless the user had
-      // separately opted into GPU in Settings, which nobody would think
-      // to do just to read a photo. Image encoding is exactly the
-      // workload GPU acceleration helps most; explicitly requesting it
-      // here (with modelManager's now-unconditional CPU fallback on
-      // failure, see modelManager.ts) is the real lever for "why is this
-      // so much slower than other apps running the same model."
+      // BUG FIX: this used to force device: 'gpu' unconditionally,
+      // reasoned as "image encoding is exactly the workload GPU helps
+      // most." That's true ONLY when GPU acceleration is actually
+      // working — research this session found Scout's own build ships
+      // OpenCL only (Vulkan excluded elsewhere for being crash-prone),
+      // and QVAC's own docs describe OpenCL as supported on "select
+      // Android devices" only, not Android GPUs generally. On a device
+      // where it doesn't apply, this forced GPU on the single heaviest
+      // workload in the app regardless of the (now CPU-default)
+      // accelerator setting — consistent with reports of image reading
+      // being dramatically slow. 'auto' now defers to that same setting
+      // like every other model load, rather than carving out its own
+      // exception to it.
       const mid = await llmManager.ensure(
         visionModel,
-        { ctx_size: 2048, device: 'gpu', tools: supportsTools, projectionModelSrc: visionModel.projectionModelSrc },
+        { ctx_size: 2048, device: 'auto', tools: supportsTools, projectionModelSrc: visionModel.projectionModelSrc },
         pct => { if (mountedRef.current) setLoadPct(Math.round(pct)); },
       );
       modelNameRef.current = visionModel.name;
@@ -1305,7 +1311,7 @@ export default function MatchAIScreen() {
       }
 
       if (mountedRef.current) {
-        const finished: Entry = { id: entryId, question: q, image: image ?? undefined, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, device: finalStats?.backendDevice, liveSources: [...new Set(liveSources)], liveData: liveDataAcc || undefined };
+        const finished: Entry = { id: entryId, question: q, image: image ?? undefined, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, device: finalStats?.backendDevice, modelName: modelNameRef.current || undefined, liveSources: [...new Set(liveSources)], liveData: liveDataAcc || undefined };
         if (usedDataFallback) setDataOpen(p => ({ ...p, [entryId]: true }));
         setSlot(null);
         // Only append to the visible chat if we're still looking at the
@@ -1429,7 +1435,7 @@ export default function MatchAIScreen() {
               )}
               {entry.elapsed != null && (
                 <Text style={[styles.stat, { color: theme.textSecondary }]}>
-                  {entry.elapsed}s{entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''}{entry.device ? ` · ${entry.device.toUpperCase()}` : ''}
+                  {entry.elapsed}s{entry.toks ? ` · ${Math.round(entry.toks / (entry.elapsed || 1))} tok/s` : ''}{entry.device ? ` · ${entry.device.toUpperCase()}` : ''}{entry.modelName ? ` · ${entry.modelName}` : ''}
                 </Text>
               )}
               <TouchableOpacity

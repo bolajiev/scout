@@ -323,7 +323,17 @@ export default function HomeScreen() {
                 <Text style={[styles.heroEyebrow, { color: 'rgba(255,255,255,0.75)' }]} numberOfLines={1}>
                   {isWorldCup(hero) ? 'FIFA WORLD CUP 2026' : hero.strLeague.toUpperCase()}
                 </Text>
-                {isLive(hero) ? (
+                {/* BUG FIX: isLive() is a pure clock heuristic (kickoff time
+                    has passed, within ~130 min) — completely independent of
+                    whether this fixture's actual score fields have been
+                    populated. A fixture cached BEFORE kickoff (scores still
+                    null) that the app just sits open past kickoff on, with
+                    no fresh refetch since, flipped this pill to "LIVE" from
+                    clock math alone while showing the stale pre-match
+                    kickoff time underneath — LIVE badge with no real live
+                    data to back it up. Requires the actual score to exist
+                    too, matching what the section below actually renders. */}
+                {isLive(hero) && hero.intHomeScore != null && hero.intAwayScore != null ? (
                   <View style={[styles.livePill, { backgroundColor: theme.live }]}>
                     <LiveDot color="#fff" size={6} />
                     <Text style={styles.livePillText}>{hero.minute ? `${hero.minute}'` : 'LIVE'}</Text>
