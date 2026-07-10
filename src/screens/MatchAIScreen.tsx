@@ -992,7 +992,27 @@ export default function MatchAIScreen() {
       // available for this turn, and would narrate/attempt a tool call
       // anyway — exactly the vision+tool-calling failure mode this was
       // supposed to avoid. Must match the real `tools:` value below.
-      const toolsActiveThisTurn = !image && toolsEnabledRef.current;
+      //
+      // BUG FIX (v2): Even when tools were toggled on, every question —
+      // including pure tactics/opinion like "Explain gegenpressing" —
+      // received the full tool schema (~150 extra tokens). The model had
+      // to PROCESS those tokens AND reason about whether to use tools,
+      // adding real TTFT cost. Worse, the model sometimes GOT it wrong
+      // and called a tool for a tactics question, triggering a full
+      // two-pass cycle (pass-1 → tool fetch → pass-2) that could easily
+      // hit 100+ seconds on CPU. This lightweight classifier detects
+      // obvious tactics/opinion questions client-side and skips the tool
+      // schema entirely — no extra tokens, no tool-decision reasoning,
+      // no risk of an accidental tool call triggering pass-2.
+      const needsTools = (text: string): boolean => {
+        const t = text.toLowerCase().trim();
+        // Pure tactics/opinion patterns — these never need live data
+        if (/^(explain|what is|what are|how does|how do|how to|how would|compare|difference between|describe|tell me about|define|who is|who was|why does|why do|why would|opinion on|thoughts on|best way|which is better)/.test(t)) return false;
+        // Short questions (under 60 chars) that don't mention teams/players/fixtures — likely tactics
+        if (t.length < 60 && !/\b(team|player|match|fixture|score|result|form|stats|stats|league|cup|world cup|premier league|champions league|today|tonight|yesterday|tomorrow)\b/.test(t)) return false;
+        return true;
+      };
+      const toolsActiveThisTurn = !image && toolsEnabledRef.current && needsTools(q);
       const run1 = completion({
         modelId,
         history: [{ role: 'system', content: buildSystemPrompt(toolsActiveThisTurn) }, ...history],
