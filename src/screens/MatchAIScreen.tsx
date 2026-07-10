@@ -1253,16 +1253,34 @@ export default function MatchAIScreen() {
         // pass-2-specific instruction, the model sometimes stalled/produced
         // nothing usable right when real data was sitting in its own
         // history — a direct nudge to just use it now is cheap insurance.
+        //
+        // BUG FIX (v2 — kvCache): pass-2 used a DIFFERENT kvCache key
+        // (${mySessionId}:tools) than pass-1 (mySessionId). The SDK's
+        // kvCache is keyed by model+config+session — a different key means
+        // a separate cache, so pass-2 couldn't reuse pass-1's cached KV
+        // and had to reprocess the ENTIRE prompt from scratch (~520 tokens
+        // on CPU = minutes). Using the SAME key lets pass-2 reuse pass-1's
+        // cached system prompt + tools, only processing the new tool-result
+        // tokens. The pass-2-specific instruction ("You already have real,
+        // live data above...") is moved to a user message at the end of
+        // toolHistory so the SYSTEM PROMPT stays identical to pass-1's —
+        // the configHash (which includes the system prompt) must match for
+        // the cache hit to work.
         if (abortRef.current) throw new InferenceCancelledError(run1.requestId, { text: pass1Answer });
-        const pass2SystemPrompt = `${buildSystemPrompt(toolsActiveThisTurn)} You already have real, live data above from a tool call — read it and answer the user's question directly and completely using it now. Do not call another tool, do not narrate that you're checking anything, do not write a placeholder.`;
         const run2 = completion({
           modelId,
-          history: [{ role: 'system', content: pass2SystemPrompt }, ...toolHistory],
+          history: [
+            { role: 'system', content: buildSystemPrompt(toolsActiveThisTurn) },
+            ...toolHistory,
+            { role: 'user', content: 'You already have real, live data above from a tool call — read it and answer the original question directly and completely using it now. Do not call another tool, do not narrate that you\'re checking anything, do not write a placeholder.' },
+          ],
           stream: true,
-          // Separate key from pass-1 — toolHistory has a different shape
-          // (includes the tool result message), so it needs its own cache
-          // entry rather than colliding with pass-1's under the same key.
-          kvCache: mySessionId ? `${mySessionId}:tools` : true,
+          // Same key as pass-1 — the system prompt + tools are identical,
+          // so the cached KV from pass-1 is valid. Pass-2 only processes
+          // the new tokens (tool result + this instruction message) on top
+          // of the cached state, cutting pass-2's TTFT from minutes to
+          // seconds.
+          kvCache: mySessionId ?? true,
           captureThinking: false,
           // BUG FIX: this used to inherit genParams.predict unchanged — in
           // Fast mode that's gp.maxTokens (384 for the default "short"
