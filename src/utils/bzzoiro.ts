@@ -598,13 +598,13 @@ export const formatPlayerStatsContext = (stats: PlayerStatsSummary): string => {
   const { appearances } = stats;
   const totalGoals = appearances.reduce((s, a) => s + a.goals, 0);
   const totalAssists = appearances.reduce((s, a) => s + a.assists, 0);
-  const lines = appearances.map((a, i) =>
-    `Match ${i + 1} ago: ${a.goals} goal${a.goals === 1 ? '' : 's'}, ${a.assists} assist${a.assists === 1 ? '' : 's'}, ${a.minutesPlayed} min${a.rating != null ? `, rating ${a.rating}` : ''}`
-  );
+  const lines = appearances.map((a, i) => [
+    `  - Match ${i + 1} ago: ${a.goals} goal${a.goals === 1 ? '' : 's'}, ${a.assists} assist${a.assists === 1 ? '' : 's'}, ${a.minutesPlayed} min`,
+    a.rating != null ? `(rating ${a.rating})` : '',
+  ].filter(Boolean).join(' '));
   return [
-    `[PLAYER STATS — ${stats.name}, last ${appearances.length} appearances, via Bzzoiro Sports]`,
-    `Totals: ${totalGoals} goal${totalGoals === 1 ? '' : 's'}, ${totalAssists} assist${totalAssists === 1 ? '' : 's'}`,
+    `Player stats for ${stats.name} — last ${appearances.length} appearances (via Bzzoiro Sports):`,
+    `  - Total: ${totalGoals} goal${totalGoals === 1 ? '' : 's'}, ${totalAssists} assist${totalAssists === 1 ? '' : 's'}`,
     ...lines,
-    '[END PLAYER STATS]',
   ].join('\n');
 };

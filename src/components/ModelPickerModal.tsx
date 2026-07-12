@@ -3,31 +3,22 @@ import { View, Text, TouchableOpacity, StyleSheet, Modal, Pressable, FlatList } 
 import { getTheme } from '../theme';
 import { useTheme } from '../navigation/AppNavigator';
 import { fonts } from '../theme/fonts';
-import type { DownloadedModel } from '../types';
+import type { ModelInfo } from '../types';
 
-// Shown when the user taps "Load Model" and there's more than one
-// downloaded model to choose from — previously always auto-picked one
-// (loaded model > user default > first text model), silently ignoring
-// that a second one existed at all.
 export default function ModelPickerModal({
-  visible, models, currentModelId, onSelect, onClose,
+  visible, models, downloadedIds, currentModelId, onSelect, onGetModel, onClose,
 }: {
   visible: boolean;
-  models: DownloadedModel[];
+  models: ModelInfo[];
+  downloadedIds: Set<string>;
   currentModelId?: string | null;
-  onSelect: (model: DownloadedModel) => void;
+  onSelect: (model: ModelInfo) => void;
+  onGetModel: () => void;
   onClose: () => void;
 }) {
   const theme = getTheme(useTheme());
   const accent = theme.accent;
 
-  // BUG FIX: navigationBarTranslucent was dropped — verified in react-
-  // native's own ReactModalHostView.kt, it makes this Modal's own native
-  // window call enableEdgeToEdge(), which force-resets
-  // isNavigationBarContrastEnforced to true for THAT window, bypassing
-  // the app-wide theme fix (styles.xml) and reintroducing the white nav-
-  // bar scrim specifically while this modal is open. statusBarTranslucent
-  // alone still keeps the status bar dark-themed.
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
@@ -35,27 +26,40 @@ export default function ModelPickerModal({
           <View style={[styles.grabber, { backgroundColor: theme.border }]} />
           <Text style={[styles.title, { color: theme.text }]}>Choose a model</Text>
           <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-            This becomes your default until you change it here or in Settings.
+            Downloaded models load immediately. Tap Get to download a new one.
           </Text>
           <FlatList
             data={models}
             keyExtractor={m => m.id}
-            style={{ maxHeight: 360 }}
+            style={{ maxHeight: 400 }}
             renderItem={({ item }) => {
+              const isDownloaded = downloadedIds.has(item.id);
               const active = item.id === currentModelId;
               return (
                 <TouchableOpacity
                   style={[styles.row, { borderColor: theme.border }]}
-                  onPress={() => { onSelect(item); onClose(); }}
+                  onPress={() => { isDownloaded ? onSelect(item) : onGetModel(); }}
                   activeOpacity={0.7}
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.rowName, { color: theme.text }]}>{item.name}</Text>
+                    <View style={styles.rowNameRow}>
+                      <Text style={[styles.rowName, { color: theme.text }]}>{item.name}</Text>
+                      {active && <View style={[styles.activeDot, { backgroundColor: accent }]} />}
+                    </View>
                     <Text style={[styles.rowMeta, { color: theme.textSecondary }]}>
                       {item.modelType === 'vision' ? 'Vision' : 'Text'} · {item.size}
+                      {item.badge ? ` · ${item.badge}` : ''}
                     </Text>
                   </View>
-                  {active && <View style={[styles.activeDot, { backgroundColor: accent }]} />}
+                  {isDownloaded ? (
+                    <View style={[styles.useBadge, { backgroundColor: accent + '20' }]}>
+                      <Text style={[styles.useBadgeText, { color: accent }]}>Use</Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.getBadge, { backgroundColor: accent + '20' }]}>
+                      <Text style={[styles.getBadgeText, { color: accent }]}>Get</Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
               );
             }}
@@ -76,7 +80,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingVertical: 13, borderTopWidth: 1,
   },
+  rowNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowName: { fontSize: 14, fontFamily: fonts.bodySemiBold },
   rowMeta: { fontSize: 11.5, fontFamily: fonts.bodyMedium, marginTop: 2 },
   activeDot: { width: 8, height: 8, borderRadius: 4 },
+  getBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  getBadgeText: { fontSize: 11, fontWeight: '700' },
+  useBadge: { paddingHorizontal: 14, paddingVertical: 4, borderRadius: 999 },
+  useBadgeText: { fontSize: 11, fontWeight: '700' },
 });

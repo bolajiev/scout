@@ -116,7 +116,13 @@ export default function MatchDetailScreen() {
   // plumbing needed, just a real cross-feature entry point into it.
   const askCoach = () => navigation.navigate('MainTabs', {
     screen: 'MatchAI',
-    params: { prefill: `Tell me about ${fixture.strHomeTeam} vs ${fixture.strAwayTeam} — recent form, and what to watch for.` },
+    params: {
+      prefill: `Tell me about ${fixture.strHomeTeam} vs ${fixture.strAwayTeam} — recent form, and what to watch for.`,
+      fixtureHome: fixture.strHomeTeam,
+      fixtureAway: fixture.strAwayTeam,
+      fixtureLeague: fixture.strLeague,
+      fixtureDate: fixture.dateEvent,
+    },
   });
 
   // Won/draws/won tally from TODAY's home team's perspective — each h2h

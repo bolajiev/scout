@@ -177,6 +177,18 @@ export const IconStop = ({ size = 24, color = '#fff' }: IconProps) => (
   </Svg>
 );
 
+// Horizontal sliders / filter — for model capability (short/balanced/detailed)
+export const IconSliders = ({ size = 24, color = '#fff' }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Line x1="4" y1="6" x2="20" y2="6" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <Circle cx="8" cy="6" r="1.8" fill={color} stroke={color} strokeWidth="1.2" />
+    <Line x1="4" y1="12" x2="20" y2="12" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <Circle cx="16" cy="12" r="1.8" fill={color} stroke={color} strokeWidth="1.2" />
+    <Line x1="4" y1="18" x2="20" y2="18" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <Circle cx="12" cy="18" r="1.8" fill={color} stroke={color} strokeWidth="1.2" />
+  </Svg>
+);
+
 // Kebab menu — three vertical dots, for a dropdown trigger
 export const IconMore = ({ size = 24, color = '#fff' }: IconProps) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

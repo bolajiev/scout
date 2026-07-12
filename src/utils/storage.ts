@@ -244,10 +244,13 @@ export async function getSettings(): Promise<AppSettings> {
   }
 }
 
+let _saveQueue: Promise<void> = Promise.resolve();
 export async function saveSettings(settings: Partial<AppSettings>): Promise<void> {
-  const current = await getSettings();
-  const updated = { ...current, ...settings };
-  await AsyncStorage.setItem(KEYS.SETTINGS, JSON.stringify(updated));
+  _saveQueue = _saveQueue.then(async () => {
+    const current = await getSettings();
+    await AsyncStorage.setItem(KEYS.SETTINGS, JSON.stringify({ ...current, ...settings }));
+  });
+  return _saveQueue;
 }
 
 export async function setAccelerator(accel: Accelerator): Promise<void> {

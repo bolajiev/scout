@@ -65,15 +65,6 @@ function outcomeSplit(
   return { home: pct, draw, away: rem - draw };
 }
 
-// KEY HOME/AWAY come back as "Name — why he decides this match" — splitting
-// out the reason too (previously discarded, only the bare name showed) so
-// the pick reads as a justified call instead of a name dropped with no
-// grounding.
-function splitPlayerClause(s: string): { name: string; reason: string } {
-  const parts = (s ?? '').split(/\s[—–-]\s|,\s|\s\(/);
-  return { name: (parts[0] ?? '').trim(), reason: parts.slice(1).join(' ').replace(/\)$/, '').trim() };
-}
-
 export default function PredictionResultScreen() {
   const route = useRoute<any>();
   const theme = getTheme(useTheme());
@@ -83,8 +74,8 @@ export default function PredictionResultScreen() {
   const {
     teamA = '', teamB = '', winner = '', score = '', confidence = '',
     homeWin = '', draw: drawPct = '', awayWin = '',
-    keyHome = '', keyAway = '', analysis = '', elapsed,
-    homeRating = null, awayRating = null, device, modelName,
+    analysis = '', elapsed,
+    device, modelName,
   } = route.params ?? {};
 
   const winnerIsDraw = /draw/i.test(winner);
@@ -178,69 +169,12 @@ export default function PredictionResultScreen() {
           </Text>
         </Animated.View>
 
-        {/* Analysis — reasoning first, then the key-player call as a
-            conclusion drawn from it (was the other way round, reading as
-            an unexplained assertion before you'd seen any of the
-            reasoning behind it), each with its own small label so neither
-            looks like a stray sentence tacked onto the other's box. */}
-        {(analysis || keyHome || keyAway) ? (
+        {/* Analysis */}
+        {analysis ? (
           <Animated.View style={cardStyle(analysisAnim)}>
             <Text style={[styles.analysisLabel, { color: theme.textTertiary }]}>ANALYSIS</Text>
             <View style={[styles.analysisCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-              {analysis ? (
-                <Text selectable style={[styles.analysisText, { color: theme.textSecondary }]}>{analysis}</Text>
-              ) : null}
-              {(keyHome || keyAway) && (
-                <View style={[styles.keySection, analysis ? { borderTopColor: theme.border, borderTopWidth: 1 } : null]}>
-                  <Text style={[styles.keyLabel, { color: theme.textTertiary }]}>PLAYERS TO WATCH</Text>
-                  {/* BUG FIX: was one joined line ("Name (FRA) · Name (MOR)")
-                      that read as two picks smooshed together rather than
-                      two distinct calls — each player now gets its own row,
-                      plus the model's actual reasoning clause (previously
-                      discarded by playerName's split) instead of a bare
-                      name with no justification. */}
-                  {/* Rating badge is the real Bzzoiro number, passed straight
-                      through from the fetch — not re-parsed from the
-                      model's own text, so it can't drift from what the
-                      data source actually says regardless of phrasing. */}
-                  {keyHome ? (() => {
-                    const { name, reason } = splitPlayerClause(keyHome);
-                    return (
-                      <View style={styles.keyRow}>
-                        <View style={styles.keyRowTop}>
-                          <Text style={[styles.keyRowName, { color: theme.text }]}>
-                            <Text style={{ color: accent, fontWeight: '800' }}>{name}</Text> ({teamAbbr(teamA)})
-                          </Text>
-                          {homeRating != null && (
-                            <View style={[styles.ratingBadge, { backgroundColor: accent + '18' }]}>
-                              <Text style={[styles.ratingBadgeText, { color: accent }]}>{homeRating}</Text>
-                            </View>
-                          )}
-                        </View>
-                        {reason ? <Text style={[styles.keyRowReason, { color: theme.textSecondary }]}>{reason}</Text> : null}
-                      </View>
-                    );
-                  })() : null}
-                  {keyAway ? (() => {
-                    const { name, reason } = splitPlayerClause(keyAway);
-                    return (
-                      <View style={styles.keyRow}>
-                        <View style={styles.keyRowTop}>
-                          <Text style={[styles.keyRowName, { color: theme.text }]}>
-                            <Text style={{ color: accent, fontWeight: '800' }}>{name}</Text> ({teamAbbr(teamB)})
-                          </Text>
-                          {awayRating != null && (
-                            <View style={[styles.ratingBadge, { backgroundColor: accent + '18' }]}>
-                              <Text style={[styles.ratingBadgeText, { color: accent }]}>{awayRating}</Text>
-                            </View>
-                          )}
-                        </View>
-                        {reason ? <Text style={[styles.keyRowReason, { color: theme.textSecondary }]}>{reason}</Text> : null}
-                      </View>
-                    );
-                  })() : null}
-                </View>
-              )}
+              <Text selectable style={[styles.analysisText, { color: theme.textSecondary }]}>{analysis}</Text>
               {elapsed != null && (
                 <View style={[styles.statRow, { borderTopColor: theme.border }]}>
                   <View style={[styles.statDot, { backgroundColor: accent }]} />
@@ -254,7 +188,7 @@ export default function PredictionResultScreen() {
         ) : null}
 
         <Text style={[styles.credit, { color: theme.textTertiary }]}>
-          Fixtures & badges: TheSportsDB · Form & player ratings: football-data.org, Bzzoiro Sports · AI: on-device (QVAC)
+          Fixtures & badges: TheSportsDB · Form: football-data.org, Bzzoiro Sports · AI: on-device (QVAC)
         </Text>
       </ScrollView>
     </View>
@@ -282,14 +216,6 @@ const styles = StyleSheet.create({
 
   analysisLabel: { fontSize: 9.5, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 1.5, marginTop: 14, marginBottom: 8, marginLeft: 2 },
   analysisCard: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 8 },
-  keySection: { paddingTop: 10, marginTop: 2, gap: 8 },
-  keyLabel: { fontSize: 9.5, fontFamily: fonts.mono, fontWeight: '700', letterSpacing: 1.2 },
-  keyRow: { gap: 2 },
-  keyRowTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  keyRowName: { fontSize: 13, lineHeight: 18 },
-  keyRowReason: { fontSize: 12, lineHeight: 17 },
-  ratingBadge: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-  ratingBadgeText: { fontSize: 10.5, fontFamily: fonts.mono, fontWeight: '800' },
   analysisText: { fontSize: 12.5, lineHeight: 20 },
   statRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, paddingTop: 10, borderTopWidth: 1 },
   statDot: { width: 4, height: 4, borderRadius: 2 },

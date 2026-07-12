@@ -57,3 +57,6 @@ credentials.json
 
 # Local screenshots used during development, not app assets
 /image/
+
+# Keystore credentials — never commit
+BUILD_AND_OPS.md

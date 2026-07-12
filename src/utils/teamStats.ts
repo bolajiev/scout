@@ -270,10 +270,9 @@ export const formatFormContext = (
     return `${name} last ${form.form.length}: ${dots} — ${detail}`;
   };
   return [
-    '[LIVE FORM DATA]',
-    fmt(teamA, formA),
-    fmt(teamB, formB),
-    '[END FORM DATA]\nUse this real recent form as a strong signal in your prediction.',
+    `Recent form data (via Bzzoiro Sports) — use these real results for your prediction:`,
+    `  - ${fmt(teamA, formA)}`,
+    `  - ${fmt(teamB, formB)}`,
   ].join('\n');
 };
 
@@ -292,8 +291,7 @@ export const formatFixtureContext = (fixtures: Array<{
     return `${f.strHomeTeam} vs ${f.strAwayTeam}${parts.length ? ` (${parts.join(', ')})` : ''}`;
   });
   return [
-    `[LIVE FIXTURES — Today via TheSportsDB]`,
-    ...lines,
-    `[END FIXTURES]`,
+    `Today's matches (pre-match fixtures, no scores yet):`,
+    ...lines.map(l => `  - ${l}`),
   ].join('\n');
 };

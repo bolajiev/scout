@@ -29,6 +29,8 @@ export const badgeUrl = (url: string | null | undefined): string | null =>
   url ? (url.includes('thesportsdb') ? `${url}/small` : url) : null;
 
 export const todayISO = () => new Date().toISOString().split('T')[0];
+export const yesterdayISO = () => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().split('T')[0]; };
+export const tomorrowISO = () => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0]; };
 
 export const isWorldCup = (f: Fixture) =>
   /world cup/i.test(f.strLeague) || /fifa wc/i.test(f.strLeague);
@@ -172,8 +174,8 @@ export const teamAbbr = (name: string): string => {
 const saveFixturesToDb = async (fixtures: Fixture[], date: string) => {
   const db = getDb();
   await db.runAsync('DELETE FROM fixtures WHERE cache_date != ?', [date]);
-  for (const f of fixtures) {
-    await db.runAsync(
+  await Promise.all(fixtures.map(f =>
+    db.runAsync(
       `INSERT OR REPLACE INTO fixtures
          (id_event, home_team, away_team, league, match_time, date_event,
           home_score, away_score, home_badge, away_badge, cache_date)
@@ -181,8 +183,8 @@ const saveFixturesToDb = async (fixtures: Fixture[], date: string) => {
       [f.idEvent, f.strHomeTeam, f.strAwayTeam, f.strLeague, f.strTime, f.dateEvent ?? null,
        f.intHomeScore ?? null, f.intAwayScore ?? null,
        f.strHomeTeamBadge ?? null, f.strAwayTeamBadge ?? null, date],
-    );
-  }
+    )
+  ));
 };
 
 type FixtureRow = {

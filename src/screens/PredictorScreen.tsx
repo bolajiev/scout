@@ -21,41 +21,33 @@ import Glow from '../components/Glow';
 import { TAB_BAR_HEIGHT } from '../components/TabBar';
 import TeamBadge from '../components/TeamBadge';
 import { llmManager } from '../utils/modelManager';
-import { pickTextCapable } from '../utils/models';
+import { AVAILABLE_MODELS, pickTextCapable } from '../utils/models';
+import type { ModelInfo } from '../types';
 import { syncModelsFromDisk, getGenParams, getDefaultModelId, setDefaultModelId, getActiveFdKey, getActiveBzKey } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { fetchAndCacheFixtures, isWorldCup, isLive, isFinished, fixtureOrder, fmtMatchTime as fmtTime, badgeUrl, teamAbbr, todayISO, type Fixture } from '../utils/fixtures';
 import { splitChannelThinking } from '../utils/thinkingSplit';
 import { createPredictionSession, addPrediction } from '../utils/historyDb';
 import { settlePendingPredictions, getPredictionRecord } from '../utils/predictionTracker';
-import { fetchBothTeamForms, fetchBothSquads, formatFormContext, type TeamForm } from '../utils/teamStats';
-import { parsePrediction, confidenceParts, type ParsedPrediction } from '../utils/predictionParser';
-import { fetchBothTopRatedPlayers, type RatedPlayer } from '../utils/bzzoiro';
+import { fetchBothTeamForms, formatFormContext, type TeamForm } from '../utils/teamStats';
+import { parsePrediction } from '../utils/predictionParser';
 import { matchClubs } from '../utils/topClubs';
 import { logInference } from '../utils/auditLogger';
 
-// BUG FIX: trimmed further (~1871 to ~1500 chars) — measured live same as
-// Coach's TOOLS_SYSTEM_SUFFIX, read on every single prediction call. Field
-// bracket descriptions mostly restated what the field name already said
-// (e.g. "HOME WIN: [your own estimated probability the home team wins, a
-// number 0-100]" → "HOME WIN: [0-100]") — every real constraint (exact
-// name matching, sum-to-100 weighting, no-fabrication rule) is preserved.
-const SYSTEM_PROMPT = `You are Scout's Predictor, a veteran football analyst — you always call the match, never refuse or hedge.
+const SYSTEM_PROMPT = `You are Scout's Predictor, a veteran football analyst — always call the match, never refuse or hedge. Draw is a real result, not a hedge.
 
-[LIVE FORM DATA] is real, current data — weight it heavily alongside tactical identity, squad quality, and history. [TOP RATED PLAYER] for a side means KEY HOME/AWAY for that side MUST be exactly that player (real rating, not your guess) — just write the one-clause reason he's decisive. With [CURRENT SQUADS] instead, pick KEY HOME/AWAY only from that list, never from memory (a player may have retired/transferred since). With no live data at all, commit anyway from historical record/style/pedigree — don't fabricate, don't hedge in the analysis text, doubt shows only via CONFIDENCE.
+Recent form data is real, current data — weight it heavily.
 
-Respond in EXACTLY this format, no deviation:
+Respond in EXACTLY this format — every field required:
 
 WINNER: [team name or Draw]
 SCORE: [e.g. 2-1]
 CONFIDENCE: [40-90]
-HOME WIN: [0-100]
-DRAW: [0-100]
-AWAY WIN: [0-100 — HOME WIN+DRAW+AWAY WIN should sum to ~100, weighted by real form data above, not just the WINNER pick]
-KEY HOME: [most dangerous player — exact name from TOP RATED PLAYER-HOME when present — one clause why]
-KEY AWAY: [most dangerous player — exact name from TOP RATED PLAYER-AWAY when present — one clause why]
+HOME WIN: [0-100 — weighted by form data]
+DRAW: [0-100 — Draw is always possible, assign a real number]
+AWAY WIN: [0-100 — HOME WIN, DRAW, and AWAY WIN must be three clearly different numbers (e.g. 55-25-20 not 45-10-45) that sum to 95-105]
 ---
-[2-4 sentences of sharp reasoning: the tactical matchup, where the game is won and lost, and the form pattern behind your call. Reference live form data directly when provided. Write like a pundit making a call, not a bot citing caveats.]
+[Mandatory — 2-4 sentences of sharp reasoning: tactical matchup, where the game is won and lost, form pattern. Write like a pundit, not a bot.]
 
 Do not add anything before WINNER or after the analysis. Always respond in English.`;
 
@@ -85,20 +77,19 @@ export default function PredictorScreen() {
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [fixturesLoading, setFixturesLoading] = useState(true);
   const [noInternet, setNoInternet] = useState(false);
-  const [parsed, setParsed] = useState<{ winner: string; score: string; confidence: string; keyHome: string; keyAway: string; analysis: string } | null>(null);
+  const [parsed, setParsed] = useState<{ winner: string; score: string; confidence: string; analysis: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [modelId, setModelId] = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
   const [noModel, setNoModel] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [pickableModels, setPickableModels] = useState<import('../types').DownloadedModel[]>([]);
+  const [pickableModels, setPickableModels] = useState<ModelInfo[]>([]);
+  const [downloadedModelIds, setDownloadedModelIds] = useState<Set<string>>(new Set());
   const [loadPct, setLoadPct] = useState(0);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [formA, setFormA] = useState<TeamForm | null>(null);
   const [formB, setFormB] = useState<TeamForm | null>(null);
-  const [squadA, setSquadA] = useState<string[]>([]);
-  const [squadB, setSquadB] = useState<string[]>([]);
   const [formLoading, setFormLoading] = useState(false);
   const [record, setRecord] = useState<{ hits: number; misses: number; pending: number } | null>(null);
   const [selectedFixture, setSelectedFixture] = useState<Fixture | null>(null);
@@ -234,17 +225,14 @@ export default function PredictorScreen() {
           getActiveFdKey().catch(() => ''),
           getActiveBzKey().catch(() => ''),
         ]);
-        const [[fa, fb], [sa, sb]] = await Promise.all([
+        const [[fa, fb]] = await Promise.all([
           fetchBothTeamForms(teamA.trim(), teamB.trim(), fdKey, bzKeyForForm),
-          fetchBothSquads(teamA.trim(), teamB.trim()),
         ]);
         if (!mountedRef.current) return;
         setFormA(fa);
         setFormB(fb);
-        setSquadA(sa);
-        setSquadB(sb);
       } catch {
-        if (mountedRef.current) { setFormA(null); setFormB(null); setSquadA([]); setSquadB([]); }
+        if (mountedRef.current) { setFormA(null); setFormB(null); }
       } finally {
         if (mountedRef.current) setFormLoading(false);
       }
@@ -343,21 +331,14 @@ export default function PredictorScreen() {
   const loadModel = async () => {
     const synced = await syncModelsFromDisk();
     const defaultId = await getDefaultModelId();
-    // BUG FIX: this used to always silently auto-pick — a user with
-    // several downloaded models never got asked which one they actually
-    // wanted. Ask up front, once, the first time there's a real choice
-    // and no preference has ever been recorded — not on every tab visit
-    // (the already-loaded-model check keeps it from interrupting a switch
-    // between Coach/Predictor once something's resident).
-    const textModels = synced.filter(m => m.modelType === 'text');
-    if (textModels.length > 1 && !defaultId && !llmManager.getLoadedModelId()) {
-      setPickableModels(textModels);
-      setModelPickerOpen(true);
-      return;
-    }
     const model = pickTextCapable(synced, defaultId, llmManager.getLoadedModelId());
     if (!model) {
-      if (mountedRef.current) setNoModel(true);
+      // No downloaded model at all — open picker so user can see what's
+      // available and tap Get to navigate to Models.
+      const downloadedIds = new Set(synced.map(m => m.id));
+      setDownloadedModelIds(downloadedIds);
+      setPickableModels(AVAILABLE_MODELS);
+      setModelPickerOpen(true);
       return;
     }
     await loadSpecificModel(model);
@@ -367,22 +348,22 @@ export default function PredictorScreen() {
   // re-pick) sets that choice as the ongoing default too — otherwise the
   // silent auto-pick path above would go right back to asking, or worse,
   // silently reverting to whatever pickTextCapable's own fallback prefers.
-  const selectModel = async (model: import('../types').DownloadedModel) => {
+  const selectModel = async (model: ModelInfo) => {
     await setDefaultModelId(model.id).catch(() => {});
-    await loadSpecificModel(model);
+    const synced = await syncModelsFromDisk();
+    const full = synced.find(m => m.id === model.id);
+    setModelPickerOpen(false);
+    if (full) await loadSpecificModel(full);
   };
 
-  // Only shows the picker when there's an actual choice (2+ text models
-  // downloaded) — otherwise behaves exactly like the plain auto-pick.
-  const handleLoadPress = async () => {
+  // Opens the model picker with ALL models — downloaded ones load on tap,
+  // non-downloaded ones navigate to Models screen.
+  const handlePickModel = async () => {
     const synced = await syncModelsFromDisk();
-    const textModels = synced.filter(m => m.modelType === 'text');
-    if (textModels.length > 1) {
-      setPickableModels(textModels);
-      setModelPickerOpen(true);
-      return;
-    }
-    await loadModel();
+    const downloadedIds = new Set(synced.map(m => m.id));
+    setDownloadedModelIds(downloadedIds);
+    setPickableModels(AVAILABLE_MODELS);
+    setModelPickerOpen(true);
   };
 
   // Coach and Predictor each track their own modelId, but there's only one
@@ -404,14 +385,12 @@ export default function PredictorScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     // BUG FIX: form/squad data was fetched on a 700ms debounce tied to
-    // typing, but predict() just read whatever was in formA/squadA state
-    // at button-press time. Selecting a fixture from the rail fills both
+    // typing, but predict() just read whatever was in formA state at
+    // button-press time. Selecting a fixture from the rail fills both
     // team names instantly, and tapping "Predict Match" right after — the
     // natural, fast flow — routinely fired before that debounce finished,
-    // so the prediction ran with NO grounding data and the model fell
-    // back to pure hallucination (wrong "player to watch" calls). Fetch
-    // fresh, guaranteed-ready data here instead of trusting the preview
-    // state's timing.
+    // so the prediction ran with NO grounding data. Fetch fresh,
+    // guaranteed-ready data here instead of trusting the preview state.
     const nameA = teamA.trim();
     const nameB = teamB.trim();
     setFormLoading(true);
@@ -431,54 +410,22 @@ export default function PredictorScreen() {
     // get picked up naturally next time, they just don't block this run.
     const withDeadline = <T,>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
       Promise.race([p, new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))]);
-    const [[freshFormA, freshFormB], [freshSquadA, freshSquadB], [ratedA, ratedB]] = await Promise.all([
+    const [[freshFormA, freshFormB]] = await Promise.all([
       withDeadline(
         fetchBothTeamForms(nameA, nameB, fdKey, bzKey).catch(() => [formA, formB] as [TeamForm | null, TeamForm | null]),
         6000,
         [formA, formB] as [TeamForm | null, TeamForm | null],
       ),
-      withDeadline(
-        fetchBothSquads(nameA, nameB).catch(() => [squadA, squadB] as [string[], string[]]),
-        6000,
-        [squadA, squadB] as [string[], string[]],
-      ),
-      // Real 0-99 player ratings from Bzzoiro — this is what actually picks
-      // KEY HOME/KEY AWAY now (highest-rated player on each squad), not the
-      // model guessing off a bare name list. Only runs when a Bzzoiro key
-      // is active; falls back to the squad-list mechanism below otherwise.
-      withDeadline(
-        bzKey ? fetchBothTopRatedPlayers(bzKey, nameA, nameB).catch(() => [null, null] as [RatedPlayer | null, RatedPlayer | null]) : Promise.resolve([null, null] as [RatedPlayer | null, RatedPlayer | null]),
-        6000,
-        [null, null] as [RatedPlayer | null, RatedPlayer | null],
-      ),
     ]);
     setFormA(freshFormA); setFormB(freshFormB);
-    setSquadA(freshSquadA); setSquadB(freshSquadB);
     setFormLoading(false);
     if (!mountedRef.current) return;
 
     const formBlock = (freshFormA || freshFormB)
       ? formatFormContext(nameA, freshFormA, nameB, freshFormB) + '\n\n'
       : '';
-    // Real rating data takes priority per side — only falls back to the
-    // weaker "pick from this name list" mechanism for a side Bzzoiro's
-    // player database doesn't cover.
-    const ratedLine = (label: string, p: RatedPlayer | null) =>
-      p ? `[TOP RATED PLAYER — ${label}] ${p.name} (${p.position}${p.nationality ? ', ' + p.nationality : ''}) — Rating: ${p.rating}/99\n` : '';
-    const ratedBlock = (ratedA || ratedB) ? `${ratedLine('HOME', ratedA)}${ratedLine('AWAY', ratedB)}\n` : '';
-    // Real current squad names, so KEY HOME/KEY AWAY names a player who's
-    // actually still on the team instead of whoever the model remembers
-    // from training (verified: defaulted to Neymar for Brazil, who hasn't
-    // been part of the squad picture in years). Only included per side
-    // without a rated-player hit above, since that's strictly better.
-    const squadBlock = ((!ratedA && freshSquadA.length > 0) || (!ratedB && freshSquadB.length > 0))
-      ? `[CURRENT SQUADS — pick KEY HOME/KEY AWAY only from these names]\n`
-        + (!ratedA ? `${nameA}: ${freshSquadA.length > 0 ? freshSquadA.join(', ') : 'not found'}\n` : '')
-        + (!ratedB ? `${nameB}: ${freshSquadB.length > 0 ? freshSquadB.join(', ') : 'not found'}\n` : '')
-        + `[END SQUADS]\n\n`
-      : '';
     const userContext = context.trim() ? `\n\nAdditional context: ${context.trim()}` : '';
-    const prompt = `${ratedBlock}${squadBlock}${formBlock}Predict: ${nameA} vs ${nameB}${userContext}`;
+    const prompt = `${formBlock}Predict: ${nameA} vs ${nameB}${userContext}`;
     const genStart = Date.now();
 
     try {
@@ -492,19 +439,10 @@ export default function PredictorScreen() {
         stream: true,
         captureThinking: false,
         generationParams: {
-          // BUG FIX: this was a flat 380 regardless of the user's actual
-          // response-length setting (gp.maxTokens, fetched above and then
-          // silently discarded) — 8 structured fields (WINNER/SCORE/
-          // CONFIDENCE/HOME WIN/DRAW/AWAY WIN/KEY HOME/KEY AWAY) plus a
-          // real analysis paragraph all competing for the same 380 tokens
-          // left very little room before getting cut off mid-sentence,
-          // and "Detailed" mode (1536) got zero benefit from its own
-          // setting. Floored at 380 (short mode's existing behavior), but
-          // capped at 700 rather than letting Detailed's full 1536 through
-          // unchanged — ctx_size here is only 2048, and system prompt +
-          // form/rating/squad context already eats a real chunk of that;
-          // 1536 alone would risk overflowing the window on top of it.
-          predict: Math.min(Math.max(gp.maxTokens, 380), 700),
+          // Floor at 512 ensures structured fields + analysis always fit.
+          // Cap at 1024 respects ctx_size ~2048 (system prompt + context
+          // already take ~600-1000 tokens, leaving ~1000 for output).
+          predict: Math.min(Math.max(gp.maxTokens, 512), 1024),
           temp: gp.temp,
           top_k: gp.top_k,
           top_p: gp.top_p,
@@ -600,12 +538,7 @@ export default function PredictorScreen() {
           teamA: teamA.trim(), teamB: teamB.trim(),
           winner: p.winner, score: p.score, confidence: p.confidence,
           homeWin: p.homeWin, draw: p.draw, awayWin: p.awayWin,
-          keyHome: p.keyHome, keyAway: p.keyAway, analysis: p.analysis,
-          // Real ratings, sourced directly — not re-parsed from the
-          // model's own text, so the number shown is always exactly what
-          // Bzzoiro's player data actually says, regardless of how the
-          // model phrases its reasoning around it.
-          homeRating: ratedA?.rating ?? null, awayRating: ratedB?.rating ?? null,
+          analysis: p.analysis,
           elapsed: secs,
           device: stats?.backendDevice,
           modelName: modelNameRef.current || undefined,
@@ -654,7 +587,7 @@ export default function PredictorScreen() {
   return (
     <KeyboardAvoidingView
       style={[styles.root, { backgroundColor: theme.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior="padding"
     >
       <ScreenHeader
         title="Predictor"
@@ -686,8 +619,9 @@ export default function PredictorScreen() {
         modelLoading={modelLoading}
         loadError={loadError}
         modelId={modelId}
+        modelName={modelNameRef.current}
         loadPct={loadPct}
-        onLoad={handleLoadPress}
+        onPickModel={handlePickModel}
         onStop={stopModel}
         onGetModel={() => navigation.navigate('Models')}
       />
@@ -695,8 +629,10 @@ export default function PredictorScreen() {
       <ModelPickerModal
         visible={modelPickerOpen}
         models={pickableModels}
+        downloadedIds={downloadedModelIds}
         currentModelId={modelId}
         onSelect={selectModel}
+        onGetModel={() => { setModelPickerOpen(false); navigation.navigate('Models'); }}
         onClose={() => setModelPickerOpen(false)}
       />
 
@@ -816,12 +752,11 @@ export default function PredictorScreen() {
             card that's about to land reads as content already arriving. */}
         {isGenerating && prediction.length === 0 && <SkeletonVerdictCard />}
 
-        {/* Streaming result — parsed live so raw WINNER:/SCORE: lines never
-            show; fields pop in as chips, analysis streams below. Team
-            badges + VS header reuses the same shape as the skeleton above
-            and the verdict card that follows on the result page, so the
-            three states read as one continuous reveal instead of three
-            unrelated layouts. */}
+        {/* Streaming result — team badges + MAKING THE CALL header,
+            then the analysis text streaming in as the model writes it.
+            No chips during generation (winner/score/confidence pop in
+            once on the result page) — the raw structured lines are
+            parsed invisibly and forwarded to PredictionResult. */}
         {isGenerating && prediction.length > 0 && (
           <View style={[styles.resultCard, { backgroundColor: theme.card }]}>
               <View style={styles.resultContent}>
@@ -830,30 +765,11 @@ export default function PredictorScreen() {
                   <Text style={[styles.resultLabel, { color: accent }]}>MAKING THE CALL...</Text>
                   <TeamBadge url={badgeUrl(selectedFixture?.strAwayTeamBadge)} name={teamB} abbr={teamAbbr(teamB)} size={28} />
                 </View>
-                {(live.winner || live.score || live.confidence) && (
-                  <View style={styles.liveChipsRow}>
-                    {live.winner ? (
-                      <View style={[styles.liveFieldChip, { backgroundColor: accent + '18' }]}>
-                        <Text style={[styles.liveFieldChipText, { color: accent }]}>{live.winner}</Text>
-                      </View>
-                    ) : null}
-                    {live.score ? (
-                      <View style={[styles.liveFieldChip, { backgroundColor: theme.cardAlt }]}>
-                        <Text style={[styles.liveFieldChipText, { color: theme.text }]}>{live.score}</Text>
-                      </View>
-                    ) : null}
-                    {live.confidence ? (
-                      <View style={[styles.liveFieldChip, { backgroundColor: theme.cardAlt }]}>
-                        <Text style={[styles.liveFieldChipText, { color: theme.textSecondary }]}>
-                          {confidenceParts(live.confidence).pct != null ? `${confidenceParts(live.confidence).pct}%` : live.confidence}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-                )}
                 {live.analysis ? (
                   <Text style={[styles.resultText, { color: theme.text }]}>{live.analysis}</Text>
-                ) : null}
+                ) : (
+                  <Text style={[styles.resultText, { color: theme.textTertiary }]}>Analyzing matchup...</Text>
+                )}
               </View>
             </View>
         )}
@@ -1059,9 +975,6 @@ const styles = StyleSheet.create({
   scoreVs: { fontSize: 14, fontWeight: '700' },
   analysisCard: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 8 },
   keyPlayersCard: { borderRadius: 14, padding: 14, gap: 9, marginBottom: 10 },
-  liveChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  liveFieldChip: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
-  liveFieldChipText: { fontSize: 12, fontWeight: '700' },
   keyPlayerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   keyPlayerDot: { width: 7, height: 7, borderRadius: 3.5, marginTop: 5 },
   keyPlayerText: { flex: 1, fontSize: 13, lineHeight: 19 },

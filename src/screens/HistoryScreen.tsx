@@ -156,7 +156,7 @@ export default function HistoryScreen() {
       teamA: (teamA ?? '').trim(), teamB: (teamB ?? '').trim(),
       winner: p.winner, score: p.score, confidence: p.confidence,
       homeWin: p.homeWin, draw: p.draw, awayWin: p.awayWin,
-      keyHome: p.keyHome, keyAway: p.keyAway, analysis: p.analysis,
+      analysis: p.analysis,
       elapsed: assistantMsg?.meta?.elapsed,
     });
   };

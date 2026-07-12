@@ -1,13 +1,3 @@
-// Shared by PredictorScreen (parsing its own live stream) and
-// HistoryScreen (re-parsing a saved prediction's full stored text) — these
-// used to be two separate copies, and HistoryScreen's was missing the
-// HOME WIN/DRAW/AWAY WIN/KEY HOME/KEY AWAY fields entirely (only ever
-// pulled winner/score/confidence/analysis), so tapping a saved prediction
-// in History showed noticeably less than the fresh result page for the
-// exact same call, even though the full text was sitting right there in
-// SQLite the whole time. One parser now, used everywhere the structured
-// output needs reading back.
-
 const FIELD_PATTERNS: Record<string, RegExp> = {
   winner: /^winner\s*:\s*(.+)$/im,
   score: /^score\s*:\s*(.+)$/im,
@@ -15,17 +5,15 @@ const FIELD_PATTERNS: Record<string, RegExp> = {
   homeWin: /^home\s*win\s*:\s*(.+)$/im,
   draw: /^draw\s*:\s*(.+)$/im,
   awayWin: /^away\s*win\s*:\s*(.+)$/im,
-  keyHome: /^key\s*home(?:\s*player)?\s*:\s*(.+)$/im,
-  keyAway: /^key\s*away(?:\s*player)?\s*:\s*(.+)$/im,
 };
-const STRUCTURED_LINE_RE = /^(winner|score|confidence|home\s*win|draw|away\s*win|key\s*home|key\s*away)\s*:/i;
+const STRUCTURED_LINE_RE = /^(winner|score|confidence|home\s*win|draw|away\s*win)\s*:/i;
 const SEPARATOR_RE = /^-{3,}\s*$/;
 const STARS_RE = /\*+/g;
 
 export interface ParsedPrediction {
   winner: string; score: string; confidence: string;
   homeWin: string; draw: string; awayWin: string;
-  keyHome: string; keyAway: string; analysis: string;
+  analysis: string;
 }
 
 export function parsePrediction(text: string): ParsedPrediction {
@@ -42,7 +30,7 @@ export function parsePrediction(text: string): ParsedPrediction {
   return {
     winner: field('winner'), score: field('score'), confidence: field('confidence'),
     homeWin: field('homeWin'), draw: field('draw'), awayWin: field('awayWin'),
-    keyHome: field('keyHome'), keyAway: field('keyAway'), analysis,
+    analysis,
   };
 }
 
@@ -57,14 +45,4 @@ export function confidenceParts(raw: string): { pct: number | null; word: string
   }
   const word = pct == null ? raw : pct >= 72 ? 'High' : pct >= 55 ? 'Medium' : 'Low';
   return { pct, word };
-}
-
-// "Mbappé — pace in behind" → "Mbappé". Splits on the first spaced dash or
-// comma so hyphenated surnames (Oxlade-Chamberlain) survive intact.
-export const playerName = (s: string) => s.split(/\s[—–-]\s|,\s|\s\(/)[0].trim();
-
-// "Mbappé — pace in behind" → { name: "Mbappé", reason: "pace in behind" }
-export function splitPlayerClause(s: string): { name: string; reason: string } {
-  const parts = (s ?? '').split(/\s[—–-]\s|,\s|\s\(/);
-  return { name: (parts[0] ?? '').trim(), reason: parts.slice(1).join(' ').replace(/\)$/, '').trim() };
 }

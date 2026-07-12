@@ -16,20 +16,21 @@ import Markdown from 'react-native-markdown-display';
 import { getTheme } from '../theme';
 import { fonts } from '../theme/fonts';
 import { useTheme } from '../navigation/AppNavigator';
-import { IconSend, IconStop, IconBall, IconTactics, IconPlayers, IconTrophy, IconRules, IconMore, IconCamera, IconClose } from '../components/Icons';
+import { IconSend, IconStop, IconBall, IconTactics, IconPlayers, IconTrophy, IconRules, IconMore, IconCamera, IconClose, IconSliders } from '../components/Icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ModelStatusPill from '../components/ModelStatusPill';
 import ModelPickerModal from '../components/ModelPickerModal';
 import PhotoSourceSheet from '../components/PhotoSourceSheet';
 import { llmManager } from '../utils/modelManager';
-import { pickTextCapable, pickVisionCapable } from '../utils/models';
-import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId, setDefaultModelId, getActiveBzKey, toPath } from '../utils/storage';
+import { AVAILABLE_MODELS, pickTextCapable, pickVisionCapable } from '../utils/models';
+import type { ModelInfo, ResponseLength } from '../types';
+import { syncModelsFromDisk, getGenParams, getSettings, getDefaultModelId, setDefaultModelId, getActiveBzKey, getActiveFdKey, toPath, setResponseLength } from '../utils/storage';
 import { registerInferenceCancel, showRunningNotification, clearInferenceNotifications as clearNotification } from '../utils/bgNotification';
 import { startChatSession, addMessage, getMessages } from '../utils/historyDb';
-import { formatFixtureContext } from '../utils/teamStats';
-import { fetchBzTeamForm, fetchPlayerStats, formatPlayerStatsContext, fetchBzMatches } from '../utils/bzzoiro';
+import { formatFixtureContext, fetchBothTeamForms, formatFormContext } from '../utils/teamStats';
+import { fetchBzTeamForm, fetchPlayerStats, formatPlayerStatsContext, fetchBzMatches, fetchBothTopRatedPlayers, type RatedPlayer } from '../utils/bzzoiro';
 import { splitChannelThinking } from '../utils/thinkingSplit';
-import { getCachedFixturesNow, todayISO } from '../utils/fixtures';
+import { getCachedFixturesNow, todayISO, yesterdayISO, tomorrowISO } from '../utils/fixtures';
 import { logInference } from '../utils/auditLogger';
 
 
@@ -96,7 +97,7 @@ const SCOUT_TOOLS: Tool[] = [
   {
     type: 'function',
     name: 'get_today_fixtures',
-    description: "Today's football matches and scores. Use for today's games, fixtures, live scores, or who's playing.",
+    description: "Recent and upcoming football matches with scores. Covers yesterday through tomorrow. Use for fixtures, live scores, match results, or who's playing.",
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -237,20 +238,12 @@ function extractProperNoun(text: string): string | null {
 const PLAYER_HINT_RE = /\b(goal|goals|assist|score|scored|player)\b/i;
 const TEAM_HINT_RE = /\b(form|result|results|performance|team)\b/i;
 
-// Defensive backstop for pass 2 (the answer after a REAL tool call ran) —
-// unlike pass 1, nothing sanitized this path before. get_today_fixtures/
-// get_team_form/get_player_stats all feed their raw result back as a
-// `[LABEL — source]\n...\n[END LABEL]`-shaped tool message; a small model
-// can plausibly echo those exact header/footer lines back verbatim
-// instead of writing its own sentence. Strips only the marker lines
-// themselves (not the prose around them), so a genuine slip never shows
-// the internal formatting even though the system prompt now also tells
-// the model directly not to do this.
-// Header and footer labels aren't symmetric ("[RECENT RESULTS — ...]" ends
-// with "[END RESULTS]", not "[END RECENT RESULTS]") — matched exactly as
-// each formatter in teamStats.ts/MatchAIScreen.tsx/bzzoiro.ts actually
-// emits them, not guessed.
-const DATA_MARKER_LINE_RE = /^\[(?:RECENT RESULTS|LIVE FIXTURES|PLAYER STATS)[^\]]*\]$|^\[END (?:RESULTS|FIXTURES|PLAYER STATS)\]$/gm;
+// Strips any leading header lines the model might echo verbatim — the
+// new plain-language format ("Today's matches (via TheSportsDB)...") is
+// natural text so this is less critical than the old bracket markers,
+// but still catches stray "Recent form data..." / "Player stats for..."
+// headers the model sometimes repeats instead of writing its own prose.
+const DATA_MARKER_LINE_RE = /^Today's matches.*|^Recent (?:form|results) data.*|^Recent results for.*|^Player stats for.*|^Top rated player.*|^Current squads.*|^- Total:.*|^- Match \d+ ago:.*/gm;
 const stripLeakedDataMarkers = (text: string): string =>
   text.replace(DATA_MARKER_LINE_RE, '').replace(/\n{3,}/g, '\n\n').trim();
 
@@ -472,8 +465,11 @@ export default function MatchAIScreen() {
   const [loadError, setLoadError]       = useState<string | null>(null);
   const [loadPct, setLoadPct]           = useState(0);
   const [menuOpen, setMenuOpen]         = useState(false);
+  const [lengthPickerOpen, setLengthPickerOpen] = useState(false);
+  const [responseLength, setRespLength]  = useState<ResponseLength>('balanced');
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [pickableModels, setPickableModels] = useState<import('../types').DownloadedModel[]>([]);
+  const [pickableModels, setPickableModels] = useState<ModelInfo[]>([]);
+  const [downloadedModelIds, setDownloadedModelIds] = useState<Set<string>>(new Set());
   const [thinkingOn, setThinkingOn]     = useState(false);
   const [thoughtOpen, setThoughtOpen]   = useState<Record<string, boolean>>({});
   const [dataOpen, setDataOpen]         = useState<Record<string, boolean>>({});
@@ -501,6 +497,7 @@ export default function MatchAIScreen() {
   const toolsEnabledRef  = useRef(false);
   const modelTypeRef     = useRef<'text' | 'vision'>('text');
   const toolDialectRef   = useRef<ToolDialect | undefined>(undefined);
+  const fixtureContextRef = useRef<string | null>(null);
   const lastScrollRef    = useRef(0);
 
   // Streaming fires ~25 flushes/sec — scrolling on each one janks the UI
@@ -535,12 +532,16 @@ export default function MatchAIScreen() {
     loadModel();
     // Sync Think mode default from global settings
     getSettings().then(s => {
-      if (mountedRef.current) setThinkingOn(s.deepReasoning ?? false);
+      if (mountedRef.current) {
+        setThinkingOn(s.deepReasoning ?? false);
+        setRespLength(s.responseLength ?? 'balanced');
+      }
     }).catch(() => {});
     return () => {
       mountedRef.current = false;
       clearNotification();
       loadLoopRef.current?.stop();
+      abortRef.current = true;
       if (currentRunRef.current) cancel({ requestId: currentRunRef.current.requestId }).catch(() => {});
     };
   }, []);
@@ -650,7 +651,33 @@ export default function MatchAIScreen() {
         const prefill = route.params?.prefill;
         if (prefill && !prefillFiredRef.current) {
           prefillFiredRef.current = true;
-          prefillRef.current = prefill; // fired via useEffect once modelId is set
+          prefillRef.current = prefill;
+        }
+        // Pre-fetch fixture context from route params — silently injects
+        // form + top-rated player data as hidden tool context so the model
+        // doesn't need to call tools for a match the user already tapped.
+        const hTeam = route.params?.fixtureHome;
+        const aTeam = route.params?.fixtureAway;
+        if (hTeam && aTeam && !sessionIdRef.current) {
+          getActiveBzKey().then(bzKey => {
+            getActiveFdKey().then(fdKey => {
+              Promise.all([
+                fetchBothTeamForms(hTeam, aTeam, fdKey || '', bzKey || '', 6000).catch(() => [null, null]),
+                bzKey ? fetchBothTopRatedPlayers(bzKey, hTeam, aTeam).catch(() => [null, null]) : Promise.resolve([null, null]),
+              ]).then(([[fA, fB], [rA, rB]]) => {
+                if (!mountedRef.current) return;
+                const parts: string[] = [];
+                const league = route.params?.fixtureLeague;
+                const date = route.params?.fixtureDate;
+                if (league) parts.push(`Competition: ${league}`);
+                if (date) parts.push(`Match date: ${date}`);
+                if (fA || fB) parts.push(formatFormContext(hTeam, fA, aTeam, fB));
+                if (rA) parts.push(`Top rated player — ${hTeam}: ${rA.name} (rating ${rA.rating}/99)`);
+                if (rB) parts.push(`Top rated player — ${aTeam}: ${rB.name} (rating ${rB.rating}/99)`);
+                if (parts.length > 0) fixtureContextRef.current = parts.join('\n\n');
+              });
+            });
+          });
         }
       }
     } catch (e: any) {
@@ -665,56 +692,37 @@ export default function MatchAIScreen() {
     }
   };
 
-  // Default "Load Model" tap — auto-picks the same way it always has when
-  // there's nothing to choose between; opens the picker instead when
-  // multiple text models are downloaded (see rightSlot's onLoad override).
   const loadModel = async () => {
     const synced = await syncModelsFromDisk();
     const defaultId = await getDefaultModelId();
-    // BUG FIX: this used to always silently auto-pick — a user with
-    // several downloaded models never got asked which one they actually
-    // wanted; they'd only discover the choice existed at all by noticing
-    // the "wrong" one had loaded and manually hitting Load Model/Try
-    // Again. Ask up front, once, the first time there's a real choice and
-    // no preference has ever been recorded — not on every tab visit (the
-    // already-loaded-model check keeps it from interrupting a switch
-    // between Coach/Predictor once something's resident).
-    const textModels = synced.filter(m => m.modelType === 'text');
-    if (textModels.length > 1 && !defaultId && !llmManager.getLoadedModelId()) {
-      setPickableModels(textModels);
-      setModelPickerOpen(true);
-      return;
-    }
     const model = pickTextCapable(synced, defaultId, llmManager.getLoadedModelId());
     if (!model) {
-      if (mountedRef.current) setNoModel(true);
-      return;
-    }
-    await loadSpecificModel(model);
-  };
-
-  // Picking from the modal (either the proactive first-load prompt above
-  // or a manual "Load Model" re-pick) sets that choice as the ongoing
-  // default too — otherwise every single future load (including the
-  // silent auto-pick path above) would go right back to asking, or worse,
-  // silently reverting to whatever pickTextCapable's own fallback prefers.
-  const selectModel = async (model: import('../types').DownloadedModel) => {
-    await setDefaultModelId(model.id).catch(() => {});
-    await loadSpecificModel(model);
-  };
-
-  // What the pill's "Load Model"/"Try Again" actually calls — only shows
-  // the picker when there's a real choice to make (2+ text models
-  // downloaded); otherwise behaves exactly like before, no extra tap.
-  const handleLoadPress = async () => {
-    const synced = await syncModelsFromDisk();
-    const textModels = synced.filter(m => m.modelType === 'text');
-    if (textModels.length > 1) {
-      setPickableModels(textModels);
+      const downloadedIds = new Set(synced.map(m => m.id));
+      setDownloadedModelIds(downloadedIds);
+      setPickableModels(AVAILABLE_MODELS);
       setModelPickerOpen(true);
       return;
     }
-    await loadModel();
+    await loadSpecificModel(model);
+  };
+
+  const selectModel = async (model: ModelInfo) => {
+    await setDefaultModelId(model.id).catch(() => {});
+    // Only load if it's actually downloaded
+    const synced = await syncModelsFromDisk();
+    const full = synced.find(m => m.id === model.id);
+    setModelPickerOpen(false);
+    if (full) await loadSpecificModel(full);
+  };
+
+  // Opens the model picker with ALL models — downloaded ones load on tap,
+  // non-downloaded ones navigate to Models screen.
+  const handlePickModel = async () => {
+    const synced = await syncModelsFromDisk();
+    const downloadedIds = new Set(synced.map(m => m.id));
+    setDownloadedModelIds(downloadedIds);
+    setPickableModels(AVAILABLE_MODELS);
+    setModelPickerOpen(true);
   };
 
   // On-demand switch for the image-upload flow — Coach normally loads a
@@ -726,24 +734,31 @@ export default function MatchAIScreen() {
     const synced = await syncModelsFromDisk();
     const visionModel = pickVisionCapable(synced, llmManager.getLoadedModelId());
     if (!visionModel) return false;
+    // BUG FIX: this used to silently switch to a vision model without
+    // telling the user — the text model got unloaded and a vision model
+    // loaded in its place with no indication. Now shows a confirmation
+    // so the user knows their current model can't handle images and
+    // explicitly agrees to the switch.
+    if (modelId && modelTypeRef.current === 'text') {
+      const currentName = modelNameRef.current || 'Current model';
+      const visionName = visionModel.name;
+      const ok = await new Promise<boolean>(resolve => {
+        Alert.alert(
+          'Switch to vision model?',
+          `${currentName} doesn't support images. Switch to ${visionName} to read this photo?`,
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Switch', onPress: () => resolve(true) },
+          ],
+        );
+      });
+      if (!ok) return false;
+    }
     setModelLoading(true);
     setLoadError(null);
     setLoadPct(0);
     try {
       const supportsTools = visionModel.supportsTools ?? false;
-      // BUG FIX: this used to force device: 'gpu' unconditionally,
-      // reasoned as "image encoding is exactly the workload GPU helps
-      // most." That's true ONLY when GPU acceleration is actually
-      // working — research this session found Scout's own build ships
-      // OpenCL only (Vulkan excluded elsewhere for being crash-prone),
-      // and QVAC's own docs describe OpenCL as supported on "select
-      // Android devices" only, not Android GPUs generally. On a device
-      // where it doesn't apply, this forced GPU on the single heaviest
-      // workload in the app regardless of the (now CPU-default)
-      // accelerator setting — consistent with reports of image reading
-      // being dramatically slow. 'auto' now defers to that same setting
-      // like every other model load, rather than carving out its own
-      // exception to it.
       const mid = await llmManager.ensure(
         visionModel,
         { ctx_size: 2048, device: 'auto', tools: supportsTools, projectionModelSrc: visionModel.projectionModelSrc },
@@ -794,10 +809,10 @@ export default function MatchAIScreen() {
       if (!pickVisionCapable(synced, llmManager.getLoadedModelId())) {
         Alert.alert(
           'Vision model needed',
-          'Attaching a photo needs a vision model, which isn\'t downloaded yet. Get one from Models?',
+          `Attaching a photo needs a vision model. Download ${AVAILABLE_MODELS.find(m => m.id === 'vision-lite')?.name ?? 'SmolVLM2 500M'} (${AVAILABLE_MODELS.find(m => m.id === 'vision-lite')?.size ?? '550 MB'}) — the lightest option — from Models?`,
           [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Go to Models', onPress: () => navigation.navigate('Models') },
+            { text: 'Download', onPress: () => navigation.navigate('Models') },
           ],
         );
         return;
@@ -955,6 +970,7 @@ export default function MatchAIScreen() {
     // actually sent, matching what the user watched the clock do.
     let thinkingStarted = false;
     let thinkMs = 0;
+    let t0 = 0;
 
     try {
       const gp = await getGenParams();
@@ -970,19 +986,23 @@ export default function MatchAIScreen() {
       // generation) — a photo description doesn't need the same length
       // budget as a football analysis, so capping it tighter buys real
       // speed without cutting a normal answer off mid-thought.
+      t0 = Date.now();
       const genParams = {
-        // BUG FIX: Fast mode used gp.maxTokens (1024) uncapped — at CPU
-        // token rates, that's a long wait for what should be a snappy
-        // opinion or one-liner. Capping at 512 keeps Fast mode genuinely
-        // fast while leaving enough room for a real, complete answer.
-        predict: image ? 220 : thinkingOn ? gp.maxTokens + 500 : Math.min(gp.maxTokens, 512),
+        // BUG FIX: Think mode uses gp.maxTokens + 1000 instead of + 500 —
+        // reasoning_budget: -1 means the model can spend unlimited tokens
+        // on thinking. With just +500, a model that burns 700 tokens
+        // reasoning leaves only ~180 for the answer — guaranteed mid-sentence
+        // cutoff on the default 'short' setting. Doubling the buffer gives
+        // both thinking and the answer enough room.
+        // Fast mode stays capped at 512 — snappy opinion answers don't need
+        // more, and this keeps CPU token rates from dragging.
+        predict: image ? 220 : thinkingOn ? gp.maxTokens + 1000 : Math.min(gp.maxTokens, 512),
         temp: gp.temp,
         top_k: gp.top_k,
         top_p: gp.top_p,
         repeat_penalty: gp.repeat_penalty,
         reasoning_budget: thinkingOn ? -1 as -1 : 0 as 0,
       };
-      const t0 = Date.now();
 
       // ── Pass 1: completion with tools available ─────────────────────────
       // BUG FIX: this used to always reflect the GLOBAL tools toggle, even
@@ -1015,8 +1035,14 @@ export default function MatchAIScreen() {
       const toolsActiveThisTurn = !image && toolsEnabledRef.current && needsTools(q);
       const run1 = completion({
         modelId,
-        history: [{ role: 'system', content: buildSystemPrompt(toolsActiveThisTurn) }, ...history],
+        history: [
+          { role: 'system', content: buildSystemPrompt(toolsActiveThisTurn) },
+          ...(fixtureContextRef.current ? [{ role: 'tool', content: fixtureContextRef.current }] : []),
+          ...history,
+        ],
         stream: true,
+        // Clear so subsequent questions don't re-inject stale context
+        // fixtureContextRef cleared below after completion() is set up
         // Scout never used this before — every turn re-sent and re-processed
         // the ENTIRE system prompt + full history from scratch, every time.
         // Per the SDK's own docs: "When cache exists, only the last message
@@ -1038,6 +1064,7 @@ export default function MatchAIScreen() {
         captureThinking: thinkingOn,
         generationParams: genParams,
       });
+      fixtureContextRef.current = null; // one-shot: inject once on arrival
       currentRunRef.current = run1;
       registerInferenceCancel(() => {
         if (activeSendTokenRef.current !== mySendToken) return;
@@ -1191,7 +1218,7 @@ export default function MatchAIScreen() {
               let fixtures = await getCachedFixturesNow();
               if (fixtures.length === 0) {
                 const bzKey = await getActiveBzKey().catch(() => '');
-                fixtures = bzKey ? await fetchBzMatches(bzKey, todayISO(), todayISO()).catch(() => []) : [];
+                fixtures = bzKey ? await fetchBzMatches(bzKey, yesterdayISO(), tomorrowISO()).catch(() => []) : [];
               }
               toolResult = formatFixtureContext(fixtures) || 'No fixtures scheduled today.';
               liveSources.push('Bzzoiro Sports');
@@ -1205,10 +1232,9 @@ export default function MatchAIScreen() {
                   `${e.date} vs ${e.opponent}: ${e.score} (${e.result})${e.league ? ' — ' + e.league : ''}`
                 );
                 toolResult = [
-                  `[RECENT RESULTS — ${form.teamName} via Bzzoiro Sports]`,
-                  `Form (most recent last): ${form.form.join(' ')}`,
-                  ...lines,
-                  '[END RESULTS]',
+                  `Recent results for ${form.teamName} (via Bzzoiro Sports) — real match data:`,
+                  `  - Form (most recent last): ${form.form.join(' ')}`,
+                  ...lines.map(l => `  - ${l}`),
                 ].join('\n');
               } else {
                 // BUG FIX: this used to fall back to a live
@@ -1221,7 +1247,7 @@ export default function MatchAIScreen() {
                   f.strHomeTeam?.toLowerCase().includes(teamName.toLowerCase()) ||
                   f.strAwayTeam?.toLowerCase().includes(teamName.toLowerCase())
                 );
-                toolResult = teamFix.length > 0 ? formatFixtureContext(teamFix) : `No recent data found for ${teamName}.`;
+                toolResult = teamFix.length > 0 ? formatFixtureContext(teamFix) : `No recent data found for ${teamName} — a Bzzoiro Sports data key enables live form fetching.`;
               }
               liveSources.push('Bzzoiro Sports');
             } else if (tc.name === 'get_player_stats') {
@@ -1229,7 +1255,7 @@ export default function MatchAIScreen() {
               setSlot(s => s ? { ...s, toolStatus: `Checking ${playerName || 'player'}'s recent stats...` } : s);
               const bzKey = await getActiveBzKey().catch(() => '');
               const stats = bzKey ? await fetchPlayerStats(bzKey, playerName, 5).catch(() => null) : null;
-              toolResult = stats ? formatPlayerStatsContext(stats) : `No recent stats found for ${playerName}.`;
+              toolResult = stats ? formatPlayerStatsContext(stats) : `No recent stats found for ${playerName} — a Bzzoiro Sports data key is required for player-level stats. Try asking about the team's form instead.`;
               liveSources.push('Bzzoiro Sports');
             }
           } catch { toolResult = 'Unable to fetch data.'; }
@@ -1291,7 +1317,7 @@ export default function MatchAIScreen() {
           // getting cut off mid-sentence at exactly the moment it needed
           // more room, not less. Floors pass-2's budget regardless of
           // Fast/Think mode.
-          generationParams: { ...genParams, predict: Math.max(genParams.predict, 600), reasoning_budget: 0 as 0 },
+          generationParams: { ...genParams, predict: Math.max(genParams.predict, 800), reasoning_budget: 0 as 0 },
         });
         currentRunRef.current = run2;
 
@@ -1375,32 +1401,43 @@ export default function MatchAIScreen() {
         });
       }
 
+      setIsGenerating(false);
+      setGenStartedAt(null);
       if (mountedRef.current) {
         const finished: Entry = { id: entryId, question: q, image: image ?? undefined, answer: answerAcc, thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined, elapsed, toks: finalStats?.generatedTokens, device: finalStats?.backendDevice, modelName: modelNameRef.current || undefined, liveSources: [...new Set(liveSources)], liveData: liveDataAcc || undefined };
         if (usedDataFallback) setDataOpen(p => ({ ...p, [entryId]: true }));
         setSlot(null);
-        // Only append to the visible chat if we're still looking at the
-        // conversation this reply actually belongs to — see mySessionId
-        // above. It's already saved to its own session's row regardless,
-        // so switching back to that conversation later still shows it.
         if (mySessionId === sessionIdRef.current) setEntries(prev => [...prev, finished]);
-        setIsGenerating(false);
-        setGenStartedAt(null);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setTimeout(() => springEntry(entryId), 20);
       }
     } catch (err) {
       currentRunRef.current = null;
       clearNotification();
+      // BUG FIX: this used to gate the ENTIRE catch body on
+      // mountedRef.current — when the component unmounts (user navigates
+      // away mid-generation), cleanup sets mountedRef false BEFORE the
+      // pipeline reaches this catch block, so the partial answer was
+      // NEVER saved to the database. The user would come back and find
+      // their question with no reply at all. Now always saves partial
+      // answers to DB; only UI updates (setSlot/setEntries) skip when
+      // unmounted.
+      const partialAnswer = err instanceof InferenceCancelledError
+        ? ((err as any).partial?.text || slotRef.current?.answer || '...')
+        : 'Could not get a response. Try again.\n\n[Report a bug](https://github.com/bolajiev/scout/issues/new)';
+      if (mySessionId && partialAnswer && partialAnswer !== '...') {
+        const elapsed = Math.round((Date.now() - t0) / 100) / 10;
+        await addMessage(mySessionId, 'assistant', partialAnswer, {
+          elapsed, toks: undefined,
+          thinking: thoughtAcc || undefined, thinkingMs: thinkMs || undefined,
+        });
+      }
+      setIsGenerating(false);
+      setGenStartedAt(null);
       if (mountedRef.current) {
-        const fallback = err instanceof InferenceCancelledError
-          ? (slotRef.current?.answer || '...')
-          : 'Could not get a response. Try again.\n\n[Report a bug](https://github.com/bolajiev/scout/issues/new)';
-        const finished: Entry = { id: entryId, question: q, image: image ?? undefined, answer: fallback };
+        const finished: Entry = { id: entryId, question: q, image: image ?? undefined, answer: partialAnswer };
         setSlot(null);
         setEntries(prev => [...prev, finished]);
-        setIsGenerating(false);
-        setGenStartedAt(null);
         setTimeout(() => springEntry(entryId), 20);
       }
     }
@@ -1579,9 +1616,7 @@ export default function MatchAIScreen() {
   return (
     <KeyboardAvoidingView
       style={[styles.root, { backgroundColor: theme.background }]}
-      // Android 15 + edge-to-edge ignores adjustResize — the keyboard must
-      // be handled in JS or it covers the input bar
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior="padding"
     >
       {/* Header — Coach is full-screen chat: the tab bar hides while this
           tab is focused (see TabBar.tsx), so the back button here is the
@@ -1592,9 +1627,14 @@ export default function MatchAIScreen() {
         centered
         onBack={() => navigation.navigate('Home')}
         rightSlot={
-          <TouchableOpacity onPress={() => setMenuOpen(true)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <IconMore size={22} color={theme.text} />
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity onPress={() => setLengthPickerOpen(true)} hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }} style={{ marginRight: 4 }}>
+              <IconSliders size={20} color={theme.textSecondary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setMenuOpen(true)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <IconMore size={22} color={theme.text} />
+            </TouchableOpacity>
+          </>
         }
       />
 
@@ -1647,13 +1687,50 @@ export default function MatchAIScreen() {
         </Pressable>
       </Modal>
 
+      {/* Response length picker — shortcut to change model capability
+          (short / balanced / detailed / advanced) without going to Settings.
+          Same dropdown pattern as the three-dot menu above. */}
+      <Modal visible={lengthPickerOpen} transparent animationType="fade" onRequestClose={() => setLengthPickerOpen(false)} statusBarTranslucent>
+        <Pressable style={styles.menuBackdrop} onPress={() => setLengthPickerOpen(false)}>
+          <View style={[styles.menuPanel, { top: insets.top + 52, backgroundColor: theme.cardAlt, borderColor: theme.border }]}>
+            {(['short', 'balanced', 'detailed'] as ResponseLength[]).map(opt => (
+              <TouchableOpacity
+                key={opt}
+                style={styles.menuRow}
+                onPress={() => {
+                  setRespLength(opt);
+                  setResponseLength(opt);
+                  setLengthPickerOpen(false);
+                }}
+              >
+                <Text style={[styles.menuRowText, { color: opt === responseLength ? accent : theme.text }]}>
+                  {opt.charAt(0).toUpperCase() + opt.slice(1)}{opt === responseLength ? ' ✓' : ''}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <View style={[styles.menuDivider, { backgroundColor: theme.border }]} />
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                setLengthPickerOpen(false);
+                navigation.navigate('Settings');
+              }}
+            >
+              <Text style={[styles.menuRowText, { color: theme.textTertiary, fontSize: 11 }]}>Advanced…</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
       <ModelStatusPill
         noModel={noModel}
         modelLoading={modelLoading}
         loadError={loadError}
         modelId={modelId}
+        modelName={modelNameRef.current}
+        modelType={modelTypeRef.current === 'vision' ? 'Vision' : 'Text'}
         loadPct={loadPct}
-        onLoad={handleLoadPress}
+        onPickModel={handlePickModel}
         onStop={stopModel}
         onGetModel={() => navigation.navigate('Models')}
       />
@@ -1661,8 +1738,10 @@ export default function MatchAIScreen() {
       <ModelPickerModal
         visible={modelPickerOpen}
         models={pickableModels}
+        downloadedIds={downloadedModelIds}
         currentModelId={modelId}
         onSelect={selectModel}
+        onGetModel={() => { setModelPickerOpen(false); navigation.navigate('Models'); }}
         onClose={() => setModelPickerOpen(false)}
       />
 
@@ -1727,7 +1806,7 @@ export default function MatchAIScreen() {
           bottom (Think toggle left, send right) */}
       {/* No tab bar on this screen, so the composer sits right at the
           bottom safe area instead of reserving pill space */}
-      <View style={[styles.composerWrap, { backgroundColor: theme.background, paddingBottom: keyboardUp ? 10 : Math.max(insets.bottom, 12) }]}>
+      <View style={[styles.composerWrap, { backgroundColor: theme.background, paddingBottom: Math.max(insets.bottom, 12) }]}>
         <View style={[styles.composer, { backgroundColor: theme.cardAlt }]}>
           {pendingImage && (
             <View style={styles.stagedImageRow}>
@@ -1860,6 +1939,7 @@ const styles = StyleSheet.create({
   },
   menuRow: { paddingVertical: 9, paddingHorizontal: 14 },
   menuRowText: { fontSize: 13, fontFamily: fonts.bodySemiBold },
+  menuDivider: { height: 1, marginHorizontal: 14, marginVertical: 4 },
 
   scroll: { flex: 1 },
   scrollContent: { flexGrow: 1, paddingHorizontal: 14, paddingTop: 16, gap: 4 },

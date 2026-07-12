@@ -5,23 +5,18 @@ import { useTheme } from '../navigation/AppNavigator';
 import { fonts } from '../theme/fonts';
 import ReportBugLink from './ReportBugLink';
 
-// One small, single-row status control shared by Coach and Predictor —
-// replaces the old full-width cards that took a chunk of the page for
-// something that's true almost all the time (model ready). Loading/error
-// states are transient (appear while something's actually happening, gone
-// once resolved); the ready state stays as a small persistent pill so the
-// user can always see the model is loaded and has a one-tap way to stop it
-// without hunting through a menu.
 export default function ModelStatusPill({
-  noModel, modelLoading, loadError, modelId, loadPct,
-  onLoad, onStop, onGetModel,
+  noModel, modelLoading, loadError, modelId, modelName, modelType, loadPct,
+  onPickModel, onStop, onGetModel,
 }: {
   noModel: boolean;
   modelLoading: boolean;
   loadError: string | null;
   modelId: string | null;
+  modelName?: string | null;
+  modelType?: string | null;
   loadPct: number;
-  onLoad: () => void;
+  onPickModel: () => void;
   onStop: () => void;
   onGetModel: () => void;
 }) {
@@ -32,16 +27,16 @@ export default function ModelStatusPill({
     return (
       <TouchableOpacity onPress={onGetModel} style={[styles.pill, { backgroundColor: theme.card, borderColor: theme.border }]} activeOpacity={0.75}>
         <View style={[styles.dot, { backgroundColor: theme.highlight }]} />
-        <Text style={[styles.text, { color: theme.text }]}>No model downloaded — tap to get one</Text>
+        <Text style={[styles.text, { color: theme.text }]}>No model — tap to get one</Text>
       </TouchableOpacity>
     );
   }
   if (loadError) {
     return (
       <View style={styles.errorWrap}>
-        <TouchableOpacity onPress={onLoad} style={[styles.pill, styles.pillInErrorWrap, { backgroundColor: theme.card, borderColor: theme.error + '55' }]} activeOpacity={0.75}>
+        <TouchableOpacity onPress={onPickModel} style={[styles.pill, styles.pillInErrorWrap, { backgroundColor: theme.card, borderColor: theme.error + '55' }]} activeOpacity={0.75}>
           <View style={[styles.dot, { backgroundColor: theme.error }]} />
-          <Text style={[styles.text, { color: theme.error }]} numberOfLines={1}>Load failed — tap to retry</Text>
+          <Text style={[styles.text, { color: theme.error }]} numberOfLines={1}>Failed — tap to pick a model</Text>
         </TouchableOpacity>
         <View style={styles.reportWrap}>
           <ReportBugLink prefill={`Model load failed: ${loadError}`} />
@@ -60,20 +55,22 @@ export default function ModelStatusPill({
     );
   }
   if (modelId) {
+    const label = modelName || 'Model ready';
+    const typeLabel = modelType ? ` (${modelType})` : '';
     return (
-      <View style={[styles.pill, { backgroundColor: theme.card, borderColor: accent + '35' }]}>
+      <TouchableOpacity onPress={onPickModel} style={[styles.pill, { backgroundColor: theme.card, borderColor: accent + '35' }]} activeOpacity={0.75}>
         <View style={[styles.dot, { backgroundColor: accent }]} />
-        <Text style={[styles.text, { color: theme.text }]}>Model ready</Text>
+        <Text style={[styles.text, { color: theme.text }]} numberOfLines={1}>{label}{typeLabel}</Text>
         <TouchableOpacity onPress={onStop} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Text style={[styles.stopText, { color: theme.error }]}>Stop</Text>
         </TouchableOpacity>
-      </View>
+      </TouchableOpacity>
     );
   }
   return (
-    <TouchableOpacity onPress={onLoad} style={[styles.pill, { backgroundColor: theme.card, borderColor: theme.border }]} activeOpacity={0.75}>
+    <TouchableOpacity onPress={onPickModel} style={[styles.pill, { backgroundColor: theme.card, borderColor: theme.border }]} activeOpacity={0.75}>
       <View style={[styles.dot, { backgroundColor: theme.textTertiary }]} />
-      <Text style={[styles.text, { color: theme.textSecondary }]}>Model not loaded — tap to load</Text>
+      <Text style={[styles.text, { color: theme.textSecondary }]}>Tap to load a model</Text>
     </TouchableOpacity>
   );
 }
@@ -85,7 +82,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6, paddingHorizontal: 12, marginHorizontal: 16, marginBottom: 8,
   },
   dot: { width: 6, height: 6, borderRadius: 3 },
-  text: { fontSize: 11.5, fontFamily: fonts.bodySemiBold },
+  text: { fontSize: 11.5, fontFamily: fonts.bodySemiBold, flexShrink: 1 },
   stopText: { fontSize: 11.5, fontFamily: fonts.bodySemiBold, marginLeft: 4 },
   errorWrap: { marginBottom: 4 },
   pillInErrorWrap: { marginBottom: 2 },
